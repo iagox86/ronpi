@@ -29,36 +29,54 @@ a requirement.
    Lazy activation: opening an inactive session shows its transcript without
    spawning; the child spawns on the first prompt. Deactivation (manual or
    cap-triggered) kills the process, leaving the session reloadable.
-4. Switcher modeled on the session-groups extension's UX, NOT tabs: pressing
-   left on an empty editor opens a vertical overlay (the "switcher") listing sessions
-   with names and groups; up/down selects, enter or right enters, esc
-   closes. Live sessions (from the daemon) and inactive sessions (from
-   session files, lazily spawnable) appear in the same list under group
-   headers; state is shown with color/markers. There is no permanent tab
-   bar; the status line identifies the current session and carries ambient
-   indicators (running/waiting-permission counts).
+4. Switcher modeled on Claude Code's agent list (Ron's preference after
+   trying alternatives): FULL-SCREEN, a quiet two-column table (name |
+   last-activity/description) under dim group headers, selection shown by
+   brightness only (no cursor-prefix characters - they make text shift).
+   Pressing left on an empty editor opens it; up/down selects, enter or
+   right enters, esc or left closes. Live sessions (from the daemon) and
+   inactive sessions (from session files, lazily spawnable) appear in the
+   same list; state shows via markers and the description column. There is
+   no permanent tab bar; the status line identifies the current session and
+   carries ambient indicators (running/waiting-permission counts). Display
+   order freezes while the switcher is open (recency-sorted at open) so
+   background session-file writes elsewhere never reshuffle the list under
+   the cursor.
 4b. Hotkeys are ctrl-based and live in the switcher, acting on the
    HIGHLIGHTED entry - the session view itself has no management chords;
    its only special key is left-arrow on an empty editor (back to the
-   switcher). Switcher keys: up/down navigate, enter or right enter, esc
-   close, ctrl-n new session, ctrl-x kill highlighted session, ctrl-r
-   rename highlighted, ctrl-g group highlighted. Key decoding must use
-   matchesKey/Key (legacy + kitty + csi-u), never raw bytes. ctrl-x
-   semantics: deactivate the child (session file stays, lazy respawn on
-   next prompt); deleting the session file itself is a stronger,
-   separately-confirmed action.
-4c. Open question: aborting a running session from the session view -
-   currently ctrl-c (abort when streaming, quit when idle), matching pi
-   muscle memory; Ron's "only left arrow" instinct may or may not intend
-   dropping it. Alternatives: abort action on the switcher entry, or a
-   typed command.
+   switcher) plus typed slash commands intercepted controller-side:
+   /abort (abort the current run - never forwarded to the child),
+   /exit and /quit (quit the controller - also never forwarded; exiting
+   the child is ctrl-x's job). Typing while a run streams sends the message
+   as STEERING (pi streamingBehavior "steer") instead of failing. Switcher
+   keys: up/down navigate, enter or right
+   enter, esc close, ctrl-n new session, ctrl-x kill highlighted
+   session, ctrl-r rename highlighted, ctrl-g group highlighted. The
+   switcher also has its own command box offering typed equivalents
+   (/new, /kill, /rename <name>, /group <name>, /exit, /help) so every
+   hotkey has a command form. Key decoding must use matchesKey/Key
+   (legacy + kitty + csi-u), never raw bytes.
+4b-i. ctrl-x is context-sensitive: active session -> deactivate (child
+   killed, session file stays, lazy respawn on next prompt); inactive
+   session -> delete WITH confirmation. Delete is reversible by
+   construction: the file moves to ~/.local/share/ronpi/trash/ (never
+   unlinked; a /restore command can bring it back), and the orphaned
+   group assignment is removed from session-groups.json. pi session
+   files are the only copy of a session - there is no registry that
+   regenerates them, so unlink would be permanent.
+4c. Decided: no ctrl-c anywhere (feels like hard-kill); abort is /abort
+   in the session view or an action on the running switcher entry; quit
+   is /exit in either view.
 5. Permission gating end to end: children run permissions.ts; confirm
    dialogs forward to the driving controller; badge-and-block (no timeout,
    child waits indefinitely); dismissal always means deny.
 6. Per-child model/provider choice at spawn.
-7. Status bar equivalent to status-bar.ts, rendered controller-side: session
+7. Status bar equivalent to status-bar.ts, rendered controller-side, placed
+   BELOW the chat box (matching his status-bar.ts extension layout): session
    name, dir, git branch, model, ctx usage, thinking level, cost, provider,
-   plus the session state from (3).
+   plus the session state from (3). (M1 ships name/model/state/counts;
+   full parity later.)
 8. Sessions are stock pi session files: resumable by plain pi, transcript
    replay reads the documented JSONL format directly.
 9. Markdown rendering for assistant messages from day one.
@@ -87,6 +105,21 @@ a requirement.
 - Background-tab badges: finished run, waiting-on-permission.
 - Queuing input to non-visible tabs.
 - Split panes; transcript search.
+- Session-view input parity (future): esc briefly pauses input while
+  streaming; child TUI slash commands that need interactivity (/model etc)
+  mapped to RPC equivalents (set_model/cycle_model, compact, ...);
+  autocomplete for /commands in the chat box.
+- Manual switcher ordering (IMPLEMENTED in M1; session-groups.json carries
+  an `order` array of session UUIDs that both writers preserve):
+  - shift+up/down on a session row moves it one display row; crossing a
+    group header moves it between groups (assignment persists; moving into
+    (ungrouped) sets the explicit-ungroup tombstone)
+  - new sessions sort to the bottom of their section; sessions not present
+    in `order` sort after all ordered ones
+  - shift+up/down on a group header reorders the groups themselves
+    ((ungrouped) stays first); the groups array order in
+    session-groups.json is the persisted group order
+  - selection follows the moved item
 - Claude adapter (deprioritized: "Claude already works like I want").
 - MCP server fronting the daemon (list/spawn/deactivate/query sessions) so
   any pi session can manage the fleet via mcp.json; explicitly not 1.0.
@@ -104,8 +137,9 @@ a requirement.
 3. Deactivation policy: manual only, or LRU auto-deactivate at the cap?
 4. Primary selection source on this machine: X11 or Wayland (affects
    middle-click paste implementation)?
-5. Should two controllers be able to watch the same child read-only while a
-   third drives it, or is even viewing exclusive in v1?
+5. DECIDED: viewing is never exclusive - every controller receives every
+   event stream; only input attach is exclusive, acquired on enter,
+   refused with a hint on conflict, stolen by a second enter.
 6. Budget behavior on threshold: warn-only, or refuse new prompts? Over what
    window (daemon lifetime vs persisted daily/weekly rollups under
    ~/.local/share/ronpi/)?

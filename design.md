@@ -2,18 +2,21 @@
 
 ## Status
 
-**M0 prototype COMPLETE and kill-test verified** (2026-10-20). Code in
-`proto/`: daemon.ts, controller.ts, shared.ts, test/. See proto/README.md
-to run. Proven: daemon-owned children survive controller SIGKILL mid-run;
-transcript replay from session files on reattach; live streaming render
-with markdown (pi's AssistantMessageComponent) including user echo,
-thinking blocks, and abort; ctrl+T tab switching with per-tab transcripts
-and background-tab streaming markers; ctrl+C abort - all verified through
-tmux extended-keys csi-u key encoding. pi-side groundwork lives in
+## Status
+
+**M1 COMPLETE and verified** (2026-10-20; M0 same day). Code in `proto/`:
+daemon.ts (session-centric: states, exclusive attach, trash, lazy spawn),
+controller.ts, switcher.ts (overlay UI), groups.ts (shared groups JSON),
+shared.ts (protocol v2), test/. See proto/README.md for keys/semantics.
+Verified end-to-end in tmux incl. csi-u keys: switcher listing/groups,
+ctrl-n/ctrl-x deactivate/ctrl-x-x2 trash confirm, rename, group (shared
+file), lazy respawn from file replay, /abort, permission dialog forward +
+y-answer with tool actually executing, two-controller exclusivity +
+take-over + view-only refusal. pi-side groundwork lives in
 ~/stuff/dotfiles/server/pi/extensions/.
 
 Findings below were validated against pi's shipped code (pi 1.3.x era).
-M0 corrections to earlier assumptions are in "M0 findings".
+M0/M1 corrections to earlier assumptions are in "M0 findings".
 
 ## M0 findings (corrections to earlier assumptions)
 
@@ -55,6 +58,10 @@ M0 corrections to earlier assumptions are in "M0 findings".
   first moments after start (before kitty/DA1 negotiation settles) can be
   swallowed by pi-tui's keyboard-negotiation reader; presses after ~1s are
   reliable.
+- **RpcClient.send() corrupts extension_ui_response**: it overwrites the
+  record's id with its own req_N correlation id (dialog replies never
+  match) and then waits 30s for an ack the protocol never sends. Dialog
+  replies must be written RAW to child stdin. Worth an upstream issue.
 - get_state returns model as {provider, id} -> "provider/id" for the
   status line; sessionName falls back to cwd basename.
 
@@ -120,8 +127,9 @@ ronpid (daemon)                                  controllers (N)
 
 ## UI paradigm (M1): the switcher, not tabs
 
-M0's tab bar was a placeholder; the intended UI mirrors the session-groups
-extension (the model Ron prefers):
+M0's tab bar was a placeholder. The shipped UI (after one iteration: the
+first overlay was a cramped popup, then a name-grid - Ron picked Claude
+Code's agent-list shape) mirrors Claude Code's agent list:
 
 - **Left-arrow on empty editor** opens the session overlay. Interception
   happens in the editor subclass before super.handleInput (same pattern as
@@ -136,8 +144,17 @@ extension (the model Ron prefers):
   SessionManager.listAll() read directly by the controller (session files
   are the interface; inactive sessions spawn lazily on first prompt).
 - **Keys in switcher**: up/down move, enter or right enters, esc closes;
-  move/rename/delete actions available on the highlighted entry
-  (session-groups.ts precedent: m/r/x-press-twice).
+  management on the highlighted entry: ctrl-n new, ctrl-x kill
+  (context-sensitive: deactivate if active, trash+confirm if inactive),
+  ctrl-r rename, ctrl-g group. A command box at the bottom of the
+  switcher offers typed equivalents (/new, /kill, /rename <name>,
+  /group <name>, /exit, /help; /restore later) - every hotkey has a
+  command form.
+- **Session view keys**: left-arrow on empty editor opens the switcher;
+  typed /abort and /exit are intercepted controller-side (never
+  forwarded to the child - /abort maps to the daemon abort command,
+  /exit quits the controller; child exit is deactivate's job). No
+  ctrl-c anywhere (feels like hard-kill).
 - **pi-tui machinery**: tui.showOverlay/hideOverlay with focus management,
   SelectList for the list. Build on these, not a custom grid.
 - **Hotkeys** (act on current session; decoded via matchesKey/Key):
@@ -146,6 +163,34 @@ extension (the model Ron prefers):
   rename (set_session_name via daemon; inline prompt), ctrl-g group
   (write shared groups JSON; switcher list of existing groups or type name),
   ctrl-c abort/quit. The old ctrl-t tab-cycle is dropped.
+- **Lifecycle**: the controller auto-starts the daemon detached on cold
+  start (same node binary via process.execPath; double-checked to narrow
+  simultaneous-start races) and `controller.ts kill-server` SIGTERMs it via
+  the pidfile (with a /proc cmdline identity check); shutdown is orderly -
+  children stop, socket and pidfile are removed.
+- **Manual ordering (implemented)**: session-groups.json carries an `order`
+  array of session UUIDs (both writers preserve it; extension updated).
+  Display: ordered ids first, unordered after (bottom). Shift+arrows move
+  the highlighted row; crossing headers reassigns groups (down = first of
+  the next section, up = last of the previous); headers reorder the groups
+  array; selection follows the moved item. Group headers are selectable
+  rows (that is the grab point), and enter on a header opens its first
+  session.
+- **Palette**: theme.ts, solarized-dark via 256-color approximations (bg
+  234, dim 245, accent cyan 37, streaming yellow 136, attention orange
+  166). Chrome styles use scoped resets (22/39) so they compose with the
+  switcher's tinted background. Solarized-light = swap one file.
+- **Budget rollups**: the daemon accumulates lifetime tokens/cost per
+  session from message_end usage and exposes them in session meta; the
+  switcher header shows fleet totals, the status line shows the viewed
+  session's.
+- **Steering**: daemon prompts always use streamingBehavior "steer" - the
+  same call executes when idle and queues as steering when streaming. Never
+  call prompt() bare during a run (pi rejects it).
+- **Trash**: delete never unlinks - the daemon moves the session file to
+  ~/.local/share/ronpi/trash/ (restorable via /restore) and removes the
+  group assignment. pi session files have no registry that can
+  regenerate them; unlink would be permanent.
 - **Status line** carries current session identity + ambient counts
   (N running, M waiting on permission); no permanent tab bar.
 
@@ -202,9 +247,12 @@ export_html; get_commands.
 
 ## Milestones
 
-- M0 spike: **DONE, verified 2026-10-20** (see Status + proto/README.md).
-  Markdown component reuse confirmed: AssistantMessageComponent +
-  updateContent(partial, true) renders streaming markdown directly.
+- M0 spike: **DONE, verified 2026-10-20**.
+- M1 usable: **DONE, verified 2026-10-20** - switcher overlay with groups,
+  session states + lazy spawn, exclusive attach + take-over, permission
+  forwarding (badge-and-block, re-sent on attach), trash-based delete,
+  rename, shared groups JSON in XDG data dir. Remaining for polish:
+  /restore, input/editor dialogs, solarized theme, activation cap.
 - M1 usable: full state model (active/idle/inactive + lazy spawn),
   switcher with groups, permission forwarding (badge-and-block), status bar,
   exclusive attach, session files resumable by stock pi.

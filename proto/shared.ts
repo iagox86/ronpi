@@ -1,37 +1,75 @@
 // Wire protocol between the daemon and controllers: JSONL over a unix socket.
 // Framing is LF-only (never readline: U+2028/U+2029 are legal inside JSON strings).
+//
+// Model: the daemon tracks SESSIONS; a session may have a live child process
+// (active: streaming or idle) or not (inactive: file only, lazily respawned).
+// A live session's input is exclusively attached to one controller socket;
+// every connected controller still sees the full event stream (viewing is
+// never exclusive).
 
-export interface TabMeta {
+export interface SessionMeta {
+	/** Daemon-assigned short id, stable for the daemon's lifetime. */
 	id: number;
 	cwd: string;
 	name: string;
 	model: string;
+	/** Session UUID (from the session file header), when known. */
 	sessionId?: string;
+	/** Absolute path of the session file, when known. */
 	sessionFile?: string;
 	messageCount: number;
 	streaming: boolean;
+	/** Child crashed or exited unexpectedly; session can be respawned. */
 	dead: boolean;
+	/** False when the child has been deactivated (session is file-only). */
+	active: boolean;
 	pendingDialog: boolean;
+	/** Lifetime token/cost rollup tracked by the daemon. */
+	tokens?: number;
+	cost?: number;
+	/** True iff THIS receiving controller holds the exclusive input attach. */
+	attachedToYou: boolean;
+	/** True iff another controller holds the attach. */
+	attachedElsewhere: boolean;
 }
 
-export interface TabSnapshot {
-	tabs: TabMeta[];
-}
-
-// controller -> daemon
+// controller -> daemon. Commands with an `id` get a {type:"response", id}.
 export type ClientCommand =
-	| { type: "prompt"; tab: number; message: string }
-	| { type: "abort"; tab: number }
-	| { type: "spawn"; cwd?: string }
-	| { type: "ui_response"; tab: number; response: Record<string, unknown> };
+	| {
+			type: "prompt";
+			id?: string;
+			message: string;
+			/** Live session to prompt. */
+			session?: number;
+			/** Inactive/dead session to (re)spawn and prompt: resume this file. */
+			sessionFile?: string;
+			/** Required with sessionFile: working directory for the spawned child. */
+			cwd?: string;
+			/** Optional display name for a newly spawned child. */
+			name?: string;
+	  }
+	| { type: "abort"; session: number }
+	| { type: "spawn"; id?: string; cwd: string; sessionFile?: string; name?: string }
+	| { type: "deactivate"; id?: string; session: number }
+	/** Deactivate if live, then move the session file to the trash dir. */
+	| { type: "delete"; id?: string; session?: number; path?: string }
+	/** Live: setSessionName on the child. Inactive: append session_info to the file. */
+	| { type: "rename"; id?: string; session?: number; path?: string; name: string }
+	/** Acquire exclusive input attach (force: steal from another controller). */
+	| { type: "attach"; id?: string; session: number; force?: boolean }
+	| { type: "detach"; session: number }
+	| { type: "ui_response"; session: number; response: Record<string, unknown> }
+	/** Orderly daemon shutdown (children stop too). */
+	| { type: "shutdown" };
 
 // daemon -> controller
 export type DaemonMessage =
-	| { type: "tabs"; tabs: TabMeta[] }
-	| { type: "event"; tab: number; event: Record<string, unknown> }
-	| { type: "history"; tab: number; messages: unknown[] }
-	| { type: "ui_request"; tab: number; request: Record<string, unknown> }
-	| { type: "exited"; tab: number };
+	| { type: "sessions"; sessions: SessionMeta[] }
+	| { type: "event"; session: number; event: Record<string, unknown> }
+	| { type: "history"; session: number; messages: unknown[] }
+	| { type: "ui_request"; session: number; request: Record<string, unknown> }
+	| { type: "exited"; session: number; reason?: string }
+	| { type: "response"; id: string; ok: boolean; error?: string; data?: unknown };
 
 export function encodeLine(obj: unknown): string {
 	return JSON.stringify(obj) + "\n";

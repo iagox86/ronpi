@@ -1,18 +1,25 @@
-// ronpi M0 controller: a TUI over the daemon socket. Dumb by design - it
+// ronpi controller: a TUI over the daemon socket. Dumb by design - it
 // renders, switches, and prompts; the daemon owns everything else.
 //
+// Session view: left-arrow on an empty editor opens the switcher; /abort and
+// /exit are intercepted here (never forwarded to the child); everything else
+// goes to the child. No ctrl chords in the session view.
+// Switcher: up/down select, enter/right open, esc closes, ctrl-n/x/r/g
+// manage, command box takes /new /kill /rename /group /exit /help.
+//
 // Run: node controller.ts
-// Keys: ctrl+T next tab, ctrl+C abort (if running) else quit, enter submit.
-// Permission dialogs: y/n for confirm, 1-9 for select; input/editor dialogs
-// are auto-denied in M0.
+import { spawn } from "node:child_process";
+import * as fs from "node:fs";
 import * as net from "node:net";
+import { appendFileSync } from "node:fs";
+import * as path from "node:path";
 import {
 	Container,
 	Editor,
 	type EditorTheme,
 	isKeyRelease,
-	matchesKey,
 	Key,
+	matchesKey,
 	ProcessTerminal,
 	ScrollView,
 	Text,
@@ -22,21 +29,101 @@ import {
 } from "@earendil-works/pi-tui";
 import {
 	AssistantMessageComponent,
+	SessionManager,
 	ToolExecutionComponent,
 	UserMessageComponent,
 	getMarkdownTheme,
 	getSelectListTheme,
 	initTheme,
 } from "@earendil-works/pi-coding-agent";
-import { LineSplitter, encodeLine, type DaemonMessage, type TabMeta } from "./shared.ts";
+import { loadGroups, resolveGroup, saveGroups, type GroupsFile } from "./groups.ts";
+import { Switcher, type SessionState, type SwitcherSession } from "./switcher.ts";
+import { LineSplitter, encodeLine, type ClientCommand, type DaemonMessage, type SessionMeta } from "./shared.ts";
+import { accent as themeAccent, attention, dim as themeDim } from "./theme.ts";
 
 const SOCK = process.env.RONPI_SOCK ?? `${process.env.XDG_RUNTIME_DIR ?? "/tmp"}/ronpi.sock`;
+const PID_FILE = `${SOCK}.pid`;
+const DAEMON_FILE = path.join(import.meta.dirname, "daemon.ts");
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 
-// The pi theme instance isn't exported from the package index, so M0 chrome
-// colors are plain ANSI; real theming (solarized) comes with M1.
-const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
-const accent = (s: string) => `\x1b[36m${s}\x1b[0m`;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** True when something is listening on the socket. */
+function socketAlive(timeoutMs = 500): Promise<boolean> {
+	return new Promise((resolve) => {
+		const s = net.connect(SOCK);
+		const done = (ok: boolean) => {
+			s.destroy();
+			resolve(ok);
+		};
+		s.once("connect", () => done(true));
+		s.once("error", () => done(false));
+		s.setTimeout(timeoutMs, () => done(false));
+	});
+}
+
+/** Start the daemon detached, using this process's node (same v26 binary). */
+function spawnDaemon(): void {
+	const child = spawn(process.execPath, [DAEMON_FILE], {
+		detached: true,
+		stdio: "ignore",
+		env: process.env,
+	});
+	child.unref();
+}
+
+async function waitForDaemon(timeoutMs: number): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (await socketAlive()) {
+			return;
+		}
+		await sleep(250);
+	}
+	throw new Error(`daemon did not come up within ${Math.round(timeoutMs / 1000)}s (check ${SOCK} and the daemon log)`);
+}
+
+/** controller.ts kill-server: SIGTERM the daemon (orderly child shutdown). */
+async function killServer(): Promise<void> {
+	let pid: number | undefined;
+	try {
+		pid = Number.parseInt(fs.readFileSync(PID_FILE, "utf8").trim(), 10);
+	} catch {
+		// no pidfile below
+	}
+	if (!pid || Number.isNaN(pid)) {
+		process.stderr.write(`no ronpid pidfile at ${PID_FILE} - daemon not running\n`);
+		process.exit(1);
+	}
+	try {
+		const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+		if (!cmdline.includes("daemon.ts")) {
+			process.stderr.write(`pid ${pid} is not ronpid (stale pidfile); refusing\n`);
+			process.exit(1);
+		}
+	} catch {
+		process.stderr.write(`daemon process ${pid} is gone (stale pidfile); cleaning up\n`);
+		fs.rmSync(PID_FILE, { force: true });
+		process.exit(1);
+	}
+	process.kill(pid, "SIGTERM");
+	for (let i = 0; i < 40; i++) {
+		try {
+			process.kill(pid, 0);
+		} catch {
+			process.stdout.write(`ronpid (${pid}) stopped\n`);
+			return;
+		}
+		await sleep(250);
+	}
+	process.kill(pid, "SIGKILL");
+	process.stdout.write(`ronpid (${pid}) did not exit in 10s; sent SIGKILL\n`);
+}
+
+// The pi theme instance isn't exported from the package index, so chrome
+// colors are plain ANSI; real theming (solarized) comes later.
+const dim = themeDim;
+const accent = themeAccent;
 
 initTheme();
 const mdTheme = getMarkdownTheme();
@@ -66,22 +153,29 @@ interface OtherItem {
 }
 type Item = UserItem | AssistantItem | ToolItem | OtherItem;
 
-interface TabState {
-	meta: TabMeta;
-	items: Item[];
-	tools: Map<string, ToolItem>;
-	dialog?: Record<string, unknown> & { id: string; method: string; title?: string; message?: string; options?: string[] };
+interface DialogRequest {
+	id: string;
+	method: string;
+	title?: string;
+	message?: string;
+	options?: string[];
 }
 
-class InputEditor extends Editor {
-	onKey?: (data: string) => boolean;
+interface SessionView {
+	items: Item[];
+	tools: Map<string, ToolItem>;
+	dialog?: DialogRequest;
+}
 
-	handleInput(data: string): void {
-		if (this.onKey && this.onKey(data)) {
-			return;
-		}
-		super.handleInput(data);
-	}
+interface LocalSession {
+	path: string;
+	id: string;
+	name?: string;
+	cwd: string;
+	firstMessage: string;
+	lastActivity: string;
+	model?: string;
+	modified: number;
 }
 
 function userText(m: { content: unknown }): string {
@@ -97,44 +191,151 @@ function userText(m: { content: unknown }): string {
 	return "";
 }
 
+// Left-arrow that carries no modifiers beyond caps/numlock lock bits: legacy
+// \x1b[D / \x1bOD, kitty/csi-u \x1b[1;<mods>D or \x1b[1;<mods>:<event>D.
+function isPlainLeft(data: string): boolean {
+	if (data === "\x1b[D" || data === "\x1bOD") {
+		return true;
+	}
+	const m = /^\x1b\[1;(\d+)(?::(\d+))?D$/.exec(data);
+	if (!m) {
+		return false;
+	}
+	if (m[2] === "3") {
+		return false; // key release
+	}
+	const mods = Number.parseInt(m[1], 10) - 1;
+	return (mods & ~(64 | 128)) === 0;
+}
+
+class InputEditor extends Editor {
+	onKey?: (data: string) => boolean;
+	debugLog?: string;
+
+	handleInput(data: string): void {
+		if (this.debugLog) {
+			try {
+				appendFileSync(this.debugLog, `${JSON.stringify(data)}\n`);
+			} catch {
+				// debug only
+			}
+		}
+		if (this.onKey && this.onKey(data)) {
+			return;
+		}
+		super.handleInput(data);
+	}
+}
+
 class Controller {
 	tui: TuiAltScreen;
 	chatRoot = new Container();
+	chatLayout: VStack;
+	switcherLayout: VStack;
 	scroll: ScrollView;
-	tabsLine = new Text("", 0, 0);
 	statusLine = new Text("", 0, 0);
 	editor: InputEditor;
+	switcher = new Switcher();
 	socket!: net.Socket;
-	tabs = new Map<number, TabState>();
-	focused = 0;
-	flash = "";
-	flashTimer?: ReturnType<typeof setTimeout>;
+
+	/** Daemon-known sessions by daemon id. */
+	sessions = new Map<number, SessionMeta>();
+	/** Sessions from the filesystem (listAll), by session file path. */
+	local = new Map<string, LocalSession>();
+	/** Transcript state by canonical key (session file path, or daemon:N). */
+	views = new Map<string, SessionView>();
+	/** Last message text per session key, for the switcher description. */
+	summaries = new Map<string, string>();
+	/** Path key of the session on screen; null = none (switcher behind). */
+	viewing: string | null = null;
+
+	groups: GroupsFile = { groups: [], assignments: {} };
+	switcherOpen = false;
+
+	private lastRefused: string | null = null;
+	private armedDelete: string | null = null;
+	private pendingEnterId: number | null = null;
+	private reqSeq = 0;
+	private responses = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+	private flash = "";
+	private flashTimer?: ReturnType<typeof setTimeout>;
+	/** Session key order captured when the switcher opened; frozen while open. */
+	private switchOrder: string[] | null = null;
+	private listTimer?: ReturnType<typeof setInterval>;
 
 	constructor() {
 		this.tui = new TuiAltScreen(new ProcessTerminal(), true);
 		this.scroll = new ScrollView(this.chatRoot, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" });
 		this.editor = new InputEditor(this.tui, editorTheme, { paddingX: 1 });
+		this.editor.debugLog = process.env.RONPI_KEYS ?? "";
 		this.editor.onSubmit = (text) => this.submit(text);
-		this.editor.onKey = (data) => this.handleAppKey(data);
-		// Mirror pi's fullscreen chat viewport: flexible transcript + fixed dock.
+		this.editor.onKey = (data) => this.sessionKeys(data);
 		const dock = new VStack([
-			{ component: this.statusLine, shrink: 1, minSize: 0 },
-			{ component: this.editor, shrink: 1, minSize: 3 },
+			{ component: this.editor, shrink: 0, minSize: 3 },
+			{ component: this.statusLine, shrink: 0, minSize: 1 },
 		]);
-		const root = new VStack([
-			{ component: this.tabsLine },
+		// Two roots over one shared dock: the chat view, and the switcher view
+		// (full-screen minus the dock, so the input box is never covered).
+		this.chatLayout = new VStack([
 			{ component: this.scroll, basis: 0, grow: 1, shrink: 1, minSize: 1 },
-			{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
+			// never compress the dock: a shrunken editor was the "cut off" bug
+			{ component: dock, basis: "auto", grow: 0, shrink: 0, minSize: 4 },
 		]);
-		this.tui.setLayoutRoot(root);
+		this.switcherLayout = new VStack([
+			{ component: this.switcher, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+			{ component: dock, basis: "auto", grow: 0, shrink: 0, minSize: 4 },
+		]);
+		this.tui.setLayoutRoot(this.chatLayout);
 		this.tui.setFocus(this.editor);
+
+		this.switcher.heightProvider = () => this.tui.terminal.rows || 24;
+		this.switcher.debugLog = process.env.RONPI_KEYS ?? "";
+		this.switcher.onSelect = (s) => void this.enterSession(s);
+		this.switcher.onMoved = () => this.tui.requestRender();
+		this.switcher.onShiftSession = (delta, s) => void this.moveSession(delta, s);
+		this.switcher.onShiftGroup = (delta, title) => void this.moveGroup(delta, title);
+		this.switcher.onClose = () => this.closeSwitcher();
+		this.switcher.onNew = () => void this.newSession();
+		this.switcher.onKill = (s) => void this.killSession(s);
+		this.switcher.onRename = (s) => {
+			this.switcher.command = "/rename ";
+			this.switcher.hint = `rename: ${s.name} - type the new name and press enter`;
+		};
+		this.switcher.onGroup = (s) => {
+			this.switcher.command = "/group ";
+			this.switcher.hint = `group: ${s.name} - type a group name and press enter`;
+		};
+		this.switcher.onCommand = (cmd, target) => void this.runCommand(cmd, target);
 	}
 
 	async run(): Promise<void> {
-		await this.connect();
+		try {
+			await this.connect();
+		} catch {
+			// No daemon. Re-check briefly (another controller may be mid-start),
+			// then start one in the background and wait for the socket.
+			if (!(await socketAlive())) {
+				await sleep(400);
+			}
+			if (!(await socketAlive())) {
+				spawnDaemon();
+				await waitForDaemon(20_000);
+			}
+			await this.connect();
+		}
+		await this.loadLocal();
 		this.renderChrome();
 		try {
 			this.tui.start();
+			this.openSwitcher();
+			this.listTimer = setInterval(() => {
+				void this.loadLocal().then(() => {
+					if (this.switcherOpen) {
+						this.refreshSwitcher();
+					}
+				});
+			}, 10_000);
+			this.listTimer.unref?.();
 			// park the process; the TUI owns the loop from here
 			await new Promise<never>(() => {});
 		} finally {
@@ -162,7 +363,7 @@ class Controller {
 				resolve();
 			});
 			socket.once("error", (err) => {
-				reject(new Error(`cannot reach daemon at ${SOCK} - start it first: node daemon.ts (${err.message})`));
+				reject(new Error(`cannot reach daemon at ${SOCK} even after auto-start attempt (${err.message})`));
 			});
 		});
 	}
@@ -186,107 +387,800 @@ class Controller {
 		this.socket?.write(encodeLine(msg));
 	}
 
-	submit(text: string): void {
-		const trimmed = text.trim();
-		if (trimmed.length === 0) {
-			return;
-		}
-		this.send({ type: "prompt", tab: this.focused, message: trimmed });
-		this.editor.setText("");
-	}
-
-	tabState(id: number): TabState | undefined {
-		return this.tabs.get(id);
-	}
-
-	focusedTab(): TabState | undefined {
-		return this.tabs.get(this.focused);
+	/** Send a command with response correlation. */
+	request(cmd: Omit<ClientCommand, "id"> & { id?: string }): Promise<unknown> {
+		const id = `req-${++this.reqSeq}`;
+		return new Promise((resolve, reject) => {
+			this.responses.set(id, { resolve, reject });
+			this.send({ ...cmd, id });
+			setTimeout(() => {
+				if (this.responses.has(id)) {
+					this.responses.delete(id);
+					reject(new Error("daemon request timed out"));
+				}
+			}, 30_000).unref?.();
+		});
 	}
 
 	handleDaemonMessage(msg: DaemonMessage): void {
 		switch (msg.type) {
-			case "tabs": {
-				for (const meta of msg.tabs) {
-					let state = this.tabs.get(meta.id);
-					if (!state) {
-						state = { meta, items: [], tools: new Map() };
-						this.tabs.set(meta.id, state);
+			case "sessions": {
+				this.sessions.clear();
+				for (const meta of msg.sessions) {
+					this.sessions.set(meta.id, meta);
+					// Migrate item keys once a session gains its file path.
+					const tmpKey = `daemon:${meta.id}`;
+					if (meta.sessionFile) {
+						const tmpView = this.views.get(tmpKey);
+						if (tmpView && !this.views.has(meta.sessionFile)) {
+							this.views.set(meta.sessionFile, tmpView);
+							this.views.delete(tmpKey);
+						}
 					}
-					Object.assign(state.meta, meta);
 				}
-				if (this.focused === 0 && this.tabs.size > 0) {
-					this.focused = Math.min(...this.tabs.keys());
+				// Resolved spawn: enter the session we just created.
+				if (this.pendingEnterId !== null && this.sessions.has(this.pendingEnterId)) {
+					const meta = this.sessions.get(this.pendingEnterId)!;
+					this.pendingEnterId = null;
+					this.viewing = this.keyFor(meta);
+					this.closeSwitcher();
 				}
-				if (!this.tabs.has(this.focused)) {
-					this.focused = Math.min(...this.tabs.keys());
-					this.rebuildChat();
+				if (this.switcherOpen) {
+					this.refreshSwitcher();
 				}
 				this.renderChrome();
 				break;
 			}
 			case "history": {
-				const state = this.tabs.get(msg.tab);
-				// only seed an empty transcript; live events may have arrived first
-				if (state && state.items.length === 0 && msg.messages.length > 0) {
-					state.items = itemsFromMessages(msg.messages, state.meta.cwd);
-					if (msg.tab === this.focused) {
+				const key = this.keyById(msg.session);
+				if (key) {
+					this.views.set(key, { items: itemsFromMessages(msg.messages), tools: new Map() });
+					if (key === this.viewing) {
 						this.rebuildChat();
 					}
 				}
 				break;
 			}
 			case "event": {
-				const state = this.tabs.get(msg.tab);
-				if (state) {
-					this.applyEvent(state, msg.event);
+				const key = this.keyById(msg.session);
+				if (!key) {
+					break;
 				}
+				const view = this.viewFor(key);
+				this.applyEvent(key, view, msg.event);
 				break;
 			}
 			case "ui_request": {
-				const state = this.tabs.get(msg.tab);
-				if (!state) {
+				const key = this.keyById(msg.session);
+				if (!key) {
 					break;
 				}
-				const request = msg.request as TabState["dialog"];
+				const view = this.viewFor(key);
+				const request = msg.request as DialogRequest;
 				if (request && DIALOG_METHODS.has(request.method)) {
 					if (request.method === "input" || request.method === "editor") {
-						// M0: no free-form dialog UI; deny is the safe default
+						// No free-form dialog UI yet; deny is the safe default.
 						this.send({
 							type: "ui_response",
-							tab: msg.tab,
+							session: msg.session,
 							response: { type: "extension_ui_response", id: request.id, cancelled: true },
 						});
 					} else {
-						state.dialog = request;
+						view.dialog = request;
 					}
 				} else if (request && request.method === "notify") {
 					this.notify(String(request.message ?? "notification"));
 				}
-				this.renderChrome();
+				if (key === this.viewing) {
+					this.renderChrome();
+				}
 				break;
 			}
 			case "exited": {
-				const state = this.tabs.get(msg.tab);
-				if (state) {
-					state.meta.dead = true;
-					state.meta.streaming = false;
-					this.renderChrome();
+				const meta = this.sessions.get(msg.session);
+				if (meta && this.keyFor(meta) === this.viewing) {
+					this.notify("child exited");
+				}
+				break;
+			}
+			case "response": {
+				const pending = this.responses.get(msg.id);
+				if (pending) {
+					this.responses.delete(msg.id);
+					if (msg.ok) {
+						pending.resolve(msg.data);
+					} else {
+						pending.reject(new Error(msg.error ?? "daemon command failed"));
+					}
 				}
 				break;
 			}
 		}
 	}
 
-	applyEvent(state: TabState, ev: Record<string, unknown>): void {
+	keyById(sessionId: number): string | null {
+		const meta = this.sessions.get(sessionId);
+		return meta ? this.keyFor(meta) : null;
+	}
+
+	keyFor(meta: SessionMeta): string {
+		return meta.sessionFile ?? `daemon:${meta.id}`;
+	}
+
+	metaForPath(key: string): SessionMeta | undefined {
+		return [...this.sessions.values()].find((m) => this.keyFor(m) === key);
+	}
+
+	viewFor(key: string): SessionView {
+		let view = this.views.get(key);
+		if (!view) {
+			view = { items: [], tools: new Map() };
+			this.views.set(key, view);
+		}
+		return view;
+	}
+
+	async loadLocal(): Promise<void> {
+		try {
+			const infos = await SessionManager.listAll();
+			this.local.clear();
+			for (const info of infos) {
+				this.local.set(info.path, {
+					path: info.path,
+					id: info.id,
+					name: info.name,
+					cwd: info.cwd,
+					firstMessage: info.firstMessage ?? "",
+				lastActivity: lastLine(info.allMessagesText ?? ""),
+					modified: info.modified instanceof Date ? info.modified.getTime() : Date.parse(String(info.modified)) || 0,
+				});
+			}
+		} catch (err) {
+			console.error(`listAll failed: ${err}`);
+		}
+	}
+
+	// ---------------- switcher ----------------
+
+	openSwitcher(): void {
+		// Release input on the session we were driving; re-enter re-attaches.
+		if (this.viewing) {
+			const meta = this.metaForPath(this.viewing);
+			if (meta?.attachedToYou) {
+				this.send({ type: "detach", session: meta.id });
+			}
+		}
+		this.groups = loadGroups();
+		this.switchOrder = null;
+		this.armedDelete = null;
+		this.lastRefused = null;
+		// Land on the session we were just in, else the first session.
+		this.switcher.selectedKey = this.viewing;
+		this.refreshSwitcher();
+		this.switcher.height = this.tui.terminal.rows || 24;
+		this.switcher.hint = "type / for commands - enter open - ctrl-n new - ctrl-x kill - ctrl-r rename - ctrl-g group";
+		this.switcher.heightProvider = () => Math.max(6, (this.tui.terminal.rows || 24) - 4);
+		this.switcherOpen = true;
+		this.tui.setLayoutRoot(this.switcherLayout);
+		this.editor.setText("");
+		this.renderChrome();
+		this.tui.requestRender(true);
+	}
+
+	closeSwitcher(): void {
+		this.switcherOpen = false;
+		this.tui.setLayoutRoot(this.chatLayout);
+		this.rebuildChat();
+		this.renderChrome();
+		this.tui.requestRender(true);
+	}
+
+	refreshSwitcher(): void {
+		this.groups = loadGroups();
+		const list: SwitcherSession[] = [];
+		const paths = new Set<string>([...this.local.keys()]);
+		for (const meta of this.sessions.values()) {
+			paths.add(this.keyFor(meta));
+		}
+		for (const key of paths) {
+			const meta = this.metaForPath(key);
+			const info = this.local.get(key);
+			const cwd = meta?.cwd ?? info?.cwd ?? (key.startsWith("daemon:") ? key : path.dirname(key));
+			// Unnamed sessions show their first message as the name; the project
+			// (cwd basename) moves to the description column.
+			const explicitName = meta?.sessionName ?? info?.name;
+			const first = info?.firstMessage ? oneLineFlat(info.firstMessage, 40) : undefined;
+			const base = path.basename(cwd);
+			const name = explicitName ?? first ?? base;
+			let state: SessionState = "inactive";
+			if (meta?.active) {
+				state = meta.streaming ? "streaming" : meta.dead ? "dead" : "idle";
+			}
+			const sessionId = meta?.sessionId ?? info?.id;
+			const group = sessionId ? (this.groups.assignments[sessionId] ?? undefined) : undefined;
+			let note: string | undefined;
+			if (meta?.pendingDialog) {
+				note = "waiting on permission";
+			} else if (meta?.attachedElsewhere) {
+				note = "view-only";
+			} else if (state === "dead") {
+				note = "crashed - prompt respawns";
+			}
+			const longModel = meta?.model;
+		list.push({
+				key,
+				name,
+				group,
+				state,
+				daemonId: meta?.id,
+				sessionId,
+				cwd,
+				note,
+				model: longModel ? longModel.split("/").pop() : info?.model,
+				description:
+					note ??
+					this.summaries.get(key) ??
+					info?.lastActivity ??
+					(explicitName ? (first ?? base) : base),
+			});
+		}
+		// Display order: the persisted manual order (groups.json `order`)
+		// first, then sessions never manually placed, in the order captured
+		// when the switcher opened (frozen, so background file activity
+		// elsewhere never reshuffles the list under the cursor).
+		if (this.switchOrder === null) {
+			this.switchOrder = list.map((s) => s.key);
+		}
+		const manual = new Map((this.groups.order ?? []).map((k, i) => [k, i]));
+		const opened = new Map(this.switchOrder.map((k, i) => [k, i]));
+		list.sort((a, b) => {
+			let ra = a.sessionId !== undefined ? manual.get(a.sessionId) : undefined;
+			let rb = b.sessionId !== undefined ? manual.get(b.sessionId) : undefined;
+			if (ra !== undefined || rb !== undefined) {
+				ra = ra ?? Number.MAX_SAFE_INTEGER;
+				rb = rb ?? Number.MAX_SAFE_INTEGER;
+				if (ra !== rb) {
+					return ra - rb;
+				}
+			}
+			const oa = opened.get(a.key) ?? Number.MAX_SAFE_INTEGER;
+			const ob = opened.get(b.key) ?? Number.MAX_SAFE_INTEGER;
+			return oa !== ob ? oa - ob : a.key.localeCompare(b.key);
+		});
+		if (process.env.RONPI_KEYS) {
+			try {
+				appendFileSync(process.env.RONPI_KEYS, `REFRESH_SWITCHER paths=${list.length} local=${this.local.size} daemon=${this.sessions.size}: ${list.map((x) => x.key.split("/").pop()).join(",")}\n`);
+			} catch {
+				// debug only
+			}
+		}
+		this.switcher.sessions = list;
+		this.switcher.groups = this.groups.groups;
+		this.switcher.height = this.tui.terminal.rows || 24;
+		this.switcher.refresh();
+		this.tui.requestRender();
+	}
+
+	async enterSession(s: SwitcherSession): Promise<void> {
+		if (s.daemonId !== undefined && (s.state === "streaming" || s.state === "idle")) {
+			try {
+				await this.request({ type: "attach", session: s.daemonId, force: this.lastRefused === s.key });
+				this.lastRefused = null;
+			} catch (err) {
+				this.lastRefused = s.key;
+				this.switcher.hint = `${err instanceof Error ? err.message : err} - enter again to take over`;
+				this.tui.requestRender();
+				return;
+			}
+		}
+		this.viewing = s.key;
+		if (!this.views.has(s.key)) {
+			this.views.set(s.key, { items: this.parseSessionFile(s.key), tools: new Map() });
+		}
+		this.closeSwitcher();
+		this.rebuildChat();
+	}
+
+	parseSessionFile(file: string): Item[] {
+		try {
+			const content = fs.readFileSync(file, "utf8");
+			const messages: unknown[] = [];
+			for (const line of content.split("\n")) {
+				if (!line) {
+					continue;
+				}
+				try {
+					const entry = JSON.parse(line) as { type?: string; message?: unknown };
+					if (entry.type === "message" && entry.message) {
+						messages.push(entry.message);
+					}
+				} catch {
+					// tolerate a torn trailing line
+				}
+			}
+			return itemsFromMessages(messages);
+		} catch {
+			return [{ kind: "other", component: new Text(dim("(session file unreadable)"), 1, 0) }];
+		}
+	}
+
+	async newSession(): Promise<void> {
+		try {
+			const data = (await this.request({ type: "spawn", cwd: process.cwd() })) as { sessionId?: number };
+			if (typeof data?.sessionId === "number") {
+				const meta = this.sessions.get(data.sessionId);
+				if (meta) {
+					this.viewing = this.keyFor(meta);
+					this.closeSwitcher();
+				} else {
+					this.pendingEnterId = data.sessionId;
+					this.switcher.hint = "starting session...";
+				}
+			}
+		} catch (err) {
+			this.switcher.hint = `spawn failed: ${err instanceof Error ? err.message : err}`;
+			this.tui.requestRender();
+		}
+	}
+
+	async killSession(s: SwitcherSession): Promise<void> {
+		try {
+			if (s.state === "streaming" || s.state === "idle") {
+				if (s.daemonId === undefined) {
+					throw new Error("no daemon session");
+				}
+				await this.request({ type: "deactivate", session: s.daemonId });
+				this.switcher.hint = `deactivated ${s.name} (file kept; respawns on next prompt)`;
+			} else {
+				// inactive or dead: delete = trash, with a press-twice confirm
+				if (this.armedDelete !== s.key) {
+					this.armedDelete = s.key;
+					this.switcher.hint = `${s.name}: press ctrl-x again to move to trash`;
+					this.tui.requestRender();
+					return;
+				}
+				this.armedDelete = null;
+				await this.request({ type: "delete", path: s.key.startsWith("daemon:") ? undefined : s.key, session: s.daemonId });
+				this.views.delete(s.key);
+				await this.loadLocal();
+				this.switcher.hint = `${s.name} moved to trash (/restore not built yet)`;
+			}
+			this.refreshSwitcher();
+		} catch (err) {
+			this.switcher.hint = `kill failed: ${err instanceof Error ? err.message : err}`;
+		}
+		this.tui.requestRender();
+	}
+
+	/** shift+up/down on a session row: relocate within/between sections. */
+	async moveSession(delta: number, s: SwitcherSession): Promise<void> {
+		if (!s.sessionId) {
+			this.switcher.hint = "session has no id yet - prompt it once, then move it";
+			this.tui.requestRender();
+			return;
+		}
+		// Section structure INCLUDING empty groups: [ungrouped, ...groups].
+		// Moves are section-relative, so an empty group is a valid target
+		// (the moved session becomes its only member).
+		const sections: Array<{ group: string | null; uuids: string[] }> = [{ group: null, uuids: [] }];
+		for (const g of this.groups.groups) {
+			sections.push({ group: g, uuids: [] });
+		}
+		const sectionIndex = (group: string | null) => (group === null ? 0 : 1 + this.groups.groups.indexOf(group));
+		for (const x of this.switcher.sessions) {
+			if (x.sessionId !== undefined) {
+				sections[sectionIndex(x.group ?? null)].uuids.push(x.sessionId);
+			}
+		}
+		const secIdx = sectionIndex(s.group ?? null);
+		const pos = sections[secIdx].uuids.indexOf(s.sessionId as string);
+		if (pos === -1) {
+			return;
+		}
+		const uuid = s.sessionId as string;
+		if (delta > 0) {
+			if (pos < sections[secIdx].uuids.length - 1) {
+				// swap down within the section
+				const swapped = sections[secIdx].uuids[pos + 1];
+				sections[secIdx].uuids[pos + 1] = uuid;
+				sections[secIdx].uuids[pos] = swapped;
+			} else if (sections[secIdx + 1]) {
+				// last of section -> first of the next section
+				const next = sections[secIdx + 1];
+				sections[secIdx].uuids.splice(pos, 1);
+				next.uuids.unshift(uuid);
+				this.groups.assignments[uuid] = next.group;
+			} else {
+				this.switcher.hint = "already at the bottom";
+				this.tui.requestRender();
+				return;
+			}
+		} else {
+			if (pos > 0) {
+				// swap up within the section
+				const swapped = sections[secIdx].uuids[pos - 1];
+				sections[secIdx].uuids[pos - 1] = uuid;
+				sections[secIdx].uuids[pos] = swapped;
+			} else if (sections[secIdx - 1]) {
+				// first of section -> last of the previous section
+				const prev = sections[secIdx - 1];
+				sections[secIdx].uuids.splice(pos, 1);
+				prev.uuids.push(uuid);
+				this.groups.assignments[uuid] = prev.group;
+			} else {
+				this.switcher.hint = "already at the top";
+				this.tui.requestRender();
+				return;
+			}
+		}
+		this.groups.order = sections.flatMap((sec) => sec.uuids);
+		saveGroups(this.groups);
+		this.refreshSwitcher();
+		this.tui.requestRender();
+	}
+
+	/** shift+up/down on a group header: swap with the neighboring group. */
+	async moveGroup(delta: number, title: string): Promise<void> {
+		const gs = this.groups.groups;
+		const i = gs.indexOf(title);
+		const j = i + delta;
+		if (i === -1 || j < 0 || j >= gs.length) {
+			this.switcher.hint = delta < 0 ? "already the first group" : "already the last group";
+			this.tui.requestRender();
+			return;
+		}
+		gs[i] = gs[j];
+		gs[j] = title;
+		saveGroups(this.groups);
+		this.refreshSwitcher();
+		this.tui.requestRender();
+	}
+
+	/** ctrl-x on a group header: delete it (only when it has no sessions). */
+	async deleteGroupIfEmpty(title: string): Promise<void> {
+		if (title === "(ungrouped)") {
+			this.switcher.hint = "(ungrouped) can't be deleted";
+			this.tui.requestRender();
+			return;
+		}
+		const count = this.switcher.sessions.filter((x) => x.group === title).length;
+		if (count > 0) {
+			this.switcher.hint = `${title} has ${count} session${count === 1 ? "" : "s"} - move them out first`;
+			this.tui.requestRender();
+			return;
+		}
+		const i = this.groups.groups.indexOf(title);
+		if (i !== -1) {
+			this.groups.groups.splice(i, 1);
+			saveGroups(this.groups);
+		}
+		this.switcher.hint = `group ${title} deleted`;
+		this.refreshSwitcher();
+		this.tui.requestRender();
+	}
+
+	async runCommand(cmd: string, target: SwitcherSession | undefined): Promise<void> {
+		const [name, ...rest] = cmd.slice(1).split(/\s+/);
+		const arg = rest.join(" ").trim();
+		switch (name.toLowerCase()) {
+			case "new":
+				await this.newSession();
+				break;
+			case "kill":
+				if (!target) {
+					this.switcher.hint = "kill: highlight a session first";
+				} else {
+					await this.killSession(target);
+				}
+				break;
+			case "rename": {
+				if (!target) {
+					this.switcher.hint = "rename: highlight a session first";
+				} else if (!arg) {
+					this.editor.setText("/rename ");
+					this.switcher.hint = `rename: ${target.name} - type the new name and press enter`;
+				} else {
+					try {
+						await this.request({
+							type: "rename",
+							session: target.daemonId,
+							path: target.daemonId === undefined ? target.key : undefined,
+							name: arg,
+						});
+						await this.loadLocal();
+						this.refreshSwitcher();
+						this.switcher.hint = `renamed to ${arg}`;
+					} catch (err) {
+						this.switcher.hint = `rename failed: ${err instanceof Error ? err.message : err}`;
+					}
+				}
+				break;
+			}
+			case "group": {
+				if (!target) {
+					this.switcher.hint = "group: highlight a session first";
+				} else if (!arg) {
+					this.editor.setText("/group ");
+					this.switcher.hint = `group: ${target.name} - type a group name and press enter`;
+				} else if (!target.sessionId) {
+					this.switcher.hint = "group: session has no id yet";
+				} else {
+					try {
+						const group = resolveGroup(this.groups, arg);
+						this.groups.assignments[target.sessionId] = group;
+						saveGroups(this.groups);
+						this.refreshSwitcher();
+						this.switcher.hint = `${target.name} -> ${group}`;
+					} catch (err) {
+						this.switcher.hint = `group failed: ${err instanceof Error ? err.message : err}`;
+					}
+				}
+				break;
+			}
+			case "exit":
+			case "quit":
+				this.dispose();
+				break;
+			case "help":
+				this.switcher.hint = "/new /kill /rename <name> /group <name> /kill-daemon /exit /help";
+				break;
+			case "restore":
+				this.switcher.hint = "/restore is not built yet (trash keeps everything)";
+				break;
+			case "kill-daemon":
+				this.send({ type: "shutdown" });
+				this.switcher.hint = "daemon shutting down (children stop too)";
+				break;
+			default:
+				this.switcher.hint = `unknown command: /${name} (/help)`;
+		}
+		this.tui.requestRender();
+	}
+
+	// ---------------- session view ----------------
+
+	sessionKeys(data: string): boolean {
+		if (isKeyRelease(data)) {
+			return true;
+		}
+		const view = this.viewing ? this.views.get(this.viewing) : undefined;
+		if (view?.dialog && this.dialogKeys(view, data)) {
+			return true;
+		}
+		if (this.switcherOpen) {
+			return this.switcherKeys(data);
+		}
+		if (matchesKey(data, Key.escape)) {
+			// esc = interrupt the running agent (pi muscle memory)
+			const meta = this.viewing ? this.metaForPath(this.viewing) : undefined;
+			if (meta?.id !== undefined && meta.attachedToYou && meta.streaming) {
+				this.send({ type: "abort", session: meta.id });
+				this.notify("aborted");
+			}
+			return true;
+		}
+		if (isPlainLeft(data) && this.editor.getText().trim().length === 0) {
+			this.openSwitcher();
+			return true;
+		}
+		return false;
+	}
+
+	/** While the switcher is open the chat box is the switcher's input. */
+	switcherKeys(data: string): boolean {
+		const editorEmpty = this.editor.getText().trim().length === 0;
+		if (matchesKey(data, Key.up) && editorEmpty) {
+			this.switcher.move(-1);
+			this.tui.requestRender();
+			return true;
+		}
+		if (matchesKey(data, Key.down) && editorEmpty) {
+			this.switcher.move(1);
+			this.tui.requestRender();
+			return true;
+		}
+		if (matchesKey(data, "shift+up")) {
+			this.switcher.shiftMove(-1);
+			return true;
+		}
+		if (matchesKey(data, "shift+down")) {
+			this.switcher.shiftMove(1);
+			return true;
+		}
+		if (matchesKey(data, Key.escape) || (isPlainLeft(data) && editorEmpty)) {
+			// esc only closes when a session is behind the switcher; at cold
+			// start there is nothing to fall back to.
+			if (this.viewing) {
+				this.closeSwitcher();
+			} else {
+				this.switcher.hint = "enter opens the selected session";
+			}
+			return true;
+		}
+		if (matchesKey(data, Key.right) && editorEmpty) {
+			const target = this.switcher.currentOrGroupFirst();
+			if (target) {
+				void this.enterSession(target);
+			}
+			return true;
+		}
+		if (matchesKey(data, Key.ctrl("n"))) {
+			void this.newSession();
+			return true;
+		}
+		if (matchesKey(data, Key.ctrl("x"))) {
+			if (this.switcher.currentIsHeader()) {
+				void this.deleteGroupIfEmpty(this.switcher.currentHeaderTitle());
+				return true;
+			}
+			const target = this.switcher.current();
+			if (target) {
+				void this.killSession(target);
+			}
+			return true;
+		}
+		if (matchesKey(data, Key.ctrl("r"))) {
+			const target = this.switcher.current();
+			if (this.switcher.currentIsHeader() || !target) {
+				this.switcher.hint = "rename works on sessions, not group headers";
+			} else {
+				this.editor.setText(`/rename ${target.name}`);
+				this.switcher.hint = "rename: edit the name and press enter";
+			}
+			return true;
+		}
+		if (matchesKey(data, Key.ctrl("g"))) {
+			const target = this.switcher.current();
+			if (this.switcher.currentIsHeader() || !target) {
+				this.switcher.hint = "group works on sessions, not group headers";
+			} else {
+				this.editor.setText(`/group ${target.group ?? ""}`);
+				this.switcher.hint = `group: ${target.name} - edit or type a group name and press enter`;
+			}
+			return true;
+		}
+		return false;
+	}
+
+	/** Returns true when the key was consumed as a dialog answer. */
+	dialogKeys(view: SessionView, data: string): boolean {
+		const dialog = view.dialog!;
+		if (!this.viewing) {
+			return false;
+		}
+		const meta = this.metaForPath(this.viewing);
+		if (!meta?.attachedToYou) {
+			return false;
+		}
+		const answer = (fields: Record<string, unknown>) => {
+			this.send({
+				type: "ui_response",
+				session: meta.id,
+				response: { type: "extension_ui_response", id: dialog.id, ...fields },
+			});
+			view.dialog = undefined;
+			this.renderChrome();
+		};
+		if (dialog.method === "confirm") {
+			if (data === "y") {
+				answer({ confirmed: true });
+				return true;
+			}
+			if (data === "n") {
+				answer({ confirmed: false });
+				return true;
+			}
+			return false;
+		}
+		if (dialog.method === "select") {
+			const options = dialog.options ?? [];
+			const idx = Number.parseInt(data, 10);
+			if (!Number.isNaN(idx) && idx >= 1 && idx <= options.length) {
+				answer({ value: options[idx - 1] });
+				return true;
+			}
+			if (data === "\x1b") {
+				answer({ cancelled: true });
+				return true;
+			}
+		}
+		return false;
+	}
+
+	submit(text: string): void {
+		if (process.env.RONPI_KEYS) {
+			try {
+				appendFileSync(process.env.RONPI_KEYS, `SUBMIT ${JSON.stringify(text)} open=${this.switcherOpen}\n`);
+			} catch {
+				// debug only
+			}
+		}
+		const trimmed = text.trim();
+		if (this.switcherOpen) {
+			// The chat box doubles as the switcher's command line.
+			this.editor.setText("");
+			if (trimmed.startsWith("/")) {
+				void this.runCommand(trimmed, this.switcher.current());
+				return;
+			}
+			// enter on the box opens the highlighted session (or the first
+			// session under a highlighted group header)
+			const target = this.switcher.currentOrGroupFirst();
+			if (target) {
+				void this.enterSession(target);
+			}
+			return;
+		}
+		if (trimmed.length === 0) {
+			return;
+		}
+		if (trimmed === "/exit") {
+			this.dispose();
+			return;
+		}
+		if (trimmed === "/quit") {
+			this.openSwitcher();
+			this.editor.setText("");
+			return;
+		}
+		if (trimmed === "/abort") {
+			const meta = this.viewing ? this.metaForPath(this.viewing) : undefined;
+			if (meta?.id !== undefined && meta.attachedToYou) {
+				this.send({ type: "abort", session: meta.id });
+				this.notify("abort sent");
+			} else {
+				this.notify("nothing to abort here");
+			}
+			this.editor.setText("");
+			return;
+		}
+		void this.prompt(trimmed);
+		this.editor.setText("");
+	}
+
+	async prompt(text: string): Promise<void> {
+		const key = this.viewing;
+		if (!key) {
+			return;
+		}
+		const meta = this.metaForPath(key);
+		if (meta?.attachedElsewhere) {
+			this.notify("view-only: this session is attached in another controller");
+			return;
+		}
+		try {
+			if (meta) {
+				await this.request({ type: "prompt", session: meta.id, message: text });
+			} else {
+				const info = this.local.get(key);
+				if (!key.startsWith("/") || !info) {
+					this.notify("cannot start this session (no session file)");
+					return;
+				}
+				await this.request({
+					type: "prompt",
+					sessionFile: key,
+					cwd: info.cwd || path.dirname(key),
+					message: text,
+				});
+			}
+		} catch (err) {
+			this.notify(`prompt failed: ${err instanceof Error ? err.message : err}`);
+		}
+	}
+
+	// ---------------- rendering ----------------
+
+	applyEvent(key: string, view: SessionView, ev: Record<string, unknown>): void {
 		const type = ev.type as string;
 		switch (type) {
 			case "message_start": {
 				const m = ev.message as { role?: string; content?: unknown };
 				if (m?.role === "user") {
-					this.addItem(state, { kind: "user", component: new UserMessageComponent(userText(m), mdTheme, 1) });
+					this.addItem(view, key, { kind: "user", component: new UserMessageComponent(userText(m), mdTheme, 1) });
 				} else if (m?.role === "assistant") {
 					const partial = m as AssistantItem["partial"];
-					this.addItem(state, {
+					this.addItem(view, key, {
 						kind: "assistant",
 						component: new AssistantMessageComponent(partial as never, true, mdTheme, undefined, 1),
 						partial,
@@ -297,7 +1191,7 @@ class Controller {
 				break;
 			}
 			case "message_update": {
-				const item = lastAssistant(state);
+				const item = lastAssistant(view);
 				if (!item) {
 					break;
 				}
@@ -308,15 +1202,27 @@ class Controller {
 			}
 			case "message_end": {
 				const m = ev.message as { role?: string; stopReason?: string; content?: unknown } | undefined;
+				if ((m?.role === "assistant" || m?.role === "user") && userText(m).trim()) {
+					this.summaries.set(key, oneLineFlat(userText(m), 80));
+				}
 				if (m?.role === "assistant") {
-					const item = lastAssistant(state);
+					const item = lastAssistant(view);
 					if (item) {
 						item.partial = m as AssistantItem["partial"];
 						item.component.updateContent(item.partial as never, false);
+					} else {
+						// attached mid-run: the completed message never streamed here
+						this.addItem(view, key, {
+							kind: "assistant",
+							component: new AssistantMessageComponent(m as never, true, mdTheme, undefined, 1),
+							partial: m as AssistantItem["partial"],
+							text: new Map(),
+							thinking: new Map(),
+						});
 					}
 					if (m.stopReason === "error") {
-						const text = userText(m).trim() || "(provider error)";
-						this.addItem(state, { kind: "other", component: new Text(accent(`error: ${text}`), 1, 0) });
+						const errText = userText(m).trim() || "(provider error)";
+						this.addItem(view, key, { kind: "other", component: new Text(attention(`error: ${errText}`), 1, 0) });
 					}
 				}
 				break;
@@ -329,16 +1235,16 @@ class Controller {
 					undefined,
 					undefined,
 					this.tui,
-					state.meta.cwd,
+					this.metaForPath(key)?.cwd ?? this.local.get(key)?.cwd ?? process.cwd(),
 				);
 				component.markExecutionStarted();
 				const item: ToolItem = { kind: "tool", component };
-				this.addItem(state, item);
-				state.tools.set(ev.toolCallId as string, item);
+				this.addItem(view, key, item);
+				view.tools.set(ev.toolCallId as string, item);
 				break;
 			}
 			case "tool_execution_update": {
-				const item = state.tools.get(ev.toolCallId as string);
+				const item = view.tools.get(ev.toolCallId as string);
 				if (item) {
 					item.component.updateArgs(ev.args);
 					const partial = ev.partialResult as { content?: unknown } | undefined;
@@ -349,35 +1255,24 @@ class Controller {
 				break;
 			}
 			case "tool_execution_end": {
-				const item = state.tools.get(ev.toolCallId as string);
+				const item = view.tools.get(ev.toolCallId as string);
 				if (item) {
 					item.component.setArgsComplete();
 					item.component.updateResult(ev.result as never, false);
 				}
 				break;
 			}
-			case "agent_start": {
-				state.meta.streaming = true;
-				this.renderChrome();
-				break;
-			}
-			case "agent_settled": {
-				state.meta.streaming = false;
-				this.renderChrome();
-				break;
-			}
 		}
-		if (state.meta.id === this.focused) {
+		if (key === this.viewing) {
 			this.scroll.scrollToEnd();
 			this.tui.requestRender();
 		}
 	}
 
-	// Mount new items immediately on the focused tab; rebuildChat() mounts
-	// the rest of a tab's items on switch.
-	addItem(state: TabState, item: Item): void {
-		state.items.push(item);
-		if (state.meta.id === this.focused) {
+	/** Mount new items immediately on the viewed session; rebuildChat() mounts the rest. */
+	addItem(view: SessionView, key: string, item: Item): void {
+		view.items.push(item);
+		if (key === this.viewing) {
 			this.chatRoot.addChild(item.component);
 		}
 	}
@@ -403,112 +1298,31 @@ class Controller {
 			block.thinking = (item.thinking.get(idx) ?? "") + (delta.delta as string);
 			item.thinking.set(idx, block.thinking);
 		} else if (type === "text_end" || type === "thinking_end") {
-			// authoritative content replaces our reconstruction
 			const block = content[idx] as { type: string; text?: string; thinking?: string } | undefined;
-			if (block) {
-				const finalText = delta.content as string | undefined;
-				if (typeof finalText === "string") {
-					if (block.type === "text") {
-						block.text = finalText;
-						item.text.set(idx, finalText);
-					} else if (block.type === "thinking") {
-						block.thinking = finalText;
-						item.thinking.set(idx, finalText);
-					}
+			const finalText = delta.content as string | undefined;
+			if (block && typeof finalText === "string") {
+				if (block.type === "text") {
+					block.text = finalText;
+					item.text.set(idx, finalText);
+				} else if (block.type === "thinking") {
+					block.thinking = finalText;
+					item.thinking.set(idx, finalText);
 				}
 			}
 		}
 		// toolcall_* deltas are skipped: tools render from tool_execution_* events
 	}
 
-	switchTab(delta: number): void {
-		const ids = [...this.tabs.keys()].sort((a, b) => a - b);
-		if (ids.length === 0) {
-			return;
-		}
-		const pos = ids.indexOf(this.focused);
-		const next = pos === -1 ? ids[0] : ids[(pos + delta + ids.length) % ids.length];
-		if (next === this.focused) {
-			return;
-		}
-		this.focused = next;
-		this.rebuildChat();
-		this.renderChrome();
-	}
-
 	rebuildChat(): void {
 		this.chatRoot.clear();
-		const state = this.focusedTab();
-		if (state) {
-			for (const item of state.items) {
+		const view = this.viewing ? this.views.get(this.viewing) : undefined;
+		if (view) {
+			for (const item of view.items) {
 				this.chatRoot.addChild(item.component);
 			}
 		}
 		this.scroll.scrollToEnd();
 		this.tui.requestRender(true);
-	}
-
-	handleAppKey(data: string): boolean {
-		if (isKeyRelease(data)) {
-			return true;
-		}
-		if (matchesKey(data, Key.ctrl("t"))) {
-			// ctrl+T (legacy, kitty, and csi-u encodings)
-			this.switchTab(1);
-			return true;
-		}
-		if (matchesKey(data, Key.ctrl("c"))) {
-			// ctrl+C: abort if running, else quit
-			const state = this.focusedTab();
-			if (state?.meta.streaming) {
-				this.send({ type: "abort", tab: this.focused });
-				this.notify("abort sent");
-			} else {
-				this.dispose();
-			}
-			return true;
-		}
-		const state = this.focusedTab();
-		if (state?.dialog) {
-			return this.handleDialogKey(state, data);
-		}
-		return false;
-	}
-
-	handleDialogKey(state: TabState, data: string): boolean {
-		const dialog = state.dialog!;
-		if (dialog.method === "confirm") {
-			if (data === "y") {
-				this.answerDialog(state, { confirmed: true });
-				return true;
-			}
-			if (data === "n") {
-				this.answerDialog(state, { confirmed: false });
-				return true;
-			}
-		} else if (dialog.method === "select") {
-			const options = dialog.options ?? [];
-			const idx = Number.parseInt(data, 10);
-			if (!Number.isNaN(idx) && idx >= 1 && idx <= options.length) {
-				this.answerDialog(state, { value: options[idx - 1] });
-				return true;
-			}
-			if (data === "\x1b") {
-				this.answerDialog(state, { cancelled: true });
-				return true;
-			}
-		}
-		return false;
-	}
-
-	answerDialog(state: TabState, fields: Record<string, unknown>): void {
-		this.send({
-			type: "ui_response",
-			tab: state.meta.id,
-			response: { type: "extension_ui_response", id: state.dialog!.id, ...fields },
-		});
-		state.dialog = undefined;
-		this.renderChrome();
 	}
 
 	notify(message: string): void {
@@ -525,45 +1339,127 @@ class Controller {
 
 	renderChrome(): void {
 		const width = this.tui.terminal.columns || process.stdout.columns || 80;
-		const parts: string[] = [];
-		for (const id of [...this.tabs.keys()].sort((a, b) => a - b)) {
-			const state = this.tabs.get(id)!;
-			const marker = state.meta.dead ? "x" : state.meta.pendingDialog ? "!" : state.meta.streaming ? "*" : " ";
-			const focus = id === this.focused ? ">" : " ";
-			parts.push(
-				state.meta.streaming
-					? accent(`${focus}${id}${marker} ${state.meta.name}`)
-					: dim(`${focus}${id}${marker} ${state.meta.name}`),
-			);
-		}
-		this.tabsLine.setText(truncateToWidth(parts.join("   "), width));
+		const key = this.viewing;
+		const meta = key ? this.metaForPath(key) : undefined;
+		const info = key ? this.local.get(key) : undefined;
 
-		const state = this.focusedTab();
-		let status: string;
-		if (state?.dialog) {
-			const d = state.dialog;
-			if (d.method === "confirm") {
-				status = accent(`PERMISSION: ${d.title ?? "confirm"}${d.message ? ` - ${d.message}` : ""}  [y]es [n]o`);
-			} else {
-				const opts = (d.options ?? []).map((o, i) => `${i + 1}:${o}`).join("  ");
-				status = accent(`PERMISSION: ${d.title ?? "select"}  ${opts}`);
+		let running = 0;
+		let waiting = 0;
+		for (const m of this.sessions.values()) {
+			if (m.streaming) {
+				running++;
 			}
-		} else if (this.flash) {
-			status = accent(this.flash);
-		} else if (state) {
-			const activity = state.meta.streaming ? "working" : state.meta.dead ? "dead" : "idle";
-			status = dim(`${state.meta.model} | ${activity} | ctrl+T tab, ctrl+C ${state.meta.streaming ? "abort" : "quit"}`);
+			if (m.pendingDialog) {
+				waiting++;
+			}
+		}
+		this.switcher.counts = { running, waiting };
+		this.switcher.height = this.tui.terminal.rows || 24;
+		let totTokens = 0;
+		let totCost = 0;
+		for (const m of this.sessions.values()) {
+			totTokens += m.tokens ?? 0;
+			totCost += m.cost ?? 0;
+		}
+		this.switcher.budget = { cost: totCost, tokens: totTokens };
+
+		let status: string;
+		if (this.switcherOpen) {
+			const sel = this.switcher.current();
+			status = dim(
+				sel
+					? `switcher - ${sel.name} - enter open, arrows navigate, / for commands`
+					: "switcher - esc or left closes",
+			);
+		} else if (key) {
+			const explicitName = meta?.sessionName ?? info?.name;
+			const name = explicitName ?? (info?.firstMessage ? oneLineFlat(info.firstMessage, 40) : path.basename(key));
+			const state = meta
+				? !meta.active
+					? "inactive"
+					: meta.streaming
+						? "working"
+						: meta.dead
+							? "crashed"
+							: "idle"
+				: "inactive";
+			const parts = [name];
+			if (meta?.model && meta.model !== "loading") {
+				parts.push(meta.model);
+			}
+			parts.push(state);
+			if ((meta?.tokens ?? 0) > 0) {
+				parts.push(`${fmtTokens(meta.tokens as number)} tok`);
+			}
+			if ((meta?.cost ?? 0) > 0) {
+				parts.push(`$${(meta.cost as number).toFixed(2)}`);
+			}
+			if (meta?.attachedElsewhere) {
+				parts.push(attention("VIEW-ONLY"));
+			}
+			parts.push(dim(`${running} running, ${waiting} waiting`));
+			parts.push(dim("left: switcher"));
+			status = parts.join(dim(" | "));
 		} else {
-			status = dim("no tabs");
+			status = dim(`${running} running, ${waiting} waiting | left: switcher`);
+		}
+		if (this.flash) {
+			status = accent(this.flash);
+		}
+		if (this.viewing) {
+			const view = this.views.get(this.viewing);
+			if (view?.dialog) {
+				const d = view.dialog;
+				if (d.method === "confirm") {
+					status = accent(`PERMISSION: ${d.title ?? "confirm"}${d.message ? ` - ${d.message}` : ""}  [y]es [n]o`);
+				} else {
+					const opts = (d.options ?? []).map((o, i) => `${i + 1}:${o}`).join("  ");
+					status = accent(`PERMISSION: ${d.title ?? "select"}  ${opts}`);
+				}
+			}
 		}
 		this.statusLine.setText(truncateToWidth(status, width));
 		this.tui.requestRender();
 	}
 }
 
-function lastAssistant(state: TabState): AssistantItem | undefined {
-	for (let i = state.items.length - 1; i >= 0; i--) {
-		const item = state.items[i];
+function fmtTokens(n: number): string {
+	if (n >= 1e6) {
+		return `${(n / 1e6).toFixed(1)}M`;
+	}
+	if (n >= 1e3) {
+		return `${(n / 1e3).toFixed(1)}k`;
+	}
+	return String(Math.round(n));
+}
+
+/** Cheap model probe: the model_change entry sits near the top of the file. */
+function modelFromFile(path: string): string | undefined {
+	try {
+		const fd = fs.openSync(path, "r");
+		const buf = Buffer.alloc(2048);
+		const n = fs.readSync(fd, buf, 0, 2048, 0);
+		fs.closeSync(fd);
+		return /"modelId":"([^"]+)"/.exec(buf.toString("utf8", 0, n))?.[1];
+	} catch {
+		return undefined;
+	}
+}
+
+/** Tail of a long text blob, for "last activity" columns. */
+function lastLine(text: string, width = 90): string {
+	const flat = oneLineFlat(text, Number.MAX_SAFE_INTEGER);
+	return flat.length > width ? `...${flat.slice(-width)}` : flat;
+}
+
+function oneLineFlat(text: string, width: number): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	return flat.length > width ? `${flat.slice(0, width - 1)}...` : flat;
+}
+
+function lastAssistant(view: SessionView): AssistantItem | undefined {
+	for (let i = view.items.length - 1; i >= 0; i--) {
+		const item = view.items[i];
 		if (item.kind === "assistant") {
 			return item;
 		}
@@ -571,7 +1467,7 @@ function lastAssistant(state: TabState): AssistantItem | undefined {
 	return undefined;
 }
 
-function itemsFromMessages(messages: unknown[], cwd: string): Item[] {
+function itemsFromMessages(messages: unknown[]): Item[] {
 	const items: Item[] = [];
 	for (const raw of messages) {
 		const m = raw as { role?: string; content?: unknown };
@@ -593,6 +1489,10 @@ function itemsFromMessages(messages: unknown[], cwd: string): Item[] {
 }
 
 function main(): void {
+	if (process.argv[2] === "kill-server") {
+		void killServer();
+		return;
+	}
 	const controller = new Controller();
 	process.on("SIGINT", () => controller.dispose());
 	process.on("SIGTERM", () => controller.dispose());
