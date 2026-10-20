@@ -1,0 +1,5 @@
+# Generated dependencies (file: dep symlinks + npm bookkeeping)
+node_modules/
+
+# Runtime logs
+*.log
