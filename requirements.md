@@ -153,8 +153,7 @@ a requirement.
    (systemd user service), or is a manual `ronpid` acceptable given daemon
    crash kills children?
 3. Deactivation policy: manual only, or LRU auto-deactivate at the cap?
-4. Primary selection source on this machine: X11 or Wayland (affects
-   middle-click paste implementation)?
+4. DECIDED: assume Wayland (wl-paste available) for paste support.
 5. DECIDED: viewing is never exclusive - every controller receives every
    event stream; only input attach is exclusive, acquired on enter,
    refused with a hint on conflict, stolen by a second enter.

@@ -2,8 +2,6 @@
 
 ## Status
 
-## Status
-
 **M1 COMPLETE and verified** (2026-10-20; M0 same day). Code in `proto/`:
 daemon.ts (session-centric: states, exclusive attach, trash, lazy spawn),
 controller.ts, switcher.ts (overlay UI), groups.ts (shared groups JSON),
@@ -254,14 +252,151 @@ export_html; get_commands.
 - M1 usable: **DONE, verified 2026-10-20** - switcher overlay with groups,
   session states + lazy spawn, exclusive attach + take-over, permission
   forwarding (badge-and-block, re-sent on attach), trash-based delete,
-  rename, shared groups JSON in XDG data dir. Remaining for polish:
-  /restore, input/editor dialogs, solarized theme, activation cap.
-- M1 usable: full state model (active/idle/inactive + lazy spawn),
-  switcher with groups, permission forwarding (badge-and-block), status bar,
-  exclusive attach, session files resumable by stock pi.
-- M2: deactivate/reactivate + cap policy, background badges, input queuing
-  to hidden tabs, mouse paste/copy, solarized theme.
-- M3: split panes, search, polish; optional claude adapter.
+  rename, shared groups JSON in XDG data dir.
+- Trial phase (current): Ron runs real work through ronpi; friction list
+  drives fixes. Presence/adopt work landed 2026-10-21 (ronpi-presence
+  extension, /adopt, live-in-pi markers, prompt-fork confirm, ghost
+  pruning, controller announce).
+- M2: the UX batch (see "M2+ roadmap" below) - quick wins first.
+
+## M2+ roadmap (tracked 2026-10-22, Ron's list)
+
+Near-term (post-budget-reset), rough order = dependency + value:
+
+1. Switcher quick-prompt: typing a non-command line in the switcher box +
+   enter spawns a new session and delivers the text as its first prompt
+   (pieces exist: spawn flow + pendingPrompt).
+2. Slash autocomplete: pi-tui ships AutocompleteProvider /
+   CombinedAutocompleteProvider (SlashCommand with description +
+   argumentHint) - free for BOTH the switcher command box (ronpi's own
+   commands) and the session editor. Ron prefers readline semantics:
+   tab completes, tab-tab lists options (the provider's force flag looks
+   like the hook); use the popup if it comes free. Session-side needs the
+   child's command list over RPC (check rpc.md, else hardcode).
+3. Status bar parity: adopt the dotfiles status-bar.ts segments verbatim
+   ([session-name] dir | git:(branch) | model | ctx: used/max | thinking:
+   level | $cost | prov: id, green->yellow->red "badness" gradient) in
+   BOTH switcher and session views. Daemon must expose ctxUsed/ctxMax
+   (from message usage + model context window), thinkingLevel
+   (thinking_level_change events), and provider in SessionMeta; git branch
+   is controller-side (git -C <session cwd>).
+4. Paste: first test whether pi-tui's editor already handles bracketed
+   paste (zero-code path); fallback = Ctrl-V / middle-click -> wl-paste
+   insert (Wayland assumed, decided).
+5. Session input history: **DONE 2026-10-22 for the core** - the Editor
+   already had history (addToHistory + internal up/down with draft
+   restore); wired addToHistory on successful submit and bound
+   tui.editor.historyPrevious/Next to up/down (defaults are empty).
+   Verified: recall, draft stash/restore, switcher navigation unaffected.
+   Remaining: ctrl-r backward search + seeding history from the session
+   file's prior user messages on entry.
+6. Rewind + /fork (related, different semantics):
+   - esc esc = REMOVE: pi ships a user-message-selector component (the
+     same popup as its escape-escape) - reuse it, but wire selection to
+     truncate the session file back to before the chosen message and
+     respawn, stashing the trimmed tail in trash first (rewind stays
+     reversible like delete). Not a fork.
+   - /fork = explicit fork command for a LIVE session: daemon already has
+     the mechanics (adopt's --fork path); generalize so any daemon-owned
+     session can be forked into a sibling. Forks the file as last
+     flushed; in-flight child state stays with the original.
+7. In-session solarized: ONE theme definition living in the dotfiles
+   extensions (or a shared module), consumed by the controller - in RPC
+   mode the child renders nothing, so the controller does all session
+   rendering; the shared definition keeps ronpi and any future pi-side
+   use on one palette. Blocker to check: pi exports only
+   getMarkdownTheme/getSelectListTheme/initTheme - read docs/themes.md and
+   see whether initTheme accepts a custom theme object; if not, that is an
+   upstream ask.
+8. Rich output: animated working/thinking indicator, show/hide thinking
+   toggle, proper error rendering (message.error), better code-block
+   colors (rides on 7).
+
+## Building blocks already shipped (audit 2026-10-22)
+
+Things pi/pi-tui give us for essentially free (* = wire-up only), found
+while scoping M2:
+
+- *Input history: our InputEditor extends pi-tui's Editor, which already
+  has prompt history (addHistory + internal up/down with draft restore),
+  an emacs kill ring, an undo stack, word navigation, and bracketed-paste
+  handling with paste markers - we just never called addHistory. Roadmap
+  #5 shrinks to "call addHistory on send"; #4's text paste is mostly
+  handled by the editor itself.
+- *Clipboard: pi-tui exports getNativeClipboard -> getText/getImage/
+  getFilePaths (Linux via command-line tools, i.e. wl-paste/wl-copy).
+  Ctrl-V text paste is nearly free; image paste = clipboard.getImage()
+  plus the RPC image-content-parts check.
+- Image display: pi-tui Image component renders images in the terminal
+  (kitty protocol + PNG transcoder). Pairs with image paste: transcripts
+  could show what was pasted.
+- *Per-session /model and /thinking: the RPC protocol already has
+  setModel and set_thinking_level; pi ships model-selector and
+  thinking-selector popup components. Daemon passthrough + popup = new
+  per-session commands.
+- Rewind popup: pi's user-message-selector component (its escape-escape
+  popup) - noted in roadmap #6.
+- Search: alt-screen-search (search the transcript), fuzzyFilter/fuzzyMatch
+  (ctrl-r, fuzzy pickers), session-selector-search (searchable session
+  list - borrowable for the switcher).
+- Rich output: Markdown/MarkdownTheme components, pi's diff and
+  bash-execution components (proper tool-call rendering), Loader/
+  CancellableLoader (animated working indicator), renderLatex (!).
+- Mouse: pi-tui MouseRegion - clickable switcher rows are possible.
+  ON THE ROADMAP, LOW PRIORITY (Ron, 2026-10-22).
+- Terminal integration: formatProgramStatus emits OSC 7501 program status
+  (idle/working/blocked + reason) - the terminal tab title could show
+  "ronpi: 1 working, 1 blocked on permission" without focusing ronpi.
+- KeybindingsManager: centralized keybinding config - user-configurable
+  keys later.
+- Colors toolkit: parseColor/okhsl/styleText - utilities for the
+  solarized theme work.
+- Core: buildSessionProjection (leaf projection of branched session
+  files - the fix for interleaved-branch replay, currently deferred).
+
+Caveat: the interactive-mode components (user-message-selector,
+model-selector, diff, ...) are NOT exported from the package index -
+importing by internal path works but is fragile across pi updates. Ron
+flagged this as a concern (2026-10-22): when we first use one of these,
+evaluate the best mechanism before committing to raw paths. Candidate
+plan, in preference order: (1) one upstream ask exporting the interactive
+components AND the theme (bundle both); (2) a single local shim module
+(e.g. proto/pi-internal.ts) that re-exports every internal path we use,
+so a pi update breaks exactly one file with obvious fixes; (3)
+version-pin + smoke-test on pi upgrades. Decide at first use, not before.
+
+Bigger goals - design-arounds, not scheduled:
+
+- Claude Code as a session type: keep the daemon protocol agent-neutral
+  (prompt/abort/history/session-meta are already generic); the session
+  abstraction needs to grow a backend interface (spawn args, event
+  mapping) with pi as the first implementation. Claude's headless
+  stream-json mode is the counterpart; its project session files map onto
+  the session=file model.
+- Agent inter-communication by name (forks included): the daemon becomes
+  a message broker. Needs stable session names (rename exists; make names
+  first-class + unique), an addressing scheme (@name), and a
+  pi-extension-provided tool that talks to the daemon socket (the
+  presence extension already proves the socket path). Forks should
+  inherit reachability.
+- Sub-agent spawning: same tool path as inter-comm - an extension tool
+  asking the daemon to spawn a child agent and return a handle/name;
+  composes with budget (below).
+- Budget tracking: per-controller (later per-agent) token budgets. The
+  daemon already sums tokens/cost per session; add budget config, a
+  daemon-side stop/refuse condition, and propagation into spawned
+  sub-agents (needs the spawn tool).
+- Web interface: the daemon protocol is transport-agnostic JSON
+  (LineSplitter over unix socket today); a web UI is a WebSocket bridge
+  plus a re-implementation of the controller's rendering. Keep daemon
+  state terminal-free so this stays possible.
+- Image paste into sessions: needs the RPC prompt path to carry image
+  content parts - verify pi's rpc protocol supports them before
+  designing the wl-paste -> daemon -> child path.
+- Extension manager: controller installs/updates/enables extensions per
+  session type (probably never, maybe fun). Today's de-facto version is
+  the dotfiles extensions dir + install.sh; a manager would just formalize
+  that plus per-session-type filtering.
 
 ## Risks
 

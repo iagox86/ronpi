@@ -59,6 +59,8 @@ regardless of PATH.
 ## Keys
 
 Session view (chat):
+- `up`/`down` on the editor - recall previous prompts (draft is stashed
+  and restored; cursor movement wins in multi-line editors)
 - `esc` - abort the running agent (interrupt; no-op when idle)
 - `left` on empty editor - open the switcher
 - `/abort` - abort the current run (intercepted here, never sent to the child)

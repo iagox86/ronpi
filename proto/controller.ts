@@ -39,6 +39,7 @@ import {
 import { loadGroups, resolveGroup, saveGroups, type GroupsFile } from "./groups.ts";
 import { Switcher, type SessionState, type SwitcherSession } from "./switcher.ts";
 import { LineSplitter, encodeLine, type ClientCommand, type DaemonMessage, type SessionMeta } from "./shared.ts";
+import { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { accent as themeAccent, attention, dim as themeDim } from "./theme.ts";
 
 const SOCK = process.env.RONPI_SOCK ?? `${process.env.XDG_RUNTIME_DIR ?? "/tmp"}/ronpi.sock`;
@@ -207,6 +208,16 @@ function isPlainLeft(data: string): boolean {
 	const mods = Number.parseInt(m[1], 10) - 1;
 	return (mods & ~(64 | 128)) === 0;
 }
+
+// The Editor's history navigation has no default bindings - bind up/down.
+// navigateHistory falls through to cursor movement unless the editor is
+// empty or the cursor is on its first/last visual line.
+setKeybindings(
+	new KeybindingsManager(TUI_KEYBINDINGS, {
+		"tui.editor.historyPrevious": ["up"],
+		"tui.editor.historyNext": ["down"],
+	}),
+);
 
 class InputEditor extends Editor {
 	onKey?: (data: string) => boolean;
@@ -1291,6 +1302,7 @@ class Controller {
 					message: text,
 				});
 			}
+			this.editor.addToHistory(text);
 			this.editor.setText("");
 			return true;
 		} catch (err) {
