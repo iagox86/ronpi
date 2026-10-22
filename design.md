@@ -188,9 +188,12 @@ Code's agent-list shape) mirrors Claude Code's agent list:
   same call executes when idle and queues as steering when streaming. Never
   call prompt() bare during a run (pi rejects it).
 - **Trash**: delete never unlinks - the daemon moves the session file to
-  ~/.local/share/ronpi/trash/ (restorable via /restore) and removes the
-  group assignment. pi session files have no registry that can
-  regenerate them; unlink would be permanent.
+  ~/.local/share/ronpi/trash/ with a manifest (original path + timestamp)
+  and drops its in-memory entry. The group assignment is deliberately KEPT
+  so /restore brings the session back already grouped (orphan assignments
+  are harmless - they attach to nothing until a session id matches).
+  pi session files have no registry that can regenerate them; unlink
+  would be permanent.
 - **Status line** carries current session identity + ambient counts
   (N running, M waiting on permission); no permanent tab bar.
 

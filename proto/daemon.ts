@@ -39,6 +39,22 @@ const LOG = process.env.RONPI_LOG ?? path.join(import.meta.dirname, "daemon.log"
 // fire-and-forget (notify/setStatus/setWidget/setTitle/set_editor_text).
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 
+function makeSession(cwd: string, sessionFile?: string): DaemonSession {
+	return {
+		id: nextSessionId++,
+		cwd,
+		sessionFile,
+		model: "loading",
+		messageCount: 0,
+		totalTokens: 0,
+		totalCost: 0,
+		streaming: false,
+		dead: false,
+		pendingDialog: false,
+		spawning: false,
+	};
+}
+
 function log(msg: string): void {
 	try {
 		fs.appendFileSync(LOG, `${new Date().toISOString()} ${msg}\n`);
@@ -71,6 +87,11 @@ interface DaemonSession {
 }
 
 const sessions = new Map<number, DaemonSession>();
+/** Session files currently open in EXTERNAL pi processes (presence ext). */
+const externalLive = new Map<
+	string,
+	{ pid: number; lastSeen: number; cwd?: string; seenFile?: boolean }
+>();
 let nextSessionId = 1;
 const sockets = new Set<net.Socket>();
 let shuttingDown = false;
@@ -85,7 +106,7 @@ function metaFor(s: DaemonSession, socket: net.Socket): SessionMeta {
 	return {
 		id: s.id,
 		cwd: s.cwd,
-		name: s.sessionName ?? path.basename(s.cwd),
+		name: s.sessionName ?? "<unnamed>",
 		model: s.model,
 		sessionId: s.sessionId,
 		sessionFile: s.sessionFile,
@@ -98,15 +119,39 @@ function metaFor(s: DaemonSession, socket: net.Socket): SessionMeta {
 		pendingDialog: s.pendingDialog,
 		attachedToYou: s.attachedTo === socket,
 		attachedElsewhere: s.attachedTo !== undefined && s.attachedTo !== socket,
+		externallyLive: s.sessionFile !== undefined && externalLive.has(s.sessionFile),
 	};
 }
 
 function broadcastSessions(): void {
 	for (const socket of sockets) {
-		send(socket, {
-			type: "sessions",
-			sessions: [...sessions.values()].map((s) => metaFor(s, socket)),
-		});
+		const metas = [...sessions.values()].map((s) => metaFor(s, socket));
+		// An externally-live session pi has not written to disk yet (no first
+		// prompt) exists in no listAll scan - surface it here so it is visible
+		// (and prompt-blocked) in the switcher. Negative ids are pseudo and
+		// never addressable by prompt/attach.
+		const listed = new Set(metas.map((m) => m.sessionFile).filter((f) => !!f));
+		let pseudo = 0;
+		for (const [file, e] of externalLive) {
+			if (!listed.has(file)) {
+				const cwd = e.cwd || path.dirname(file);
+				metas.push({
+					id: -1 - pseudo++,
+					cwd,
+					name: path.basename(cwd),
+					model: "external pi",
+					sessionFile: file,
+					messageCount: 0,
+					streaming: false,
+					dead: false,
+					pendingDialog: false,
+					spawning: false,
+					active: false,
+					externallyLive: true,
+				});
+			}
+		}
+		send(socket, { type: "sessions", sessions: metas });
 	}
 }
 
@@ -173,20 +218,43 @@ function onChildEvent(s: DaemonSession, event: Record<string, unknown>): void {
 	}
 }
 
-async function startChild(s: DaemonSession, sessionFile?: string, name?: string): Promise<void> {
+function makeChildClient(s: DaemonSession, args: string[]): RpcClient {
+	return new RpcClient({
+		cliPath: PI_CLI,
+		cwd: s.cwd,
+		args,
+		env: { ...process.env, RONPI_CHILD: "1" },
+	});
+}
+
+async function startChild(
+	s: DaemonSession,
+	opts: { sessionFile?: string; forkPath?: string; name?: string } = {},
+): Promise<void> {
 	if (s.child) {
 		return;
 	}
 	s.spawning = true;
 	broadcastSessions();
 	try {
-		const useFile = sessionFile ?? s.sessionFile;
+		const useFile = opts.forkPath ? undefined : (opts.sessionFile ?? s.sessionFile);
 		const args: string[] = [];
-		if (useFile) {
+		if (opts.forkPath) {
+			args.push("--fork", opts.forkPath);
+		} else if (useFile) {
 			args.push("--session", useFile);
 		}
-		if (name) {
-			args.push("--name", name);
+		if (opts.name) {
+			args.push("--name", opts.name);
+		}
+		if (process.env.RONPI_THINKING) {
+			args.push("--thinking", process.env.RONPI_THINKING);
+		}
+		if (process.env.RONPI_MODEL) {
+			args.push("--model", process.env.RONPI_MODEL);
+		}
+		if (process.env.RONPI_PROVIDER) {
+			args.push("--provider", process.env.RONPI_PROVIDER);
 		}
 		// Cheap test sessions: RONPI_THINKING=low + RONPI_MODEL keep spawned
 		// agents lean (e.g. RONPI_MODEL=glm-4.7).
@@ -199,12 +267,15 @@ async function startChild(s: DaemonSession, sessionFile?: string, name?: string)
 		if (process.env.RONPI_PROVIDER) {
 			args.push("--provider", process.env.RONPI_PROVIDER);
 		}
-		const client = new RpcClient({ cliPath: PI_CLI, cwd: s.cwd, args });
+		if (process.env.RONPI_PROVIDER) {
+			args.push("--provider", process.env.RONPI_PROVIDER);
+		}
+		const client = makeChildClient(s, args);
 		client.onEvent((event) => onChildEvent(s, event as Record<string, unknown>));
 		await client.start();
 		s.child = client;
 		s.dead = false;
-		s.sessionFile = useFile ?? s.sessionFile;
+		await refreshMeta(s);
 		await refreshMeta(s);
 		log(`session ${s.id} child started (file=${s.sessionFile ?? "new"})`);
 	} finally {
@@ -284,21 +355,12 @@ async function handlePrompt(
 		if (!cmd.cwd) {
 			throw new Error("prompt for an untracked session requires cwd");
 		}
+		if (externalLive.has(cmd.sessionFile)) {
+			throw new Error("session is live in another pi process - /adopt to fork it into ronpi");
+		}
 		s = [...sessions.values()].find((x) => x.sessionFile === cmd.sessionFile);
 		if (!s) {
-			s = {
-				id: nextSessionId++,
-				cwd: cmd.cwd,
-				sessionFile: cmd.sessionFile,
-				model: "loading",
-				messageCount: 0,
-			totalTokens: 0,
-			totalCost: 0,
-				streaming: false,
-				dead: false,
-				pendingDialog: false,
-				spawning: false,
-			};
+			s = makeSession(cmd.cwd, cmd.sessionFile);
 			sessions.set(s.id, s);
 			log(`session ${s.id} registered from file ${cmd.sessionFile}`);
 		}
@@ -320,7 +382,7 @@ async function handlePrompt(
 			throw new Error("spawn in progress; retry");
 		}
 		s.attachedTo = socket;
-		await startChild(s, cmd.sessionFile, cmd.name);
+		await startChild(s, { sessionFile: cmd.sessionFile, name: cmd.name });
 		broadcastSessions();
 		const messages = await s.child!.getMessages();
 		send(socket, { type: "history", session: s.id, messages });
@@ -339,19 +401,7 @@ async function handleSpawn(
 	const existing = cmd.sessionFile
 		? [...sessions.values()].find((x) => x.sessionFile === cmd.sessionFile)
 		: undefined;
-	const s = existing ?? {
-		id: nextSessionId++,
-		cwd: cmd.cwd,
-		sessionFile: cmd.sessionFile,
-		model: "loading",
-		messageCount: 0,
-			totalTokens: 0,
-			totalCost: 0,
-		streaming: false,
-		dead: false,
-		pendingDialog: false,
-		spawning: false,
-	};
+	const s = existing ?? makeSession(cmd.cwd, cmd.sessionFile);
 	if (!existing) {
 		sessions.set(s.id, s);
 	}
@@ -366,7 +416,7 @@ async function handleSpawn(
 			throw new Error("session is attached to another controller");
 		}
 		s.attachedTo = socket;
-		await startChild(s, cmd.sessionFile, cmd.name);
+		await startChild(s, { sessionFile: cmd.sessionFile, name: cmd.name });
 		broadcastSessions();
 		const messages = await s.child!.getMessages();
 		send(socket, { type: "history", session: s.id, messages });
@@ -390,7 +440,14 @@ async function handleDelete(
 	if (s) {
 		sessions.delete(s.id);
 	}
-	const trashedTo = await trashSessionFile(file);
+	// A never-prompted session has no file on disk - dropping the entry is
+	// the whole delete. Only a bare path with nothing behind it is an error.
+	let trashedTo: string | undefined;
+	if (fs.existsSync(file)) {
+		trashedTo = await trashSessionFile(file);
+	} else if (!s) {
+		throw new Error(`session file does not exist: ${file}`);
+	}
 	broadcastSessions();
 	res(true, undefined, { trashedTo });
 }
@@ -492,10 +549,82 @@ async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder):
 			res(true);
 			break;
 		}
+		case "list":
+			send(socket, {
+				type: "sessions",
+				sessions: [...sessions.values()].map((s) => metaFor(s, socket)),
+			});
+			res(true);
+			break;
 		case "shutdown":
 			res(true);
 			shutdown();
 			break;
+		case "external_register": {
+			const file = cmd.sessionFile;
+			if ([...sessions.values()].some((s) => (s.child as { process?: { pid?: number } } | undefined)?.process?.pid === cmd.pid)) {
+				// a daemon-owned child loaded the presence extension before the
+				// RONPI_CHILD guard existed - never treat our own children as
+				// external
+				log(`ignoring self-registration from daemon child (pid ${cmd.pid})`);
+				res(true);
+				break;
+			}
+			if (cmd.live) {
+				const prev = externalLive.get(file);
+				externalLive.set(file, {
+					pid: cmd.pid,
+					lastSeen: Date.now(),
+					cwd: cmd.cwd ?? prev?.cwd,
+					seenFile: (prev?.seenFile ?? false) || fs.existsSync(file),
+				});
+				log(`external pi registered: ${file} (pid ${cmd.pid})`);
+			} else {
+				externalLive.delete(file);
+				log(`external pi deregistered: ${file}`);
+			}
+			broadcastSessions();
+			res(true);
+			break;
+		}
+		case "adopt": {
+			if (!cmd.path || !fs.existsSync(cmd.path)) {
+				throw new Error("adopt: session file not found");
+			}
+			if (!cmd.cwd) {
+				throw new Error("adopt requires cwd");
+			}
+			const existing = [...sessions.values()].find((x) => x.sessionFile === cmd.path);
+			if (existing?.child) {
+				// already daemon-managed and live: nothing to adopt
+				res(true, undefined, { sessionId: existing.id });
+				break;
+			}
+			const s = existing ?? makeSession(cmd.cwd);
+			sessions.set(s.id, s);
+			if (s.attachedTo && s.attachedTo !== socket) {
+				throw new Error("session is attached to another controller");
+			}
+			s.attachedTo = socket;
+			s.spawning = true;
+			broadcastSessions();
+			try {
+				const client = makeChildClient(s, ["--fork", cmd.path]);
+				client.onEvent((event) => onChildEvent(s, event as Record<string, unknown>));
+				await client.start();
+				s.child = client;
+				s.dead = false;
+				await refreshMeta(s);
+				log(`session ${s.id} adopted (forked from ${cmd.path})`);
+			} finally {
+				s.spawning = false;
+				broadcastSessions();
+			}
+			const messages = await s.child!.getMessages();
+			send(socket, { type: "history", session: s.id, messages });
+			res(true, undefined, { sessionId: s.id });
+			break;
+		}
 		case "ui_response": {
 			const s = sessions.get(cmd.session);
 			if (!s?.child) {
@@ -523,42 +652,12 @@ async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder):
 	}
 }
 
-const server = net.createServer((socket) => {
-	sockets.add(socket);
-	const splitter = new LineSplitter();
-	socket.on("data", (chunk: Buffer) => {
-		for (const line of splitter.push(chunk.toString("utf8"))) {
-			let cmd: ClientCommand;
-			try {
-				cmd = JSON.parse(line) as ClientCommand;
-			} catch (err) {
-				log(`bad client line: ${err}`);
-				continue;
-			}
-			void dispatch(cmd, socket, makeResponder(socket, cmd.id)).catch((err: unknown) => {
-				const msg = err instanceof Error ? err.message : String(err);
-				log(`command ${cmd.type} failed: ${msg}`);
-				makeResponder(socket, cmd.id)(false, msg);
-			});
-		}
-	});
-	socket.on("error", () => {});
-	socket.on("close", () => {
-		sockets.delete(socket);
-		// Release any attaches held by the gone socket.
-		let changed = false;
-		for (const s of sessions.values()) {
-			if (s.attachedTo === socket) {
-				s.attachedTo = undefined;
-				changed = true;
-			}
-		}
-		if (changed) {
-			broadcastSessions();
-		}
-		log(`controller detached (${sockets.size} connected)`);
-	});
+// Presence-only connections (the extension's fire-and-forget heartbeats)
+// never become controllers: no initial sync, no attach accounting.
+const presenceSockets = new Set<net.Socket>();
 
+function addController(socket: net.Socket): void {
+	sockets.add(socket);
 	// Initial sync: this socket's session view + transcript replay per child.
 	send(socket, {
 		type: "sessions",
@@ -576,6 +675,52 @@ const server = net.createServer((socket) => {
 		}
 	}
 	log(`controller attached (${sockets.size} connected)`);
+}
+
+const server = net.createServer((socket) => {
+	const splitter = new LineSplitter();
+	socket.on("data", (chunk: Buffer) => {
+		for (const line of splitter.push(chunk.toString("utf8"))) {
+			let cmd: ClientCommand;
+			try {
+				cmd = JSON.parse(line) as ClientCommand;
+			} catch (err) {
+				log(`bad client line: ${err}`);
+				continue;
+			}
+			if (cmd.type === "external_register" && !sockets.has(socket)) {
+				presenceSockets.add(socket);
+			} else if (!sockets.has(socket) && !presenceSockets.has(socket)) {
+				addController(socket);
+			}
+			void dispatch(cmd, socket, makeResponder(socket, cmd.id)).catch((err: unknown) => {
+				const msg = err instanceof Error ? err.message : String(err);
+				log(`command ${cmd.type} failed: ${msg}`);
+				makeResponder(socket, cmd.id)(false, msg);
+			});
+		}
+	});
+	socket.on("error", () => {});
+	socket.on("close", () => {
+		if (presenceSockets.delete(socket)) {
+			return;
+		}
+		if (!sockets.delete(socket)) {
+			return;
+		}
+		// Release any attaches held by the gone socket.
+		let changed = false;
+		for (const s of sessions.values()) {
+			if (s.attachedTo === socket) {
+				s.attachedTo = undefined;
+				changed = true;
+			}
+		}
+		if (changed) {
+			broadcastSessions();
+		}
+		log(`controller detached (${sockets.size} connected)`);
+	});
 });
 
 async function main(): Promise<void> {
@@ -584,6 +729,28 @@ async function main(): Promise<void> {
 	await new Promise<void>((resolve) => server.listen(SOCK, resolve));
 	fs.writeFileSync(PID_FILE, `${process.pid}\n`);
 	log(`listening on ${SOCK} (pid ${process.pid})`);
+
+	// Prune stale external presence registrations (>90s without heartbeat).
+	// Also drop "ghosts": registrations whose session file we have seen on
+	// disk and which has since been deleted (e.g. via pi's resume picker) -
+	// no point listing a session that no longer exists anywhere.
+	const pruner = setInterval(() => {
+		const now = Date.now();
+		let changed = false;
+		for (const [file, e] of externalLive) {
+			e.seenFile = e.seenFile || fs.existsSync(file);
+			const deleted = e.seenFile && !fs.existsSync(file);
+			if (deleted || now - e.lastSeen > 90_000) {
+				externalLive.delete(file);
+				changed = true;
+				log(deleted ? `external session deleted on disk: ${file}` : `external presence expired: ${file}`);
+			}
+		}
+		if (changed) {
+			broadcastSessions();
+		}
+	}, 30_000);
+	pruner.unref();
 
 	// Liveness poll: refresh metadata, notice crashed children. Also detect
 	// orphaning: if our socket file is deleted (rm -rf of the runtime dir),

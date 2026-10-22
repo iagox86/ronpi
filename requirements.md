@@ -105,6 +105,24 @@ a requirement.
 - Background-tab badges: finished run, waiting-on-permission.
 - Queuing input to non-visible tabs.
 - Split panes; transcript search.
+- Session retention policy (future): pi itself never cleans up session
+  files (no retention/TTL anywhere in 1.3.x - verified in source); the
+  daemon could optionally auto-trash sessions idle > N days (mtimes are
+  already tracked for the age column).
+- External pi processes (IMPLEMENTED): pi has no session locking, so a
+  session file open in a plain `pi` process looks inactive to ronpi. The
+  ronpi-presence extension (loaded by every pi) registers live processes
+  with the daemon (30s heartbeat, 90s expiry); the switcher marks those
+  sessions [pi] + dimmed, the session view shows LIVE-IN-PI. Prompting a
+  pi-owned session asks once ("this forks the conversation"), then forks
+  into a new ronpi-owned session (pi-native --fork) and delivers the
+  prompt there; /adopt forks without a prompt. Sessions open in BOTH
+  ronpi and an external pi refuse prompts (two live writers cannot be
+  made safe by forking). Fallback for extension-less pi: the 60s-mtime
+  warn-and-confirm with the same fork semantics.
+  Known limitation: branched files (from forking mid-run) replay in file
+  order, interleaving branches - leaf-projection via
+  buildSessionProjection is the later fix.
 - Session-view input parity (future): esc briefly pauses input while
   streaming; child TUI slash commands that need interactivity (/model etc)
   mapped to RPC equivalents (set_model/cycle_model, compact, ...);

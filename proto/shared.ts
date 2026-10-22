@@ -24,6 +24,8 @@ export interface SessionMeta {
 	/** False when the child has been deactivated (session is file-only). */
 	active: boolean;
 	pendingDialog: boolean;
+	/** The session file is open in an external pi process (presence ext). */
+	externallyLive?: boolean;
 	/** Lifetime token/cost rollup tracked by the daemon. */
 	tokens?: number;
 	cost?: number;
@@ -60,7 +62,15 @@ export type ClientCommand =
 	| { type: "detach"; session: number }
 	| { type: "ui_response"; session: number; response: Record<string, unknown> }
 	/** Orderly daemon shutdown (children stop too). */
-	| { type: "shutdown" };
+	| { type: "shutdown" }
+	/** Presence heartbeat from the ronpi-presence extension in an external
+	 * pi process (live=false deregisters on shutdown). */
+	| { type: "external_register"; pid: number; sessionFile: string; cwd: string; live: boolean }
+	/** Fork an external session file into a new ronpi-owned session. */
+	| { type: "adopt"; id?: string; path: string; cwd: string }
+	/** Controller announce: classifies the connection as a controller (not a
+	 * presence heartbeat) and requests the current session list. */
+	| { type: "list" };
 
 // daemon -> controller
 export type DaemonMessage =

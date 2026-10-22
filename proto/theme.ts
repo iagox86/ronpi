@@ -12,3 +12,7 @@ export const selected = (s: string) => `\x1b[1m\x1b[38;5;37m${s}\x1b[39m\x1b[22m
 export const streaming = (s: string) => `\x1b[38;5;136m${s}\x1b[39m`;
 /** orange - attention (waiting on permission, errors). */
 export const attention = (s: string) => `\x1b[38;5;166m${s}\x1b[39m`;
+/** bright white bold - column headers. */
+export const header = (s: string) => `\x1b[1m\x1b[97m${s}\x1b[0m`;
+/** pure white - group titles. */
+export const groupTitle = (s: string) => `\x1b[97m${s}\x1b[0m`;

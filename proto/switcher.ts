@@ -6,7 +6,16 @@
 // controller's chat box (the editor): this component only renders and moves.
 import { appendFileSync } from "node:fs";
 import { Container, truncateToWidth, type Focusable } from "@earendil-works/pi-tui";
-import { accent as selAccent, attention, bg, dim as themeDim, selected, streaming as streamingStyle } from "./theme.ts";
+import {
+	accent as selAccent,
+	attention,
+	bg,
+	dim as themeDim,
+	groupTitle,
+	header,
+	selected,
+	streaming as streamingStyle,
+} from "./theme.ts";
 
 export type SessionState = "streaming" | "idle" | "inactive" | "dead";
 
@@ -22,8 +31,12 @@ export interface SwitcherSession {
 	sessionId?: string;
 	cwd?: string;
 	note?: string;
+	/** Preformatted age of the last request/response, e.g. "30s", "2h". */
+	age?: string;
 	/** Short model id, e.g. "glm-5.3-flash". */
 	model?: string;
+	/** Live in an external pi process: [pi] prefix + dimmed until selected. */
+	muted?: boolean;
 	/** First user message, shown in the description column when idle-ish. */
 	description?: string;
 }
@@ -35,9 +48,7 @@ const MARKERS: Record<SessionState, string> = {
 	dead: "x",
 };
 
-const NAME_CAP = 34;
 const DESC_MIN = 20;
-const COL_GAP = 4;
 const dim = (s: string) => (s ? themeDim(s) : "");
 
 function oneLine(text: string): string {
@@ -130,6 +141,20 @@ export class Switcher extends Container implements Focusable {
 			at = 0;
 		}
 		this.selRow = ordered.length === 0 ? 0 : this.rowIndexOfSession(at);
+	}
+
+	/** Select the entry that follows `key` in display order (or the previous
+	 * one when it is last) - called before a delete so the cursor stays put. */
+	selectNextAfter(key: string): void {
+		const at = this.sessions.findIndex((s) => s.key === key);
+		if (at === -1) {
+			return;
+		}
+		const next = this.sessions[at + 1] ?? this.sessions[at - 1];
+		if (next) {
+			this.selectedKey = next.key;
+			this.selectedHeader = null;
+		}
 	}
 
 	/** Display-row index of the Nth session. */
@@ -228,32 +253,50 @@ export class Switcher extends Container implements Focusable {
 
 	render(width: number): string[] {
 		const height = Math.max(6, this.heightProvider?.() ?? this.height);
-		const chrome = 6; // header + label + blank + blank + hint + one spare
-		const budget = Math.max(4, height - chrome);
+		const budget = Math.max(4, height - 6);
+
+		// The session column is fixed at the longest name's width - names are
+		// never cut. When the window is too narrow, columns drop in order:
+		// summary first, then model. Age always stays.
+		let maxName = 0;
+		for (const s of this.sessions) {
+			maxName = Math.max(maxName, visibleLen(`${MARKERS[s.state]} ${s.name}`) + 3);
+		}
+		const nameWidth = Math.max(18, maxName + 1);
+		const ageCol = 7;
+		const hasModel = this.sessions.some((s) => s.model);
+		const modelCol = hasModel ? 16 : 0;
+		const COL_GAP = 4;
+
+		const GAP = "    ";
+		const ageW = 5;
+		const modelW = 14;
+		let showModel = hasModel;
+		let showSummary = true;
+		let summaryWidth =
+			width - nameWidth - GAP.length - ageW - GAP.length - (showModel ? modelW + GAP.length : 0) - GAP.length;
+		if (summaryWidth < DESC_MIN) {
+			showModel = false;
+			summaryWidth = width - nameWidth - GAP.length - ageW - GAP.length;
+		}
+		if (summaryWidth < DESC_MIN) {
+			showSummary = false;
+		}
 
 		const lines: string[] = [];
-
-		// Column width from content, clamped; wide enough that the name cell
-		// never truncates (the truncator appends an ellipsis mid-row).
-		let nameWidth = 0;
-		for (const s of this.sessions) {
-			nameWidth = Math.max(nameWidth, visibleLen(`${MARKERS[s.state]} ${s.name}`) + 2);
-		}
-		nameWidth = Math.max(16, Math.min(NAME_CAP + 2, nameWidth));
-		const hasModel = this.sessions.some((s) => s.model);
-		const modelWidth = hasModel ? 15 : 0;
-
 		const budgetText =
-			this.budget.cost > 0 ? ` · $${this.budget.cost.toFixed(2)} · ${fmtTokens(this.budget.tokens)} tok` : "";
+			this.budget.cost > 0 ? ` \u00b7 $${this.budget.cost.toFixed(2)} \u00b7 ${fmtTokens(this.budget.tokens)} tok` : "";
 		lines.push(dim(`ronpi  ${this.counts.running} running, ${this.counts.waiting} waiting on permission${budgetText}`));
-		lines.push(
-			dim(
-				"session".padEnd(nameWidth) +
-					(modelWidth ? "model".padEnd(modelWidth) : "") +
-					"last activity",
-			),
-		);
-		lines.push("");
+
+		const labelCells: string[] = ["Session".padEnd(nameWidth), "Age".padEnd(ageW)];
+		if (showModel) {
+			labelCells.push("Model".padEnd(modelW));
+		}
+		if (showSummary) {
+			labelCells.push("Summary");
+		}
+		lines.push(header(truncateToWidth(labelCells.join(GAP), width)));
+		lines.push(dim("\u2500".repeat(width)));
 
 		let start = 0;
 		if (this.rows.length > budget) {
@@ -268,21 +311,30 @@ export class Switcher extends Container implements Focusable {
 			}
 			if (row.kind === "header") {
 				const isSelHeader = this.selectedHeader === row.title && this.selectedKey === null;
-				lines.push(isSelHeader ? selected(oneLine(row.title)) : dim(oneLine(row.title)));
+				lines.push(isSelHeader ? selected(oneLine(row.title)) : groupTitle(oneLine(row.title)));
 				continue;
 			}
 			const s = row.s;
 			const isSel = s.key === this.selectedKey;
 			const marker = s.note === "waiting on permission" ? attention("!") : s.state === "streaming" ? streamingStyle("*") : MARKERS[s.state];
 			const markerText = isSel ? marker : dim(marker);
-			const body = truncateToWidth(oneLine(s.name), nameWidth - 2).padEnd(nameWidth - 2);
-			const modelCell = hasModel ? truncateToWidth(s.model ?? "-", 14).padEnd(14) : "";
-			const desc = this.descriptionFor(s);
-			const descText = desc
-				? " ".repeat(COL_GAP) + dim(truncateToWidth(desc, Math.max(DESC_MIN, width - nameWidth - modelWidth - COL_GAP - 4)))
-				: "";
-			const nameText = `${markerText}  ${body}${dim(modelCell)}`;
-			lines.push(isSel ? `${selected(nameText)}${descText}` : `${nameText}${descText}`);
+			const displayName = s.muted ? `[pi] ${oneLine(s.name)}` : oneLine(s.name);
+			const bodyCell = truncateToWidth(displayName, nameWidth - 3).padEnd(nameWidth - 3);
+			const body = !isSel && s.muted ? dim(bodyCell) : bodyCell;
+			const ageCell = dim(truncateToWidth(s.age ?? "-", ageW).padEnd(ageW));
+			let line = `${markerText}  ${body}`;
+			line += GAP + ageCell;
+			if (showModel) {
+				const modelCell = dim(truncateToWidth(s.model ?? "-", modelW).padEnd(modelW));
+				line += GAP + modelCell;
+			}
+			if (showSummary) {
+				const desc = this.descriptionFor(s);
+				if (desc) {
+					line += GAP + dim(truncateToWidth(desc, Math.max(DESC_MIN, summaryWidth)));
+				}
+			}
+			lines.push(isSel ? selected(line) : line);
 		}
 
 		lines.push("");

@@ -253,8 +253,12 @@ class Controller {
 	switcherOpen = false;
 
 	private lastRefused: string | null = null;
+	/** Armed: prompting a recently-modified external session (fork warning). */
+	private armedFork: string | null = null;
 	private armedDelete: string | null = null;
 	private pendingEnterId: number | null = null;
+	/** Text to send once pendingEnterId resolves (adopt-then-prompt flow). */
+	private pendingPrompt: string | null = null;
 	private reqSeq = 0;
 	private responses = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 	private flash = "";
@@ -348,6 +352,12 @@ class Controller {
 			const socket = net.connect(SOCK);
 			socket.once("connect", () => {
 				this.socket = socket;
+				// Announce ourselves: the daemon classifies connections by their
+				// first command (presence heartbeats vs controllers), and its
+				// initial sync + broadcast membership are keyed on that. Without
+				// this the controller never enters the broadcast set and misses
+				// every session update until its first user-driven command.
+				this.send({ type: "list" });
 				const splitter = new LineSplitter();
 				socket.on("data", (chunk: Buffer) => {
 					for (const line of splitter.push(chunk.toString("utf8"))) {
@@ -422,6 +432,12 @@ class Controller {
 				if (this.pendingEnterId !== null && this.sessions.has(this.pendingEnterId)) {
 					const meta = this.sessions.get(this.pendingEnterId)!;
 					this.pendingEnterId = null;
+					const queuedPrompt = this.pendingPrompt;
+					this.pendingPrompt = null;
+					this.viewing = this.keyFor(meta);
+					if (queuedPrompt) {
+						void this.prompt(queuedPrompt);
+					}
 					this.viewing = this.keyFor(meta);
 					this.closeSwitcher();
 				}
@@ -434,7 +450,7 @@ class Controller {
 			case "history": {
 				const key = this.keyById(msg.session);
 				if (key) {
-					this.views.set(key, { items: itemsFromMessages(msg.messages), tools: new Map() });
+					this.views.set(key, { items: itemsFromMessages(msg.messages, this.tui, this.metaForPath(key)?.cwd ?? ""), tools: new Map() });
 					if (key === this.viewing) {
 						this.rebuildChat();
 					}
@@ -554,6 +570,7 @@ class Controller {
 		this.switchOrder = null;
 		this.armedDelete = null;
 		this.lastRefused = null;
+		this.armedFork = null;
 		// Land on the session we were just in, else the first session.
 		this.switcher.selectedKey = this.viewing;
 		this.refreshSwitcher();
@@ -591,7 +608,7 @@ class Controller {
 			const explicitName = meta?.sessionName ?? info?.name;
 			const first = info?.firstMessage ? oneLineFlat(info.firstMessage, 40) : undefined;
 			const base = path.basename(cwd);
-			const name = explicitName ?? first ?? base;
+			const name = explicitName ?? first ?? "<unnamed>";
 			let state: SessionState = "inactive";
 			if (meta?.active) {
 				state = meta.streaming ? "streaming" : meta.dead ? "dead" : "idle";
@@ -601,21 +618,26 @@ class Controller {
 			let note: string | undefined;
 			if (meta?.pendingDialog) {
 				note = "waiting on permission";
+			} else if (meta?.externallyLive) {
+				note = "live in pi - /adopt to fork";
 			} else if (meta?.attachedElsewhere) {
 				note = "view-only";
 			} else if (state === "dead") {
 				note = "crashed - prompt respawns";
 			}
 			const longModel = meta?.model;
+		const modified = info?.modified ?? 0;
 		list.push({
 				key,
 				name,
 				group,
 				state,
+				muted: !!meta?.externallyLive,
 				daemonId: meta?.id,
 				sessionId,
 				cwd,
 				note,
+				age: fmtAge(modified > 0 ? Date.now() - modified : 0),
 				model: longModel ? longModel.split("/").pop() : info?.model,
 				description:
 					note ??
@@ -675,13 +697,13 @@ class Controller {
 		}
 		this.viewing = s.key;
 		if (!this.views.has(s.key)) {
-			this.views.set(s.key, { items: this.parseSessionFile(s.key), tools: new Map() });
+			this.views.set(s.key, { items: this.parseSessionFile(s.key, this.tui, s.cwd), tools: new Map() });
 		}
 		this.closeSwitcher();
 		this.rebuildChat();
 	}
 
-	parseSessionFile(file: string): Item[] {
+	parseSessionFile(file: string, tui: TuiAltScreen, cwd: string): Item[] {
 		try {
 			const content = fs.readFileSync(file, "utf8");
 			const messages: unknown[] = [];
@@ -698,7 +720,7 @@ class Controller {
 					// tolerate a torn trailing line
 				}
 			}
-			return itemsFromMessages(messages);
+			return itemsFromMessages(messages, tui, cwd);
 		} catch {
 			return [{ kind: "other", component: new Text(dim("(session file unreadable)"), 1, 0) }];
 		}
@@ -740,6 +762,9 @@ class Controller {
 					return;
 				}
 				this.armedDelete = null;
+				// keep the cursor where it is: select the next entry (or the
+				// previous one at the end) before the row disappears
+				this.switcher.selectNextAfter(s.key);
 				await this.request({ type: "delete", path: s.key.startsWith("daemon:") ? undefined : s.key, session: s.daemonId });
 				this.views.delete(s.key);
 				await this.loadLocal();
@@ -852,6 +877,13 @@ class Controller {
 		const i = this.groups.groups.indexOf(title);
 		if (i !== -1) {
 			this.groups.groups.splice(i, 1);
+			// Purge stale assignments (e.g. from trashed sessions) - saveGroups
+			// resurrects any group an assignment still references.
+			for (const [id, g] of Object.entries(this.groups.assignments)) {
+				if (g === title) {
+					this.groups.assignments[id] = null;
+				}
+			}
 			saveGroups(this.groups);
 		}
 		this.switcher.hint = `group ${title} deleted`;
@@ -922,11 +954,38 @@ class Controller {
 				this.dispose();
 				break;
 			case "help":
-				this.switcher.hint = "/new /kill /rename <name> /group <name> /kill-daemon /exit /help";
+				this.switcher.hint = "/new /kill /rename <name> /group <name> /adopt /kill-daemon /exit /help";
 				break;
 			case "restore":
 				this.switcher.hint = "/restore is not built yet (trash keeps everything)";
 				break;
+			case "adopt": {
+				const t = target ?? this.switcher.current();
+				if (!t) {
+					this.switcher.hint = "adopt: highlight a session first";
+				} else if (!t.key.startsWith("/")) {
+					this.switcher.hint = "adopt: not a file-backed session";
+				} else {
+					try {
+						const data = (await this.request({ type: "adopt", path: t.key, cwd: t.cwd ?? process.cwd() })) as {
+							sessionId?: number;
+						};
+						if (typeof data?.sessionId === "number") {
+							const meta = this.sessions.get(data.sessionId);
+							if (meta) {
+								this.viewing = this.keyFor(meta);
+								this.closeSwitcher();
+							} else {
+								this.pendingEnterId = data.sessionId;
+								this.switcher.hint = "adopting...";
+							}
+						}
+					} catch (err) {
+						this.switcher.hint = `adopt failed: ${err instanceof Error ? err.message : err}`;
+					}
+				}
+				break;
+			}
 			case "kill-daemon":
 				this.send({ type: "shutdown" });
 				this.switcher.hint = "daemon shutting down (children stop too)";
@@ -951,7 +1010,9 @@ class Controller {
 			return this.switcherKeys(data);
 		}
 		if (matchesKey(data, Key.escape)) {
-			// esc = interrupt the running agent (pi muscle memory)
+			// esc = interrupt the running agent (pi muscle memory); also
+			// cancels an armed fork-confirm
+			this.armedFork = null;
 			const meta = this.viewing ? this.metaForPath(this.viewing) : undefined;
 			if (meta?.id !== undefined && meta.attachedToYou && meta.streaming) {
 				this.send({ type: "abort", session: meta.id });
@@ -987,16 +1048,17 @@ class Controller {
 			this.switcher.shiftMove(1);
 			return true;
 		}
-		if (matchesKey(data, Key.escape) || (isPlainLeft(data) && editorEmpty)) {
-			// esc only closes when a session is behind the switcher; at cold
-			// start there is nothing to fall back to.
-			if (this.viewing) {
-				this.closeSwitcher();
-			} else {
-				this.switcher.hint = "enter opens the selected session";
+		if (matchesKey(data, Key.escape)) {
+			// In the switcher, esc cancels the action in progress (a typed
+			// command) - it never navigates. left is the "go back" key.
+			if (this.editor.getText().trim().length > 0) {
+				this.editor.setText("");
+				this.switcher.hint = "";
 			}
 			return true;
 		}
+// left is a no-op in the switcher (furthest back level)
+
 		if (matchesKey(data, Key.right) && editorEmpty) {
 			const target = this.switcher.currentOrGroupFirst();
 			if (target) {
@@ -1135,18 +1197,63 @@ class Controller {
 			return;
 		}
 		void this.prompt(trimmed);
-		this.editor.setText("");
 	}
 
-	async prompt(text: string): Promise<void> {
+	/** /adopt the given session file, then deliver `text` to the fork once
+	 * entered. The prompt replays from pendingPrompt if the session metadata
+	 * has not arrived yet. */
+	private async adoptAndPrompt(key: string, cwd: string, text: string): Promise<void> {
+		try {
+			const data = (await this.request({ type: "adopt", path: key, cwd })) as {
+				sessionId?: number;
+			};
+			if (typeof data?.sessionId !== "number") {
+				throw new Error("no session id");
+			}
+			const meta = this.sessions.get(data.sessionId);
+			if (meta) {
+				this.viewing = this.keyFor(meta);
+				await this.prompt(text);
+			} else {
+				this.pendingEnterId = data.sessionId;
+				this.pendingPrompt = text;
+			}
+		} catch (err) {
+			this.notify(`fork failed: ${err instanceof Error ? err.message : err}`);
+			this.editor.setText(text);
+		}
+	}
+
+	async prompt(text: string): Promise<boolean> {
 		const key = this.viewing;
 		if (!key) {
-			return;
+			return false;
 		}
 		const meta = this.metaForPath(key);
 		if (meta?.attachedElsewhere) {
 			this.notify("view-only: this session is attached in another controller");
-			return;
+			return false;
+		}
+		if (meta?.externallyLive && meta.active) {
+			// double-open: ronpi owns a live child AND a plain pi has the same
+			// file open - forking cannot help, two writers would diverge
+			this.notify("open in both ronpi and another pi - close one before prompting here");
+			this.editor.setText(text);
+			return false;
+		}
+		if (meta?.externallyLive) {
+			if (this.armedFork !== key) {
+				this.armedFork = key;
+				this.notify(
+					"live in another pi - continuing here FORKS the conversation (pi keeps its copy). enter again to fork and continue here, esc to cancel",
+				);
+				this.editor.setText(text);
+				return false;
+			}
+			this.armedFork = null;
+			const cwd = meta.cwd || path.dirname(key);
+			void this.adoptAndPrompt(key, cwd, text);
+			return true;
 		}
 		try {
 			if (meta) {
@@ -1155,8 +1262,28 @@ class Controller {
 				const info = this.local.get(key);
 				if (!key.startsWith("/") || !info) {
 					this.notify("cannot start this session (no session file)");
-					return;
+					return false;
 				}
+				// The file may be open in an external (non-daemon) pi process -
+				// undetectable directly, but a very recent mtime is a strong
+				// signal. Prompting it forks the conversation (pi's tree
+				// format keeps both branches), so confirm once.
+				let mtimeMs = 0;
+				try {
+					mtimeMs = fs.statSync(key).mtimeMs;
+				} catch {
+					// stat failure: treat as old
+				}
+				const recent = Date.now() - mtimeMs < 60_000;
+				if (recent && this.armedFork !== key) {
+					this.armedFork = key;
+					this.notify(
+						`changed ${fmtAge(Date.now() - mtimeMs)} ago - may be open in another pi; enter again to FORK it and continue here, esc to cancel`,
+					);
+					this.editor.setText(text);
+					return false;
+				}
+				this.armedFork = null;
 				await this.request({
 					type: "prompt",
 					sessionFile: key,
@@ -1164,8 +1291,12 @@ class Controller {
 					message: text,
 				});
 			}
+			this.editor.setText("");
+			return true;
 		} catch (err) {
 			this.notify(`prompt failed: ${err instanceof Error ? err.message : err}`);
+			this.editor.setText(text);
+			return false;
 		}
 	}
 
@@ -1204,6 +1335,12 @@ class Controller {
 				const m = ev.message as { role?: string; stopReason?: string; content?: unknown } | undefined;
 				if ((m?.role === "assistant" || m?.role === "user") && userText(m).trim()) {
 					this.summaries.set(key, oneLineFlat(userText(m), 80));
+				}
+				if (m?.role === "assistant" || m?.role === "user") {
+					const info = this.local.get(key);
+					if (info) {
+						info.modified = Date.now();
+					}
 				}
 				if (m?.role === "assistant") {
 					const item = lastAssistant(view);
@@ -1373,7 +1510,8 @@ class Controller {
 			);
 		} else if (key) {
 			const explicitName = meta?.sessionName ?? info?.name;
-			const name = explicitName ?? (info?.firstMessage ? oneLineFlat(info.firstMessage, 40) : path.basename(key));
+			const first = info?.firstMessage ? oneLineFlat(info.firstMessage, 40) : undefined;
+			const name = explicitName ?? first ?? "<unnamed>";
 			const state = meta
 				? !meta.active
 					? "inactive"
@@ -1384,8 +1522,9 @@ class Controller {
 							: "idle"
 				: "inactive";
 			const parts = [name];
-			if (meta?.model && meta.model !== "loading") {
-				parts.push(meta.model);
+			const shortModel = meta?.model?.split("/").pop();
+			if (shortModel && shortModel !== "loading") {
+				parts.push(shortModel);
 			}
 			parts.push(state);
 			if ((meta?.tokens ?? 0) > 0) {
@@ -1396,6 +1535,9 @@ class Controller {
 			}
 			if (meta?.attachedElsewhere) {
 				parts.push(attention("VIEW-ONLY"));
+			}
+			if (meta?.externallyLive) {
+				parts.push(attention("LIVE-IN-PI"));
 			}
 			parts.push(dim(`${running} running, ${waiting} waiting`));
 			parts.push(dim("left: switcher"));
@@ -1421,6 +1563,22 @@ class Controller {
 		this.statusLine.setText(truncateToWidth(status, width));
 		this.tui.requestRender();
 	}
+}
+
+function fmtAge(ms: number): string {
+	const s = Math.max(0, Math.floor(ms / 1000));
+	if (s < 60) {
+		return `${s}s`;
+	}
+	const m = Math.floor(s / 60);
+	if (m < 60) {
+		return `${m}m`;
+	}
+	const h = Math.floor(m / 60);
+	if (h < 24) {
+		return `${h}h`;
+	}
+	return `${Math.floor(h / 24)}d`;
 }
 
 function fmtTokens(n: number): string {
@@ -1467,10 +1625,25 @@ function lastAssistant(view: SessionView): AssistantItem | undefined {
 	return undefined;
 }
 
-function itemsFromMessages(messages: unknown[]): Item[] {
+function itemsFromMessages(messages: unknown[], tui: TuiAltScreen, cwd: string): Item[] {
 	const items: Item[] = [];
+	// toolCall blocks from assistant messages, matched to toolResults on replay
+	const argsById = new Map<string, { name?: string; args: unknown }>();
 	for (const raw of messages) {
-		const m = raw as { role?: string; content?: unknown };
+		const m = raw as {
+			role?: string;
+			content?: unknown;
+			toolName?: string;
+			toolCallId?: string;
+			isError?: boolean;
+		};
+		if (m.role === "assistant" && Array.isArray(m.content)) {
+			for (const block of m.content as Array<{ type?: string; id?: string; name?: string; arguments?: unknown }>) {
+				if (block?.type === "toolCall" && block.id) {
+					argsById.set(block.id, { name: block.name, args: block.arguments ?? {} });
+				}
+			}
+		}
 		if (m.role === "user") {
 			items.push({ kind: "user", component: new UserMessageComponent(userText(m), mdTheme, 1) });
 		} else if (m.role === "assistant") {
@@ -1482,7 +1655,26 @@ function itemsFromMessages(messages: unknown[]): Item[] {
 				thinking: new Map(),
 			});
 		} else if (m.role === "toolResult") {
-			items.push({ kind: "other", component: new Text(dim("(tool result)"), 1, 0) });
+			// Render tool results the way live does - the old replay stub hid
+			// the interesting output (command results, file contents).
+			if (m.toolName) {
+				const call = m.toolCallId ? argsById.get(m.toolCallId) : undefined;
+				const component = new ToolExecutionComponent(
+					m.toolName,
+					m.toolCallId ?? `replay-${items.length}`,
+					call?.args ?? {},
+					undefined,
+					undefined,
+					tui,
+					cwd,
+				);
+				component.setArgsComplete();
+				component.updateResult({ content: (m.content ?? []) as never, isError: m.isError ?? false }, false);
+				items.push({ kind: "tool", component });
+			} else {
+				const text = userText(m).trim();
+				items.push({ kind: "other", component: new Text(dim(`(tool result) ${text.slice(0, 300)}`), 1, 0) });
+			}
 		}
 	}
 	return items;
