@@ -270,6 +270,7 @@ class Controller {
 	private pendingEnterId: number | null = null;
 	/** Text to send once pendingEnterId resolves (adopt-then-prompt flow). */
 	private pendingPrompt: string | null = null;
+	private sessionsLoaded = false;
 	private reqSeq = 0;
 	private responses = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 	private flash = "";
@@ -370,6 +371,17 @@ class Controller {
 				// every session update until its first user-driven command.
 				this.send({ type: "list" });
 				const splitter = new LineSplitter();
+				// Resolve only once the first session list has arrived, so the
+				// initial switcher render already knows which sessions are live
+				// in pi (no [pi] tag popping in a tick later). Timeout = fallback.
+				let resolved = false;
+				const done = () => {
+					if (!resolved) {
+						resolved = true;
+						resolve();
+					}
+				};
+				setTimeout(done, 3000).unref?.();
 				socket.on("data", (chunk: Buffer) => {
 					for (const line of splitter.push(chunk.toString("utf8"))) {
 						try {
@@ -378,10 +390,12 @@ class Controller {
 							console.error(`bad daemon line: ${err}`);
 						}
 					}
+					if (this.sessionsLoaded) {
+						done();
+					}
 				});
 				socket.on("close", () => this.daemonLost());
 				socket.on("error", () => {});
-				resolve();
 			});
 			socket.once("error", (err) => {
 				reject(new Error(`cannot reach daemon at ${SOCK} even after auto-start attempt (${err.message})`));
@@ -426,6 +440,7 @@ class Controller {
 	handleDaemonMessage(msg: DaemonMessage): void {
 		switch (msg.type) {
 			case "sessions": {
+				this.sessionsLoaded = true;
 				this.sessions.clear();
 				for (const meta of msg.sessions) {
 					this.sessions.set(meta.id, meta);
@@ -436,6 +451,9 @@ class Controller {
 						if (tmpView && !this.views.has(meta.sessionFile)) {
 							this.views.set(meta.sessionFile, tmpView);
 							this.views.delete(tmpKey);
+						}
+						if (this.viewing === tmpKey) {
+							this.viewing = meta.sessionFile;
 						}
 					}
 				}
@@ -613,6 +631,10 @@ class Controller {
 		for (const key of paths) {
 			const meta = this.metaForPath(key);
 			const info = this.local.get(key);
+			if (meta && meta.id < 0 && !info) {
+				// external pi that has not written its session file yet
+				continue;
+			}
 			const cwd = meta?.cwd ?? info?.cwd ?? (key.startsWith("daemon:") ? key : path.dirname(key));
 			// Unnamed sessions show their first message as the name; the project
 			// (cwd basename) moves to the description column.

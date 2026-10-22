@@ -80,8 +80,9 @@ interface DaemonSession {
 	streaming: boolean;
 	dead: boolean;
 	pendingDialog: boolean;
-	/** A spawn is in flight; prompts arriving meanwhile are rejected (retry). */
+	/** A spawn is in flight; prompts arriving meanwhile wait on `starting`. */
 	spawning: boolean;
+	starting?: Promise<void>;
 	/** Last unanswered dialog request, re-sent to newly attached controllers. */
 	lastDialog?: Record<string, unknown>;
 }
@@ -123,35 +124,51 @@ function metaFor(s: DaemonSession, socket: net.Socket): SessionMeta {
 	};
 }
 
+// The extension's deregister message can be lost when pi exits (the socket
+// write races process teardown), so process liveness is the real signal.
+function pidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+function sessionsFor(socket: net.Socket): SessionMeta[] {
+	const metas = [...sessions.values()].map((s) => metaFor(s, socket));
+	// Externally-live sessions the daemon does not track are reported as
+	// pseudo entries (negative ids, never addressable by prompt/attach), even
+	// before pi has written the session file. The controller hides them until
+	// the file is visible locally, so a row can never appear without its
+	// externallyLive tag.
+	const listed = new Set(metas.map((m) => m.sessionFile).filter((f) => !!f));
+	let pseudo = 0;
+	for (const [file, e] of externalLive) {
+		if (!listed.has(file)) {
+			const cwd = e.cwd || path.dirname(file);
+			metas.push({
+				id: -1 - pseudo++,
+				cwd,
+				name: path.basename(cwd),
+				model: "external pi",
+				sessionFile: file,
+				messageCount: 0,
+				streaming: false,
+				dead: false,
+				pendingDialog: false,
+				spawning: false,
+				active: false,
+				externallyLive: true,
+			});
+		}
+	}
+	return metas;
+}
+
 function broadcastSessions(): void {
 	for (const socket of sockets) {
-		const metas = [...sessions.values()].map((s) => metaFor(s, socket));
-		// An externally-live session pi has not written to disk yet (no first
-		// prompt) exists in no listAll scan - surface it here so it is visible
-		// (and prompt-blocked) in the switcher. Negative ids are pseudo and
-		// never addressable by prompt/attach.
-		const listed = new Set(metas.map((m) => m.sessionFile).filter((f) => !!f));
-		let pseudo = 0;
-		for (const [file, e] of externalLive) {
-			if (!listed.has(file)) {
-				const cwd = e.cwd || path.dirname(file);
-				metas.push({
-					id: -1 - pseudo++,
-					cwd,
-					name: path.basename(cwd),
-					model: "external pi",
-					sessionFile: file,
-					messageCount: 0,
-					streaming: false,
-					dead: false,
-					pendingDialog: false,
-					spawning: false,
-					active: false,
-					externallyLive: true,
-				});
-			}
-		}
-		send(socket, { type: "sessions", sessions: metas });
+		send(socket, { type: "sessions", sessions: sessionsFor(socket) });
 	}
 }
 
@@ -256,26 +273,11 @@ async function startChild(
 		if (process.env.RONPI_PROVIDER) {
 			args.push("--provider", process.env.RONPI_PROVIDER);
 		}
-		// Cheap test sessions: RONPI_THINKING=low + RONPI_MODEL keep spawned
-		// agents lean (e.g. RONPI_MODEL=glm-4.7).
-		if (process.env.RONPI_THINKING) {
-			args.push("--thinking", process.env.RONPI_THINKING);
-		}
-		if (process.env.RONPI_MODEL) {
-			args.push("--model", process.env.RONPI_MODEL);
-		}
-		if (process.env.RONPI_PROVIDER) {
-			args.push("--provider", process.env.RONPI_PROVIDER);
-		}
-		if (process.env.RONPI_PROVIDER) {
-			args.push("--provider", process.env.RONPI_PROVIDER);
-		}
 		const client = makeChildClient(s, args);
 		client.onEvent((event) => onChildEvent(s, event as Record<string, unknown>));
 		await client.start();
 		s.child = client;
 		s.dead = false;
-		await refreshMeta(s);
 		await refreshMeta(s);
 		log(`session ${s.id} child started (file=${s.sessionFile ?? "new"})`);
 	} finally {
@@ -368,6 +370,9 @@ async function handlePrompt(
 		throw new Error("prompt requires session or sessionFile");
 	}
 
+	if (s.starting) {
+		await s.starting;
+	}
 	if (s.child && !s.attachedTo) {
 		// Free live session: the prompter implicitly takes the input attach.
 		s.attachedTo = socket;
@@ -416,10 +421,24 @@ async function handleSpawn(
 			throw new Error("session is attached to another controller");
 		}
 		s.attachedTo = socket;
-		await startChild(s, { sessionFile: cmd.sessionFile, name: cmd.name });
-		broadcastSessions();
-		const messages = await s.child!.getMessages();
-		send(socket, { type: "history", session: s.id, messages });
+		// Respond as soon as the session is registered (startChild has already
+		// broadcast it as spawning) so the controller can open it immediately;
+		// prompts arriving before the child is up wait on s.starting.
+		const starting = startChild(s, { sessionFile: cmd.sessionFile, name: cmd.name }).then(async () => {
+			broadcastSessions();
+			const messages = await s.child!.getMessages();
+			send(socket, { type: "history", session: s.id, messages });
+		});
+		s.starting = starting.finally(() => {
+			s.starting = undefined;
+		});
+		s.starting.catch((err: unknown) => {
+			log(`session ${s.id} spawn failed: ${err instanceof Error ? err.message : err}`);
+			s.attachedTo = undefined;
+			broadcastSessions();
+		});
+		res(true, undefined, { sessionId: s.id });
+		return;
 	}
 	res(true, undefined, { sessionId: s.id });
 }
@@ -550,10 +569,7 @@ async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder):
 			break;
 		}
 		case "list":
-			send(socket, {
-				type: "sessions",
-				sessions: [...sessions.values()].map((s) => metaFor(s, socket)),
-			});
+			send(socket, { type: "sessions", sessions: sessionsFor(socket) });
 			res(true);
 			break;
 		case "shutdown":
@@ -730,7 +746,8 @@ async function main(): Promise<void> {
 	fs.writeFileSync(PID_FILE, `${process.pid}\n`);
 	log(`listening on ${SOCK} (pid ${process.pid})`);
 
-	// Prune stale external presence registrations (>90s without heartbeat).
+	// Prune stale external presence registrations (pid gone, or >90s without
+	// heartbeat).
 	// Also drop "ghosts": registrations whose session file we have seen on
 	// disk and which has since been deleted (e.g. via pi's resume picker) -
 	// no point listing a session that no longer exists anywhere.
@@ -740,16 +757,23 @@ async function main(): Promise<void> {
 		for (const [file, e] of externalLive) {
 			e.seenFile = e.seenFile || fs.existsSync(file);
 			const deleted = e.seenFile && !fs.existsSync(file);
-			if (deleted || now - e.lastSeen > 90_000) {
+			const gone = !pidAlive(e.pid);
+			if (deleted || gone || now - e.lastSeen > 90_000) {
 				externalLive.delete(file);
 				changed = true;
-				log(deleted ? `external session deleted on disk: ${file}` : `external presence expired: ${file}`);
+				log(
+					deleted
+						? `external session deleted on disk: ${file}`
+						: gone
+							? `external pi exited: ${file}`
+							: `external presence expired: ${file}`,
+				);
 			}
 		}
 		if (changed) {
 			broadcastSessions();
 		}
-	}, 30_000);
+	}, 3_000);
 	pruner.unref();
 
 	// Liveness poll: refresh metadata, notice crashed children. Also detect
