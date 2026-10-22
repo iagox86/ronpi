@@ -8,100 +8,100 @@
 // never exclusive).
 
 export interface SessionMeta {
-	/** Daemon-assigned short id, stable for the daemon's lifetime. */
-	id: number;
-	cwd: string;
-	name: string;
-	model: string;
-	/** Session UUID (from the session file header), when known. */
-	sessionId?: string;
-	/** Absolute path of the session file, when known. */
-	sessionFile?: string;
-	messageCount: number;
-	streaming: boolean;
-	/** Child crashed or exited unexpectedly; session can be respawned. */
-	dead: boolean;
-	/** False when the child has been deactivated (session is file-only). */
-	active: boolean;
-	pendingDialog: boolean;
-	/** The session file is open in an external pi process (presence ext). */
-	externallyLive?: boolean;
-	/** Lifetime token/cost rollup tracked by the daemon. */
-	tokens?: number;
-	cost?: number;
-	/** True iff THIS receiving controller holds the exclusive input attach. */
-	attachedToYou: boolean;
-	/** True iff another controller holds the attach. */
-	attachedElsewhere: boolean;
+  /** Daemon-assigned short id, stable for the daemon's lifetime. */
+  id: number;
+  cwd: string;
+  name: string;
+  model: string;
+  /** Session UUID (from the session file header), when known. */
+  sessionId?: string;
+  /** Absolute path of the session file, when known. */
+  sessionFile?: string;
+  messageCount: number;
+  streaming: boolean;
+  /** Child crashed or exited unexpectedly; session can be respawned. */
+  dead: boolean;
+  /** False when the child has been deactivated (session is file-only). */
+  active: boolean;
+  pendingDialog: boolean;
+  /** The session file is open in an external pi process (presence ext). */
+  externallyLive?: boolean;
+  /** Lifetime token/cost rollup tracked by the daemon. */
+  tokens?: number;
+  cost?: number;
+  /** True iff THIS receiving controller holds the exclusive input attach. */
+  attachedToYou: boolean;
+  /** True iff another controller holds the attach. */
+  attachedElsewhere: boolean;
 }
 
 // controller -> daemon. Commands with an `id` get a {type:"response", id}.
 export type ClientCommand =
-	| {
-			type: "prompt";
-			id?: string;
-			message: string;
-			/** Live session to prompt. */
-			session?: number;
-			/** Inactive/dead session to (re)spawn and prompt: resume this file. */
-			sessionFile?: string;
-			/** Required with sessionFile: working directory for the spawned child. */
-			cwd?: string;
-			/** Optional display name for a newly spawned child. */
-			name?: string;
-	  }
-	| { type: "abort"; session: number }
-	| { type: "spawn"; id?: string; cwd: string; sessionFile?: string; name?: string }
-	| { type: "deactivate"; id?: string; session: number }
-	/** Deactivate if live, then move the session file to the trash dir. */
-	| { type: "delete"; id?: string; session?: number; path?: string }
-	/** Live: setSessionName on the child. Inactive: append session_info to the file. */
-	| { type: "rename"; id?: string; session?: number; path?: string; name: string }
-	/** Acquire exclusive input attach (force: steal from another controller). */
-	| { type: "attach"; id?: string; session: number; force?: boolean }
-	| { type: "detach"; session: number }
-	| { type: "ui_response"; session: number; response: Record<string, unknown> }
-	/** Orderly daemon shutdown (children stop too). */
-	| { type: "shutdown" }
-	/** Presence heartbeat from the ronpi-presence extension in an external
-	 * pi process (live=false deregisters on shutdown). */
-	| { type: "external_register"; pid: number; sessionFile: string; cwd: string; live: boolean }
-	/** Fork an external session file into a new ronpi-owned session. */
-	| { type: "adopt"; id?: string; path: string; cwd: string }
-	/** Controller announce: classifies the connection as a controller (not a
-	 * presence heartbeat) and requests the current session list. */
-	| { type: "list" };
+  | {
+      type: "prompt";
+      id?: string;
+      message: string;
+      /** Live session to prompt. */
+      session?: number;
+      /** Inactive/dead session to (re)spawn and prompt: resume this file. */
+      sessionFile?: string;
+      /** Required with sessionFile: working directory for the spawned child. */
+      cwd?: string;
+      /** Optional display name for a newly spawned child. */
+      name?: string;
+    }
+  | { type: "abort"; session: number }
+  | { type: "spawn"; id?: string; cwd: string; sessionFile?: string; name?: string }
+  | { type: "deactivate"; id?: string; session: number }
+  /** Deactivate if live, then move the session file to the trash dir. */
+  | { type: "delete"; id?: string; session?: number; path?: string }
+  /** Live: setSessionName on the child. Inactive: append session_info to the file. */
+  | { type: "rename"; id?: string; session?: number; path?: string; name: string }
+  /** Acquire exclusive input attach (force: steal from another controller). */
+  | { type: "attach"; id?: string; session: number; force?: boolean }
+  | { type: "detach"; session: number }
+  | { type: "ui_response"; session: number; response: Record<string, unknown> }
+  /** Orderly daemon shutdown (children stop too). */
+  | { type: "shutdown" }
+  /** Presence heartbeat from the ronpi-presence extension in an external
+   * pi process (live=false deregisters on shutdown). */
+  | { type: "external_register"; pid: number; sessionFile: string; cwd: string; live: boolean }
+  /** Fork an external session file into a new ronpi-owned session. */
+  | { type: "adopt"; id?: string; path: string; cwd: string }
+  /** Controller announce: classifies the connection as a controller (not a
+   * presence heartbeat) and requests the current session list. */
+  | { type: "list" };
 
 // daemon -> controller
 export type DaemonMessage =
-	| { type: "sessions"; sessions: SessionMeta[] }
-	| { type: "event"; session: number; event: Record<string, unknown> }
-	| { type: "history"; session: number; messages: unknown[] }
-	| { type: "ui_request"; session: number; request: Record<string, unknown> }
-	| { type: "exited"; session: number; reason?: string }
-	| { type: "response"; id: string; ok: boolean; error?: string; data?: unknown };
+  | { type: "sessions"; sessions: SessionMeta[] }
+  | { type: "event"; session: number; event: Record<string, unknown> }
+  | { type: "history"; session: number; messages: unknown[] }
+  | { type: "ui_request"; session: number; request: Record<string, unknown> }
+  | { type: "exited"; session: number; reason?: string }
+  | { type: "response"; id: string; ok: boolean; error?: string; data?: unknown };
 
 export function encodeLine(obj: unknown): string {
-	return JSON.stringify(obj) + "\n";
+  return JSON.stringify(obj) + "\n";
 }
 
 export class LineSplitter {
-	private buf = "";
+  private buf = "";
 
-	push(chunk: string): string[] {
-		this.buf += chunk;
-		const lines: string[] = [];
-		let idx: number;
-		while ((idx = this.buf.indexOf("\n")) !== -1) {
-			let line = this.buf.slice(0, idx);
-			if (line.endsWith("\r")) {
-				line = line.slice(0, -1);
-			}
-			this.buf = this.buf.slice(idx + 1);
-			if (line.length > 0) {
-				lines.push(line);
-			}
-		}
-		return lines;
-	}
+  push(chunk: string): string[] {
+    this.buf += chunk;
+    const lines: string[] = [];
+    let idx: number;
+    while ((idx = this.buf.indexOf("\n")) !== -1) {
+      let line = this.buf.slice(0, idx);
+      if (line.endsWith("\r")) {
+        line = line.slice(0, -1);
+      }
+      this.buf = this.buf.slice(idx + 1);
+      if (line.length > 0) {
+        lines.push(line);
+      }
+    }
+    return lines;
+  }
 }
