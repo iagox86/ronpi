@@ -16,6 +16,24 @@ take-over + view-only refusal. pi-side groundwork lives in
 Findings below were validated against pi's shipped code (pi 1.3.x era).
 M0/M1 corrections to earlier assumptions are in "M0 findings".
 
+## Refactor round (2026-10-22)
+
+controller.ts (1700 lines) and daemon.ts were split along existing seams into
+pure modules (see proto/README.md "Code layout"), with unit tests for each and
+an integration suite that runs the real daemon against a fake pi. Findings:
+- `tsc --noEmit` (strict) is now part of the checks: node strips types without
+  checking them, which hid dead code (switcher callbacks never declared) and a
+  protocol mismatch (controller read `sessionName`, daemon sent `name`).
+- Presence invariants: an externally-live session is reported tagged by the
+  daemon's FIRST list to a controller, even before pi writes its file; the
+  controller hides it until the file is visible locally, so a row can never
+  appear without its [pi] tag. Registrations are dropped by pid liveness
+  (3s tick), not only by the extension's deregister (lost when pi exits).
+- spawn replies as soon as the session is registered; the child starts in the
+  background and prompts arriving meanwhile wait on `starting`.
+- Not yet split: the Controller class itself (state + key handling + switcher
+  actions); the next cut would be switcher actions vs session view.
+
 ## M0 findings (corrections to earlier assumptions)
 
 - **Fullscreen layout is the right model, not main-screen.**

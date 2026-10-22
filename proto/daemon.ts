@@ -16,8 +16,10 @@
 // this env, including pi settings/auth/extensions.)
 import * as fs from "node:fs";
 import * as net from "node:net";
-import * as path from "node:path";
 import { RpcClient, SessionManager } from "@earendil-works/pi-coding-agent";
+import { DIALOG_METHODS, PI_CLI, PID_FILE, SOCK, TRASH_DIR } from "./config.ts";
+import { log } from "./log.ts";
+import { Presence } from "./presence.ts";
 import {
   LineSplitter,
   encodeLine,
@@ -25,19 +27,7 @@ import {
   type DaemonMessage,
   type SessionMeta,
 } from "./shared.ts";
-
-const PI_CLI =
-  "/var/home/ron/.nvm/versions/node/v26.12.0/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js";
-
-const SOCK = process.env.RONPI_SOCK ?? `${process.env.XDG_RUNTIME_DIR ?? "/tmp"}/ronpi.sock`;
-const PID_FILE = `${SOCK}.pid`;
-const DATA_DIR = process.env.XDG_DATA_HOME ?? path.join(process.env.HOME ?? "", ".local", "share");
-const TRASH_DIR = process.env.RONPI_TRASH ?? path.join(DATA_DIR, "ronpi", "trash");
-const LOG = process.env.RONPI_LOG ?? path.join(import.meta.dirname, "daemon.log");
-
-// Extension dialog methods block the child until answered; the rest are
-// fire-and-forget (notify/setStatus/setWidget/setTitle/set_editor_text).
-const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
+import { trashSessionFile } from "./trash.ts";
 
 function makeSession(cwd: string, sessionFile?: string): DaemonSession {
   return {
@@ -53,14 +43,6 @@ function makeSession(cwd: string, sessionFile?: string): DaemonSession {
     pendingDialog: false,
     spawning: false,
   };
-}
-
-function log(msg: string): void {
-  try {
-    fs.appendFileSync(LOG, `${new Date().toISOString()} ${msg}\n`);
-  } catch {
-    // logging must never take the daemon down
-  }
 }
 
 interface DaemonSession {
@@ -89,10 +71,7 @@ interface DaemonSession {
 
 const sessions = new Map<number, DaemonSession>();
 /** Session files currently open in EXTERNAL pi processes (presence ext). */
-const externalLive = new Map<
-  string,
-  { pid: number; lastSeen: number; cwd?: string; seenFile?: boolean }
->();
+const presence = new Presence();
 let nextSessionId = 1;
 const sockets = new Set<net.Socket>();
 let shuttingDown = false;
@@ -107,7 +86,7 @@ function metaFor(s: DaemonSession, socket: net.Socket): SessionMeta {
   return {
     id: s.id,
     cwd: s.cwd,
-    name: s.sessionName ?? "<unnamed>",
+    sessionName: s.sessionName,
     model: s.model,
     sessionId: s.sessionId,
     sessionFile: s.sessionFile,
@@ -120,50 +99,14 @@ function metaFor(s: DaemonSession, socket: net.Socket): SessionMeta {
     pendingDialog: s.pendingDialog,
     attachedToYou: s.attachedTo === socket,
     attachedElsewhere: s.attachedTo !== undefined && s.attachedTo !== socket,
-    externallyLive: s.sessionFile !== undefined && externalLive.has(s.sessionFile),
+    externallyLive: s.sessionFile !== undefined && presence.has(s.sessionFile),
   };
-}
-
-// The extension's deregister message can be lost when pi exits (the socket
-// write races process teardown), so process liveness is the real signal.
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM";
-  }
 }
 
 function sessionsFor(socket: net.Socket): SessionMeta[] {
   const metas = [...sessions.values()].map((s) => metaFor(s, socket));
-  // Externally-live sessions the daemon does not track are reported as
-  // pseudo entries (negative ids, never addressable by prompt/attach), even
-  // before pi has written the session file. The controller hides them until
-  // the file is visible locally, so a row can never appear without its
-  // externallyLive tag.
-  const listed = new Set(metas.map((m) => m.sessionFile).filter((f) => !!f));
-  let pseudo = 0;
-  for (const [file, e] of externalLive) {
-    if (!listed.has(file)) {
-      const cwd = e.cwd || path.dirname(file);
-      metas.push({
-        id: -1 - pseudo++,
-        cwd,
-        name: path.basename(cwd),
-        model: "external pi",
-        sessionFile: file,
-        messageCount: 0,
-        streaming: false,
-        dead: false,
-        pendingDialog: false,
-        spawning: false,
-        active: false,
-        externallyLive: true,
-      });
-    }
-  }
-  return metas;
+  const tracked = new Set(metas.map((m) => m.sessionFile).filter((f): f is string => !!f));
+  return [...metas, ...presence.pseudoMetas(tracked)];
 }
 
 function broadcastSessions(): void {
@@ -303,25 +246,6 @@ async function deactivate(s: DaemonSession): Promise<void> {
   log(`session ${s.id} deactivated`);
 }
 
-async function trashSessionFile(file: string): Promise<string> {
-  if (!fs.existsSync(file)) {
-    throw new Error(`session file does not exist: ${file}`);
-  }
-  fs.mkdirSync(TRASH_DIR, { recursive: true });
-  const base = path.basename(file);
-  let target = path.join(TRASH_DIR, base);
-  if (fs.existsSync(target)) {
-    target = path.join(TRASH_DIR, `${Date.now()}-${base}`);
-  }
-  fs.renameSync(file, target);
-  fs.writeFileSync(
-    `${target}.json`,
-    `${JSON.stringify({ originalPath: file, trashedAt: new Date().toISOString() }, null, 2)}\n`,
-  );
-  log(`trashed ${file} -> ${target}`);
-  return target;
-}
-
 function findSession(cmd: { session?: number; path?: string }): DaemonSession | undefined {
   if (cmd.session !== undefined) {
     return sessions.get(cmd.session);
@@ -357,7 +281,7 @@ async function handlePrompt(
     if (!cmd.cwd) {
       throw new Error("prompt for an untracked session requires cwd");
     }
-    if (externalLive.has(cmd.sessionFile)) {
+    if (presence.has(cmd.sessionFile)) {
       throw new Error("session is live in another pi process - /adopt to fork it into ronpi");
     }
     s = [...sessions.values()].find((x) => x.sessionFile === cmd.sessionFile);
@@ -445,7 +369,6 @@ async function handleSpawn(
 
 async function handleDelete(
   cmd: Extract<ClientCommand, { type: "delete" }>,
-  socket: net.Socket,
   res: Responder,
 ): Promise<void> {
   const s = findSession(cmd);
@@ -463,7 +386,8 @@ async function handleDelete(
   // the whole delete. Only a bare path with nothing behind it is an error.
   let trashedTo: string | undefined;
   if (fs.existsSync(file)) {
-    trashedTo = await trashSessionFile(file);
+    trashedTo = trashSessionFile(file, TRASH_DIR);
+    log(`trashed ${file} -> ${trashedTo}`);
   } else if (!s) {
     throw new Error(`session file does not exist: ${file}`);
   }
@@ -473,7 +397,6 @@ async function handleDelete(
 
 async function handleRename(
   cmd: Extract<ClientCommand, { type: "rename" }>,
-  socket: net.Socket,
   res: Responder,
 ): Promise<void> {
   const name = cmd.name.trim();
@@ -551,10 +474,10 @@ async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder):
       break;
     }
     case "delete":
-      await handleDelete(cmd, socket, res);
+      await handleDelete(cmd, res);
       break;
     case "rename":
-      await handleRename(cmd, socket, res);
+      await handleRename(cmd, res);
       break;
     case "attach":
       await handleAttach(cmd, socket, res);
@@ -587,16 +510,10 @@ async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder):
         break;
       }
       if (cmd.live) {
-        const prev = externalLive.get(file);
-        externalLive.set(file, {
-          pid: cmd.pid,
-          lastSeen: Date.now(),
-          cwd: cmd.cwd ?? prev?.cwd,
-          seenFile: (prev?.seenFile ?? false) || fs.existsSync(file),
-        });
+        presence.register(file, { pid: cmd.pid, cwd: cmd.cwd });
         log(`external pi registered: ${file} (pid ${cmd.pid})`);
       } else {
-        externalLive.delete(file);
+        presence.deregister(file);
         log(`external pi deregistered: ${file}`);
       }
       broadcastSessions();
@@ -675,10 +592,7 @@ const presenceSockets = new Set<net.Socket>();
 function addController(socket: net.Socket): void {
   sockets.add(socket);
   // Initial sync: this socket's session view + transcript replay per child.
-  send(socket, {
-    type: "sessions",
-    sessions: [...sessions.values()].map((s) => metaFor(s, socket)),
-  });
+  send(socket, { type: "sessions", sessions: sessionsFor(socket) });
   for (const s of sessions.values()) {
     if (s.child) {
       if (s.pendingDialog && s.lastDialog) {
@@ -746,31 +660,15 @@ async function main(): Promise<void> {
   fs.writeFileSync(PID_FILE, `${process.pid}\n`);
   log(`listening on ${SOCK} (pid ${process.pid})`);
 
-  // Prune stale external presence registrations (pid gone, or >90s without
-  // heartbeat).
-  // Also drop "ghosts": registrations whose session file we have seen on
-  // disk and which has since been deleted (e.g. via pi's resume picker) -
-  // no point listing a session that no longer exists anywhere.
+  // Prune external presence registrations whose pi exited, whose session
+  // file was deleted (e.g. via pi's resume picker), or that stopped
+  // heartbeating.
   const pruner = setInterval(() => {
-    const now = Date.now();
-    let changed = false;
-    for (const [file, e] of externalLive) {
-      e.seenFile = e.seenFile || fs.existsSync(file);
-      const deleted = e.seenFile && !fs.existsSync(file);
-      const gone = !pidAlive(e.pid);
-      if (deleted || gone || now - e.lastSeen > 90_000) {
-        externalLive.delete(file);
-        changed = true;
-        log(
-          deleted
-            ? `external session deleted on disk: ${file}`
-            : gone
-              ? `external pi exited: ${file}`
-              : `external presence expired: ${file}`,
-        );
-      }
+    const dropped = presence.prune();
+    for (const { file, reason } of dropped) {
+      log(`external presence dropped (${reason}): ${file}`);
     }
-    if (changed) {
+    if (dropped.length > 0) {
       broadcastSessions();
     }
   }, 3_000);

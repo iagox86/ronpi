@@ -6,8 +6,8 @@
 // controller's chat box (the editor): this component only renders and moves.
 import { appendFileSync } from "node:fs";
 import { Container, truncateToWidth, type Focusable } from "@earendil-works/pi-tui";
+import { fmtTokens, oneLine } from "./format.ts";
 import {
-  accent as selAccent,
   attention,
   bg,
   dim as themeDim,
@@ -51,22 +51,8 @@ const MARKERS: Record<SessionState, string> = {
 const DESC_MIN = 20;
 const dim = (s: string) => (s ? themeDim(s) : "");
 
-function oneLine(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
 function visibleLen(s: string): number {
   return s.replace(/\x1b\[[0-9;]*m/g, "").length;
-}
-
-function fmtTokens(n: number): string {
-  if (n >= 1e6) {
-    return `${(n / 1e6).toFixed(1)}M`;
-  }
-  if (n >= 1e3) {
-    return `${(n / 1e3).toFixed(1)}k`;
-  }
-  return String(Math.round(n));
 }
 
 type Row = { kind: "header"; title: string; count: number } | { kind: "session"; s: SwitcherSession };
@@ -89,7 +75,7 @@ export class Switcher extends Container implements Focusable {
 
   private rows: Row[] = [];
   private selRow = 0;
-  private selectedKey: string | null = null;
+  selectedKey: string | null = null;
   /** Set when a group header is highlighted (group-reorder mode). */
   private selectedHeader: string | null = null;
 
@@ -184,17 +170,11 @@ export class Switcher extends Container implements Focusable {
 
   private firstUnderHeader(): SwitcherSession | undefined {
     const row = this.rows[this.selRow];
-    if (!row || row.kind !== "header") {
+    if (row?.kind !== "header") {
       return undefined;
     }
-    for (let i = this.selRow + 1; i < this.rows.length; i++) {
-      const r = this.rows[i];
-      if (r.kind === "header") {
-        return undefined;
-      }
-      return r.s;
-    }
-    return undefined;
+    const next = this.rows[this.selRow + 1];
+    return next?.kind === "session" ? next.s : undefined;
   }
 
   currentIsHeader(): boolean {
@@ -263,11 +243,7 @@ export class Switcher extends Container implements Focusable {
       maxName = Math.max(maxName, visibleLen(`${MARKERS[s.state]} ${s.name}`) + 3);
     }
     const nameWidth = Math.max(18, maxName + 1);
-    const ageCol = 7;
     const hasModel = this.sessions.some((s) => s.model);
-    const modelCol = hasModel ? 16 : 0;
-    const COL_GAP = 4;
-
     const GAP = "    ";
     const ageW = 5;
     const modelW = 14;

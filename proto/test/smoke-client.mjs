@@ -11,8 +11,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 sock.on("data", (d) => {
   buf += d.toString("utf8");
-  let idx;
-  while ((idx = buf.indexOf("\n")) !== -1) {
+  for (let idx = buf.indexOf("\n"); idx !== -1; idx = buf.indexOf("\n")) {
     const line = buf.slice(0, idx);
     buf = buf.slice(idx + 1);
     if (line) {

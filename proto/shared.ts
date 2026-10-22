@@ -11,7 +11,8 @@ export interface SessionMeta {
   /** Daemon-assigned short id, stable for the daemon's lifetime. */
   id: number;
   cwd: string;
-  name: string;
+  /** Explicit session name; undefined until the session has been named. */
+  sessionName?: string;
   model: string;
   /** Session UUID (from the session file header), when known. */
   sessionId?: string;
@@ -36,7 +37,11 @@ export interface SessionMeta {
 }
 
 // controller -> daemon. Commands with an `id` get a {type:"response", id}.
-export type ClientCommand =
+export type ClientCommand = ClientCommandBody & { id?: string };
+
+export type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
+
+type ClientCommandBody =
   | {
       type: "prompt";
       id?: string;
@@ -82,7 +87,7 @@ export type DaemonMessage =
   | { type: "response"; id: string; ok: boolean; error?: string; data?: unknown };
 
 export function encodeLine(obj: unknown): string {
-  return JSON.stringify(obj) + "\n";
+  return `${JSON.stringify(obj)}\n`;
 }
 
 export class LineSplitter {
@@ -91,8 +96,7 @@ export class LineSplitter {
   push(chunk: string): string[] {
     this.buf += chunk;
     const lines: string[] = [];
-    let idx: number;
-    while ((idx = this.buf.indexOf("\n")) !== -1) {
+    for (let idx = this.buf.indexOf("\n"); idx !== -1; idx = this.buf.indexOf("\n")) {
       let line = this.buf.slice(0, idx);
       if (line.endsWith("\r")) {
         line = line.slice(0, -1);

@@ -128,6 +128,7 @@ request/response):
 
 - `RONPI_SOCK` - socket path (default `$XDG_RUNTIME_DIR/ronpi.sock`; the
   pidfile lives next to it as `ronpi.sock.pid`)
+- `RONPI_PI_CLI` - pi cli.js the daemon spawns as children (tests point this at the fake pi)
 - `RONPI_LOG` - daemon log (default `daemon.log` next to daemon.ts)
 - `RONPI_TRASH` - trash dir (default `$XDG_DATA_HOME/ronpi/trash`)
 - `RONPI_PROVIDER` / `RONPI_MODEL` / `RONPI_THINKING` - provider, model and
@@ -138,7 +139,38 @@ request/response):
 - `PI_CODING_AGENT_DIR` - pass to BOTH processes in tests to isolate
   sessions/settings/extensions from your real agent dir
 
-## Test scripts
+## Code layout
 
-- `test/framing.test.ts` - LF-only framing vs U+2028/2029
-- `test/smoke-client.mjs` - connect, read tabs, prompt, wait for settle
+Daemon side:
+- `daemon.ts` - sockets, session table, child lifecycle, command dispatch
+- `presence.ts` - sessions open in external pi processes (heartbeat/pid/ghost pruning)
+- `trash.ts` - delete-to-trash with manifest
+- `config.ts`, `log.ts` - env-derived paths, daemon log
+
+Controller side:
+- `controller.ts` - connection, state, key handling, switcher actions
+- `session-list.ts` - pure: daemon sessions + files -> rows, ordering, group moves
+- `transcript.ts` - pure-ish: live events and file replays -> pi message components
+- `status.ts`, `dialogs.ts`, `commands.ts`, `format.ts` - small pure helpers
+- `editor.ts` - chat box (key interception, history bindings), `switcher.ts` - the list UI
+- `lifecycle.ts` - find/start/stop the daemon, `pi-theme.ts` - pi theme init
+
+Shared: `shared.ts` (wire protocol, LF framing), `groups.ts` (session-groups.json), `theme.ts`.
+
+## Checks
+
+```fish
+npm test            # all tests (node:test, no network, no model)
+npm run typecheck   # tsc --noEmit (strict; node strips types at runtime, it does not check them)
+npm run lint        # biome (lint only; see ../.editorconfig for style: 2-space indent)
+```
+
+- Unit tests (`test/*.test.ts`) cover the pure modules.
+- `test/daemon.test.ts` runs a real daemon in a temp dir against `test/fixtures/fake-pi.mjs`
+  (a stub speaking enough of pi's RPC protocol); `test/helpers.ts` is the harness.
+  Daemon tests set `RONPI_PI_CLI` to point the daemon at the stub.
+- `test/smoke-client.mjs` - manual: connect to a running daemon, prompt, wait for settle.
+- Controller UI smoke (manual): run `node controller.ts` in a detached tmux session with an
+  isolated `RONPI_SOCK` (keep the path short: unix sockets cap at 107 bytes), `RONPI_LOG`,
+  `RONPI_PI_CLI=test/fixtures/fake-pi.mjs`, `XDG_DATA_HOME`, `PI_CODING_AGENT_DIR`, then drive it
+  with `tmux send-keys` / `capture-pane`.

@@ -1,0 +1,248 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import type { GroupsFile } from "../groups.ts";
+import {
+  buildSessionList,
+  deleteEmptyGroup,
+  displayName,
+  type LocalSession,
+  moveGroup,
+  moveSession,
+  sessionKey,
+  sortSessions,
+} from "../session-list.ts";
+import type { SessionMeta } from "../shared.ts";
+import type { SwitcherSession } from "../switcher.ts";
+
+const NOW = 1_000_000_000_000;
+
+function local(file: string, over: Partial<LocalSession> = {}): LocalSession {
+  return {
+    path: file,
+    id: `uuid-${file}`,
+    cwd: "/work/proj",
+    firstMessage: "",
+    lastActivity: "",
+    modified: NOW - 60_000,
+    ...over,
+  };
+}
+
+function meta(over: Partial<SessionMeta> = {}): SessionMeta {
+  return {
+    id: 1,
+    cwd: "/work/proj",
+    model: "prov/model-x",
+    messageCount: 0,
+    streaming: false,
+    dead: false,
+    active: true,
+    pendingDialog: false,
+    attachedToYou: false,
+    attachedElsewhere: false,
+    ...over,
+  };
+}
+
+function build(opts: { daemon?: SessionMeta[]; files?: LocalSession[]; groups?: GroupsFile; summaries?: Map<string, string> }) {
+  return buildSessionList({
+    daemon: opts.daemon ?? [],
+    local: new Map((opts.files ?? []).map((l) => [l.path, l])),
+    groups: opts.groups ?? { groups: [], assignments: {} },
+    summaries: opts.summaries ?? new Map(),
+    now: NOW,
+  });
+}
+
+describe("sessionKey", () => {
+  it("is the session file when known, else a daemon-local id", () => {
+    assert.equal(sessionKey(meta({ sessionFile: "/a.jsonl" })), "/a.jsonl");
+    assert.equal(sessionKey(meta({ id: 7 })), "daemon:7");
+  });
+});
+
+describe("displayName", () => {
+  it("prefers the live name, then the file name, then the first message", () => {
+    const info = local("/a", { name: "from file", firstMessage: "first words" });
+    assert.equal(displayName(meta({ sessionName: "live" }), info), "live");
+    assert.equal(displayName(meta(), info), "from file");
+    assert.equal(displayName(undefined, local("/a", { firstMessage: "first words" })), "first words");
+    assert.equal(displayName(undefined, local("/a")), "<unnamed>");
+  });
+});
+
+describe("buildSessionList", () => {
+  it("merges a daemon session and its file into one row", () => {
+    const rows = build({
+      daemon: [meta({ sessionFile: "/a.jsonl", sessionId: "uuid-/a.jsonl", streaming: true })],
+      files: [local("/a.jsonl", { name: "alpha" })],
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].state, "streaming");
+    assert.equal(rows[0].name, "alpha");
+    assert.equal(rows[0].daemonId, 1);
+    assert.equal(rows[0].model, "model-x");
+  });
+
+  it("lists file-only sessions as inactive", () => {
+    const rows = build({ files: [local("/a.jsonl")] });
+    assert.equal(rows[0].state, "inactive");
+    assert.equal(rows[0].daemonId, undefined);
+  });
+
+  it("marks a crashed child dead with a respawn note", () => {
+    const rows = build({ daemon: [meta({ sessionFile: "/a", dead: true })], files: [local("/a")] });
+    assert.equal(rows[0].state, "dead");
+    assert.match(rows[0].note ?? "", /crashed/);
+  });
+
+  it("tags sessions live in another pi as muted with an adopt note", () => {
+    const rows = build({ daemon: [meta({ id: -1, sessionFile: "/a", externallyLive: true, active: false })], files: [local("/a")] });
+    assert.equal(rows[0].muted, true);
+    assert.match(rows[0].description ?? "", /adopt/);
+  });
+
+  it("hides an externally live session whose file is not on disk yet", () => {
+    const rows = build({ daemon: [meta({ id: -1, sessionFile: "/unwritten", externallyLive: true, active: false })] });
+    assert.deepEqual(rows, []);
+  });
+
+  it("keeps a daemon-only session that has no file yet", () => {
+    const rows = build({ daemon: [meta({ id: 3 })] });
+    assert.equal(rows[0].key, "daemon:3");
+  });
+
+  it("prioritizes a permission wait over other notes", () => {
+    const rows = build({ daemon: [meta({ sessionFile: "/a", pendingDialog: true, attachedElsewhere: true })], files: [local("/a")] });
+    assert.equal(rows[0].note, "waiting on permission");
+  });
+
+  it("assigns the group from the session id", () => {
+    const rows = build({
+      files: [local("/a")],
+      groups: { groups: ["work"], assignments: { "uuid-/a": "work" } },
+    });
+    assert.equal(rows[0].group, "work");
+  });
+
+  it("describes a row with the live summary before the file's last activity", () => {
+    const files = [local("/a", { lastActivity: "from file" })];
+    assert.equal(build({ files })[0].description, "from file");
+    assert.equal(build({ files, summaries: new Map([["/a", "live"]]) })[0].description, "live");
+  });
+
+  it("falls back to the project directory for unnamed sessions", () => {
+    assert.equal(build({ files: [local("/a")] })[0].description, "proj");
+  });
+});
+
+describe("sortSessions", () => {
+  const rows = (...keys: string[]): SwitcherSession[] =>
+    keys.map((k) => ({ key: k, name: k, state: "inactive", sessionId: `id-${k}` }));
+
+  it("puts manually ordered sessions first, in manual order", () => {
+    const list = rows("a", "b", "c");
+    sortSessions(list, ["id-c", "id-a"], ["a", "b", "c"]);
+    assert.deepEqual(list.map((s) => s.key), ["c", "a", "b"]);
+  });
+
+  it("orders unplaced sessions by the order captured when the switcher opened", () => {
+    const list = rows("a", "b", "c");
+    sortSessions(list, [], ["c", "a", "b"]);
+    assert.deepEqual(list.map((s) => s.key), ["c", "a", "b"]);
+  });
+
+  it("sorts sessions that appeared after opening to the bottom", () => {
+    const list = rows("new", "a");
+    sortSessions(list, [], ["a"]);
+    assert.deepEqual(list.map((s) => s.key), ["a", "new"]);
+  });
+});
+
+describe("moveSession", () => {
+  const row = (id: string, group?: string): SwitcherSession => ({ key: id, name: id, state: "inactive", sessionId: id, group });
+  const names = (g: GroupsFile) => g.order;
+
+  it("swaps with the neighbor inside a section", () => {
+    const groups: GroupsFile = { groups: [], assignments: {} };
+    const list = [row("a"), row("b"), row("c")];
+    const res = moveSession(groups, list, list[0], 1);
+    assert.equal(res.changed, true);
+    assert.deepEqual(names(groups), ["b", "a", "c"]);
+  });
+
+  it("moves into the next group when crossing the end of a section", () => {
+    const groups: GroupsFile = { groups: ["g"], assignments: { c: "g" } };
+    const list = [row("a"), row("b"), row("c", "g")];
+    moveSession(groups, list, list[1], 1);
+    assert.equal(groups.assignments.b, "g");
+    assert.deepEqual(names(groups), ["a", "b", "c"]);
+  });
+
+  it("moves into the previous section when crossing upward, landing last", () => {
+    const groups: GroupsFile = { groups: ["g"], assignments: { c: "g" } };
+    const list = [row("a"), row("c", "g")];
+    moveSession(groups, list, list[1], -1);
+    assert.equal(groups.assignments.c, null);
+    assert.deepEqual(names(groups), ["a", "c"]);
+  });
+
+  it("can move into an empty group", () => {
+    const groups: GroupsFile = { groups: ["empty"], assignments: {} };
+    const list = [row("a")];
+    moveSession(groups, list, list[0], 1);
+    assert.equal(groups.assignments.a, "empty");
+  });
+
+  it("reports the edges instead of moving", () => {
+    const groups: GroupsFile = { groups: [], assignments: {} };
+    const list = [row("a")];
+    assert.deepEqual(moveSession(groups, list, list[0], 1), { changed: false, hint: "already at the bottom" });
+    assert.deepEqual(moveSession(groups, list, list[0], -1), { changed: false, hint: "already at the top" });
+  });
+
+  it("does nothing for a session without an id", () => {
+    const groups: GroupsFile = { groups: [], assignments: {} };
+    const s: SwitcherSession = { key: "k", name: "k", state: "inactive" };
+    assert.equal(moveSession(groups, [s], s, 1).changed, false);
+  });
+});
+
+describe("moveGroup", () => {
+  it("swaps a group with its neighbor", () => {
+    const groups: GroupsFile = { groups: ["a", "b", "c"], assignments: {} };
+    assert.equal(moveGroup(groups, "a", 1).changed, true);
+    assert.deepEqual(groups.groups, ["b", "a", "c"]);
+  });
+
+  it("stops at the ends", () => {
+    const groups: GroupsFile = { groups: ["a", "b"], assignments: {} };
+    assert.equal(moveGroup(groups, "a", -1).hint, "already the first group");
+    assert.equal(moveGroup(groups, "b", 1).hint, "already the last group");
+    assert.deepEqual(groups.groups, ["a", "b"]);
+  });
+});
+
+describe("deleteEmptyGroup", () => {
+  it("refuses to delete a group that still has sessions", () => {
+    const groups: GroupsFile = { groups: ["g"], assignments: { a: "g" } };
+    const list: SwitcherSession[] = [{ key: "a", name: "a", state: "inactive", group: "g" }];
+    const res = deleteEmptyGroup(groups, list, "g");
+    assert.equal(res.changed, false);
+    assert.match(res.hint ?? "", /1 session /);
+    assert.deepEqual(groups.groups, ["g"]);
+  });
+
+  it("deletes an empty group and tombstones stale assignments to it", () => {
+    const groups: GroupsFile = { groups: ["g", "h"], assignments: { gone: "g", other: "h" } };
+    assert.equal(deleteEmptyGroup(groups, [], "g").changed, true);
+    assert.deepEqual(groups.groups, ["h"]);
+    assert.equal(groups.assignments.gone, null);
+    assert.equal(groups.assignments.other, "h");
+  });
+
+  it("never deletes the ungrouped section", () => {
+    const groups: GroupsFile = { groups: [], assignments: {} };
+    assert.equal(deleteEmptyGroup(groups, [], "(ungrouped)").changed, false);
+  });
+});
