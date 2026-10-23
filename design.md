@@ -34,6 +34,49 @@ an integration suite that runs the real daemon against a fake pi. Findings:
 - Not yet split: the Controller class itself (state + key handling + switcher
   actions); the next cut would be switcher actions vs session view.
 
+## NEXT BIG PROJECT: session UX (scoped 2026-10-22)
+
+Roadmap items 7 and 8 combined; goal: ronpi sessions should look and feel
+alive. Nothing built yet. Decision (Ron): ONE solarized palette drives both the
+session view and the switcher chrome. Keyboard-only: no mouse (reporting would
+break terminal select/copy, and click hit-testing against ScrollView offsets is
+real work).
+
+Steps, each independently shippable, in order:
+
+1. Theme-loading spike (~10 min, gates everything). pi themes are JSON files;
+   `initTheme(themeName)` takes a name, and pi's bundled dark.json/light.json
+   (dist/modes/interactive/theme/) list the tokens. Check where initTheme looks
+   (probably only ~/.pi/agent/themes/) and whether a path/object can be
+   passed; if only that dir, ship the file there or via PI_CODING_AGENT_DIR.
+   If neither works, upstream ask (see roadmap #7).
+2. Solarized palette: one source file (JSON) -> pi theme (solarized-dark, plus
+   light) AND theme.ts (switcher chrome, currently hardcoded 256-color
+   approximations) derived from it. Covers markdown, code highlighting, tool
+   backgrounds and diff colors, since pi components read the theme. Verify
+   edit/write diffs render with a real session: our replay/live paths must pass
+   tool args + result `details` to ToolExecutionComponent.
+3. Working/thinking indicator (biggest usability win). Spinner line under the
+   transcript with a label from the latest event ("thinking", "running
+   bash", "writing"), elapsed time, tokens if cheap; spinner glyph on
+   streaming rows in the switcher. Needs a ~100ms render timer that runs only
+   while the viewed session streams (flicker risk on alt-screen full redraws).
+   Check whether pi-tui's Loader is importable, else a ~30-line spinner.
+   Events already flow (message_update/thinking deltas, tool_execution_*).
+4. Collapse/expand: global `expanded` flag toggled by ctrl-o (pi's own key),
+   applied with ToolExecutionComponent.setExpanded on every tool item; a second
+   toggle (ctrl-t?) calls AssistantMessageComponent.setHideThinkingBlock
+   (currently always hidden). All-or-nothing like pi; per-item expand would
+   need a selected-item cursor in the ScrollView - later. Status-line hint.
+5. Error rendering: stopReason/message.error as an attention-colored block
+   (AssistantMessageComponent may already do this; verify with the fake pi).
+
+Testing: grow test/fixtures/fake-pi.mjs a slow-streaming mode (thinking, tool
+events, an error) so the indicator and toggles can be smoke-tested in tmux
+without a model. Light variant: let the background be the terminal default.
+Risk: Loader/diff components are interactive-mode internals, not all exported
+(see the caveat under "Building blocks"); use the shim-module plan there.
+
 ## M0 findings (corrections to earlier assumptions)
 
 - **Fullscreen layout is the right model, not main-screen.**
@@ -276,6 +319,8 @@ export_html; get_commands.
   extension, /adopt, live-in-pi markers, prompt-fork confirm, ghost
   pruning, controller announce).
 - M2: the UX batch (see "M2+ roadmap" below) - quick wins first.
+- NEXT BIG PROJECT: session UX (solarized, indicator, collapse); see the
+  section of that name above. Controller-class split is deferred behind it.
 
 ## M2+ roadmap (tracked 2026-10-22, Ron's list)
 
@@ -318,7 +363,7 @@ Near-term (post-budget-reset), rough order = dependency + value:
      the mechanics (adopt's --fork path); generalize so any daemon-owned
      session can be forked into a sibling. Forks the file as last
      flushed; in-flight child state stays with the original.
-7. In-session solarized: ONE theme definition living in the dotfiles
+7. In-session solarized (SCOPED, see "NEXT BIG PROJECT: session UX"): ONE theme definition living in the dotfiles
    extensions (or a shared module), consumed by the controller - in RPC
    mode the child renders nothing, so the controller does all session
    rendering; the shared definition keeps ronpi and any future pi-side
@@ -326,7 +371,7 @@ Near-term (post-budget-reset), rough order = dependency + value:
    getMarkdownTheme/getSelectListTheme/initTheme - read docs/themes.md and
    see whether initTheme accepts a custom theme object; if not, that is an
    upstream ask.
-8. Rich output: animated working/thinking indicator, show/hide thinking
+8. Rich output (SCOPED, same section): animated working/thinking indicator, show/hide thinking
    toggle, proper error rendering (message.error), better code-block
    colors (rides on 7).
 
