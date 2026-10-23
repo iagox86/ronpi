@@ -1,5 +1,6 @@
 // Prints sample pi components in the active theme: `node theme-preview.ts [width]`.
 import { renderDiff, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import { toolDefinitionFor } from "./tool-defs.ts";
 import { AssistantMessage, UserMessage } from "./components.ts";
 import { mdTheme } from "./pi-theme.ts";
 
@@ -20,11 +21,14 @@ show("assistant (thinking shown)", new AssistantMessage(msg as never, false, mdT
 
 show("diff", renderDiff("  1 const a = 1;\n- 2 const b = 2;\n+ 2 const b = 3;\n  3 const c = 4;").split("\n"));
 
-const tool = (name: string, args: unknown, text: string, isError = false) => {
-  const c = new ToolExecutionComponent(name, `id-${name}`, args, undefined, undefined, tui, process.cwd());
-  c.updateResult({ content: [{ type: "text", text }], isError }, false);
+const tool = (name: string, args: unknown, text: string, isError = false, details?: unknown) => {
+  const c = new ToolExecutionComponent(name, `id-${name}`, args, undefined, toolDefinitionFor(name, process.cwd()) as never, tui, process.cwd());
+  c.setArgsComplete();
+  c.updateResult({ content: [{ type: "text", text }], isError, details } as never, false);
   return c;
 };
 show("tool: bash ok", tool("bash", { command: "ls" }, "a.ts\nb.ts\nc.ts").render(width));
 show("tool: bash error", tool("bash", { command: "false" }, "boom\nexit 1", true).render(width));
 show("tool: read", tool("read", { path: "a.ts" }, "line1\nline2").render(width));
+show("tool: edit", tool("edit", { path: "a.ts", edits: [{ oldText: "const b = 2;", newText: "const b = 3;" }] }, "Edited a.ts", false, { diff: "  1 const a = 1;\n- 2 const b = 2;\n+ 2 const b = 3;\n  3 const c = 4;", firstChangedLine: 2 }).render(width));
+show("tool: write", tool("write", { path: "n.ts", content: "export const x = 1;\n" }, "Wrote n.ts").render(width));

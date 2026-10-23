@@ -28,6 +28,7 @@ import { DIALOG_METHODS, SOCK } from "./config.ts";
 import type { DialogRequest, } from "./dialogs.ts";
 import { configureEditorKeys, InputEditor, } from "./editor.ts";
 import { lastLine } from "./format.ts";
+import { wheelScrollLines } from "./pi-settings.ts";
 import { SessionActions } from "./session-actions.ts";
 import { SwitcherActions } from "./switcher-actions.ts";
 import { ensureDaemon, killServer } from "./lifecycle.ts";
@@ -39,7 +40,7 @@ import {
 import { type ClientCommand, type DaemonMessage, type DistributiveOmit, encodeLine, LineSplitter, type SessionMeta } from "./shared.ts";
 import { buildStatusLine, fleetStats } from "./status.ts";
 import { ActivityLine } from "./activity.ts";
-import { assertTruecolor, dim } from "./theme.ts";
+import { assertTruecolor, dim, OSC_RESET_BG, OSC_SET_BG } from "./theme.ts";
 import { Switcher, } from "./switcher.ts";
 import {
   applyEvent,
@@ -97,7 +98,7 @@ class Controller {
   constructor() {
     this.switching = new SwitcherActions(this);
     this.session = new SessionActions(this);
-    this.tui = new TuiAltScreen(new ProcessTerminal(), true);
+    this.tui = new TuiAltScreen(new ProcessTerminal(), true, undefined, { wheelScrollLines: wheelScrollLines() });
     this.scroll = new ScrollView(this.chatRoot, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" });
     this.editor = new InputEditor(this.tui, editorTheme, { paddingX: 1 });
     this.editor.debugLog = process.env.RONPI_KEYS ?? "";
@@ -139,6 +140,10 @@ class Controller {
     this.renderChrome();
     try {
       this.tui.start();
+      // Make the terminal's own background the page color, so rows no
+      // component draws into (below short transcripts, around boxes) match.
+      process.stdout.write(OSC_SET_BG);
+      process.on("exit", () => process.stdout.write(OSC_RESET_BG));
       this.switching.open();
       this.listTimer = setInterval(() => {
         void this.loadLocal().then(() => {
@@ -205,6 +210,7 @@ class Controller {
   }
 
   dispose(): void {
+    process.stdout.write(OSC_RESET_BG);
     try {
       this.tui.stop();
     } catch {

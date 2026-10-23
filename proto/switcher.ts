@@ -9,7 +9,7 @@ import { Container, truncateToWidth, type Focusable } from "@earendil-works/pi-t
 import { fmtTokens, oneLine } from "./format.ts";
 import {
   attention,
-  bg,
+  paintLine,
   dim as themeDim,
   groupTitle,
   header,
@@ -307,12 +307,7 @@ export class Switcher extends Container implements Focusable {
     while (lines.length < height) {
       lines.push("");
     }
-    return lines.slice(0, height).map((line) => {
-      // re-arm the background after any embedded full reset (ellipsised
-      // truncations inject \x1b[0m mid-line)
-      const tinted = line.replace(/\x1b\[0m/g, `\x1b[0m${bg}`);
-      return `${bg}${tinted}${" ".repeat(Math.max(0, width - visibleLen(tinted)))}\x1b[0m`;
-    });
+    return lines.slice(0, height).map((line) => paintLine(line, width));
   }
 
   private descriptionFor(s: SwitcherSession): string {

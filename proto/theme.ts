@@ -4,6 +4,7 @@
 // existing theme token (or a var), never by hardcoding an escape sequence.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { visibleWidth } from "@earendil-works/pi-tui";
 
 export const THEME_NAME = "solarized-dark";
 // The repo pi/ dir doubles as a fake agent dir (it has themes/), see pi-theme.ts.
@@ -37,6 +38,21 @@ const token = (name: string): string => {
 
 /** The page background; the switcher paints it explicitly. */
 export const bg = `\x1b[48;2;${rgb(file.export.pageBg)}m`;
+
+const pageBgHex = file.vars[file.export.pageBg] ?? file.export.pageBg;
+/** Set / restore the terminal's default background (OSC 11 / 111). */
+export const OSC_SET_BG = `\x1b]11;${pageBgHex}\x1b\\`;
+export const OSC_RESET_BG = "\x1b]111\x1b\\";
+
+/**
+ * Paint `line` on the page background, padded to `width`. Embedded resets
+ * (full, or "default background" as pi's boxes emit) re-arm the page color so
+ * it doesn't drop back to the terminal's own background mid-line.
+ */
+export function paintLine(line: string, width: number): string {
+  const armed = line.replace(/\x1b\[(?:0|49)?m/g, (m) => (m === "\x1b[49m" ? bg : `${m}${bg}`));
+  return `${bg}${armed}${" ".repeat(Math.max(0, width - visibleWidth(line)))}\x1b[0m`;
+}
 
 // Chrome styles use scoped resets (22/39) so they compose with the switcher's
 // background padding.

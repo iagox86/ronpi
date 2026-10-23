@@ -34,7 +34,10 @@ export class ToolRun implements Component {
 
   render(width: number): string[] {
     if (this.expanded) {
-      return this.calls.flatMap((c) => c.component.render(width));
+      return this.calls.flatMap((c) => {
+        c.component.setExpanded(true); // pi truncates long output until expanded
+        return c.component.render(width);
+      });
     }
     return [truncateToWidth(summaryLine(this.calls), width)];
   }

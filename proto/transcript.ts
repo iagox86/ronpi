@@ -6,6 +6,7 @@ import { Text, type TuiAltScreen } from "@earendil-works/pi-tui";
 import { ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { AssistantMessage, UserMessage } from "./components.ts";
 import { type ActivityState, reduceActivity } from "./activity.ts";
+import { toolDefinitionFor } from "./tool-defs.ts";
 import { type ToolCall, ToolRun } from "./tool-run.ts";
 import type { DialogRequest } from "./dialogs.ts";
 import { messageText, oneLineFlat } from "./format.ts";
@@ -182,7 +183,7 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
         ev.toolCallId as string,
         ev.args,
         undefined,
-        undefined,
+        toolDefinitionFor(ev.toolName as string, env.cwd) as never,
         env.tui,
         env.cwd,
       );
@@ -228,6 +229,7 @@ export function itemsFromMessages(messages: unknown[], tui: TuiAltScreen, cwd: s
       toolName?: string;
       toolCallId?: string;
       isError?: boolean;
+      details?: unknown;
     };
     if (m.role === "assistant" && Array.isArray(m.content)) {
       for (const block of m.content as Array<{ type?: string; id?: string; name?: string; arguments?: unknown }>) {
@@ -250,12 +252,12 @@ export function itemsFromMessages(messages: unknown[], tui: TuiAltScreen, cwd: s
           m.toolCallId ?? `replay-${items.length}`,
           call?.args ?? {},
           undefined,
-          undefined,
+          toolDefinitionFor(m.toolName, cwd) as never,
           tui,
           cwd,
         );
         component.setArgsComplete();
-        component.updateResult({ content: (m.content ?? []) as never, isError: m.isError ?? false }, false);
+        component.updateResult({ content: (m.content ?? []) as never, details: m.details, isError: m.isError ?? false } as never, false);
         const toolCall: ToolCall = { name: m.toolName, component, failed: m.isError ?? false };
         const last = items[items.length - 1];
         if (last?.kind === "tools") {

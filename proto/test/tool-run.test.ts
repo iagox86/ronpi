@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { summaryLine, type ToolCall, ToolRun, toolNames } from "../tool-run.ts";
 
 const call = (name: string, failed = false, lines = ["full block"]): ToolCall =>
-  ({ name, failed, component: { render: () => lines, invalidate() {} } }) as unknown as ToolCall;
+  ({ name, failed, component: { render: () => lines, invalidate() {}, setExpanded() {} } }) as unknown as ToolCall;
 
 describe("tool run", () => {
   it("counts calls by name in first-seen order", () => {
