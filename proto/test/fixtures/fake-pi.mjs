@@ -2,8 +2,9 @@
 // get_state / get_messages / prompt / set_session_name / abort, JSONL on stdio.
 // Like pi, the session file is only written once the first prompt arrives.
 //
-// Env: FAKE_PI_DIR (where new session files go), FAKE_PI_STARTUP_MS (delay
+// Env: FAKE_PI_DIR (where new session files go; default: $TMPDIR/fake-pi-sessions), FAKE_PI_STARTUP_MS (delay
 // before answering the first command), FAKE_PI_RUN_MS (how long a run lasts).
+import { tmpdir } from "node:os";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -18,7 +19,7 @@ const sessionId = randomUUID();
 let sessionFile = flag("--session");
 const forkFrom = flag("--fork");
 if (!sessionFile) {
-  const dir = process.env.FAKE_PI_DIR ?? process.cwd();
+  const dir = process.env.FAKE_PI_DIR ?? join(tmpdir(), "fake-pi-sessions");
   mkdirSync(dir, { recursive: true });
   sessionFile = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
 }

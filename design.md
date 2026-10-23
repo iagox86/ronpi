@@ -444,6 +444,31 @@ Bigger goals - design-arounds, not scheduled:
   mapping) with pi as the first implementation. Claude's headless
   stream-json mode is the counterpart; its project session files map onto
   the session=file model.
+- Agent definitions (purpose-built agents; NOT a priority, recorded so we do
+  not close it off - discussed 2026-10-22). A named record the daemon spawns
+  from: model/provider/thinking, system prompt (inline or file), tool
+  allowlist, mcp/extensions/skills/context-file switches, optional default
+  cwd and first prompt. The motivating case is a tiny-model session where
+  pi's default prompt + tool/MCP list overwhelms the model; pi already has the
+  flags (--system-prompt, --no-tools/--tools, --no-mcp, --no-extensions,
+  --no-skills, --no-prompt-templates, --no-context-files), so a "minimal"
+  agent is only extra spawn args. Constraints to preserve:
+  - The daemon SNAPSHOTS the resolved definition into a per-session sidecar
+    (next to session-groups.json, keyed by session file) at spawn. Lazy
+    respawn (`--session <file>`) must reapply it, or a deactivated tiny
+    session comes back with the full tool list. Editing a definition only
+    affects new sessions.
+  - Keep launch config backend-neutral: pi flags live under a `pi: {...}` key
+    so Claude Code as a session type (above) is not shut out.
+  - Agent-spawned agents (later) name a definition; they never pass raw args
+    (an arbitrary-args spawn command is command injection by a model).
+  - Sidecar can record `agent` and `parent` for switcher tags ([tiny]) and
+    grouping; forks/adopt inherit the agent.
+  - Open: definition location (user file vs per-project .ronpi/agents vs
+    both), keeping some pi extensions while dropping others (-e with
+    --no-extensions, unverified). Cheapest first cut: a hardcoded `minimal`
+    profile + `/new <name>` + sidecar + tag. Not planned: inheritance,
+    templates, per-agent permission policy, an editor UI.
 - Agent inter-communication by name (forks included): the daemon becomes
   a message broker. Needs stable session names (rename exists; make names
   first-class + unique), an addressing scheme (@name), and a
