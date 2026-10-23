@@ -23,3 +23,8 @@ export function wheelScrollLines(settings: Record<string, unknown> = load()): Wh
   }
   return "auto";
 }
+
+/** Whether thinking blocks start hidden (pi's `hideThinkingBlock`, default false). */
+export function hideThinkingBlock(settings: Record<string, unknown> = load()): boolean {
+  return settings.hideThinkingBlock === true;
+}

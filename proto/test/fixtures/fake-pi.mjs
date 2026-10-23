@@ -51,13 +51,17 @@ const out = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
 const ok = (id, command, data) => out({ type: "response", id, command, success: true, data });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+let lastEntryId = null;
+
 function persist(message) {
   messages.push(message);
   mkdirSync(dirname(sessionFile), { recursive: true });
   if (!existsSync(sessionFile)) {
     writeFileSync(sessionFile, `${JSON.stringify({ type: "session", id: sessionId })}\n`);
   }
-  appendFileSync(sessionFile, `${JSON.stringify({ type: "message", message })}\n`);
+  const id = randomUUID().slice(0, 8);
+  appendFileSync(sessionFile, `${JSON.stringify({ type: "message", id, parentId: lastEntryId, timestamp: new Date().toISOString(), message })}\n`);
+  lastEntryId = id;
 }
 
 let streaming = false;
@@ -107,7 +111,10 @@ async function slowRun(texts) {
   }
   const final = {
     role: "assistant",
-    content: [{ type: "text", text: `echo: ${prompt}` }],
+    content: [
+      { type: "thinking", thinking: "Let me think about that..." },
+      { type: "text", text: `echo: ${prompt}` },
+    ],
     usage: { totalTokens: 10, cost: { total: 0.001 } },
     stopReason: "stop",
   };

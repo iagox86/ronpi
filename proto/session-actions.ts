@@ -6,14 +6,18 @@ import { Key, matchesKey } from "@earendil-works/pi-tui";
 import { dialogAnswer } from "./dialogs.ts";
 import { isPlainLeft } from "./editor.ts";
 import { fmtAge } from "./format.ts";
+import { rewindTargets } from "./rewind.ts";
 import type { Host } from "./host.ts";
-import type { SessionView } from "./transcript.ts";
+import { itemsFromFile, newView, type SessionView } from "./transcript.ts";
+
+const DOUBLE_ESC_MS = 600;
 
 export class SessionActions {
   /** Armed: prompting a recently-modified external session (fork warning). */
   armedFork: string | null = null;
 
   private readonly h: Host;
+  private lastEsc = 0;
 
   constructor(host: Host) {
     this.h = host;
@@ -30,6 +34,14 @@ export class SessionActions {
       // cancels an armed fork-confirm
       this.armedFork = null;
       const meta = this.h.viewing ? this.h.metaForPath(this.h.viewing) : undefined;
+      const now = Date.now();
+      // esc esc on an idle session with an empty editor = rewind
+      if (now - this.lastEsc < DOUBLE_ESC_MS && !meta?.streaming && this.h.editor.getText().length === 0) {
+        this.lastEsc = 0;
+        this.openRewind();
+        return true;
+      }
+      this.lastEsc = now;
       if (meta?.id !== undefined && meta.attachedToYou && meta.streaming) {
         this.h.send({ type: "abort", session: meta.id });
         this.h.notify("aborted");
@@ -43,6 +55,65 @@ export class SessionActions {
     return false;
   }
 
+
+  /** Open the rewind list for the viewed session. */
+  private openRewind(): void {
+    const key = this.h.viewing;
+    if (!key || !fs.existsSync(key)) {
+      this.h.notify("nothing to rewind yet");
+      return;
+    }
+    const targets = rewindTargets(key);
+    if (targets.length === 0) {
+      this.h.notify("nothing to rewind yet");
+      return;
+    }
+    this.h.rewindPicker.open(targets);
+    this.h.tui.requestRender();
+  }
+
+  /** Keys while the rewind list is open; it swallows everything. */
+  pickerKeys(data: string): boolean {
+    const picker = this.h.rewindPicker;
+    if (matchesKey(data, Key.escape)) {
+      picker.close();
+    } else if (matchesKey(data, Key.up)) {
+      picker.move(-1);
+    } else if (matchesKey(data, Key.down)) {
+      picker.move(1);
+    } else if (matchesKey(data, Key.enter)) {
+      const target = picker.current();
+      picker.close();
+      if (target) {
+        void this.rewindTo(target.entryId);
+      }
+    }
+    this.h.tui.requestRender();
+    return true;
+  }
+
+  private async rewindTo(entryId: string): Promise<void> {
+    const key = this.h.viewing;
+    if (!key) {
+      return;
+    }
+    const meta = this.h.metaForPath(key);
+    try {
+      const r = (await this.h.request(
+        meta ? { type: "rewind", session: meta.id, entryId } : { type: "rewind", path: key, entryId },
+      )) as { text: string; removed: number };
+      const cwd = meta?.cwd ?? this.h.local.get(key)?.cwd ?? process.cwd();
+      this.h.views.set(key, { ...newView(), items: itemsFromFile(key, this.h.tui, cwd) });
+      this.h.summaries.delete(key);
+      this.h.rebuildChat();
+      this.h.syncHistory(true); // the removed messages are no longer history
+      this.h.editor.setText(r.text);
+      this.h.notify(`rewound - ${r.removed} entries moved to trash`);
+      void this.h.loadLocal();
+    } catch (err) {
+      this.h.notify(`rewind failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   /** Returns true when the key was consumed as a dialog answer. */
   dialogKeys(view: SessionView, data: string): boolean {

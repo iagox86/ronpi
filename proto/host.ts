@@ -5,6 +5,7 @@ import type { InputEditor } from "./editor.ts";
 import type { SessionMeta, ClientCommand, DistributiveOmit } from "./shared.ts";
 import type { LocalSession } from "./session-list.ts";
 import type { Switcher } from "./switcher.ts";
+import type { RewindPicker } from "./rewind-picker.ts";
 import type { SessionView } from "./transcript.ts";
 import type { SessionActions } from "./session-actions.ts";
 import type { SwitcherActions } from "./switcher-actions.ts";
@@ -28,6 +29,7 @@ export interface Host {
   pendingEnterId: number | null;
   /** Text to send once pendingEnterId resolves (adopt-then-prompt flow). */
   pendingPrompt: string | null;
+  rewindPicker: RewindPicker;
   switching: SwitcherActions;
   session: SessionActions;
   request(cmd: DistributiveOmit<ClientCommand, "id">): Promise<unknown>;
@@ -36,6 +38,7 @@ export interface Host {
   metaForPath(key: string): SessionMeta | undefined;
   loadLocal(): Promise<void>;
   rebuildChat(): void;
+  syncHistory(force?: boolean): void;
   notify(message: string): void;
   renderChrome(): void;
   dispose(): void;

@@ -24,11 +24,14 @@ import {
   type EditorTheme,
 } from "@earendil-works/pi-tui";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { DIALOG_METHODS, SOCK } from "./config.ts";
+import { DIALOG_METHODS, HISTORY_FILE, SOCK } from "./config.ts";
 import type { DialogRequest, } from "./dialogs.ts";
 import { configureEditorKeys, InputEditor, } from "./editor.ts";
 import { lastLine } from "./format.ts";
-import { wheelScrollLines } from "./pi-settings.ts";
+import { RewindPicker } from "./rewind-picker.ts";
+import { loadCommands, mergeHistory, recordCommand, trimCommands } from "./history.ts";
+import { rewindTargets } from "./rewind.ts";
+import { hideThinkingBlock, wheelScrollLines } from "./pi-settings.ts";
 import { SessionActions } from "./session-actions.ts";
 import { SwitcherActions } from "./switcher-actions.ts";
 import { ensureDaemon, killServer } from "./lifecycle.ts";
@@ -56,6 +59,8 @@ const editorTheme: EditorTheme = {
   selectList: selectListTheme,
 };
 
+const SWITCHER_HISTORY = "<switcher>";
+
 class Controller {
   tui: TuiAltScreen;
   chatRoot = new Container();
@@ -64,8 +69,13 @@ class Controller {
   scroll: ScrollView;
   statusLine = new Text("", 0, 0);
   activityLine = new ActivityLine();
+  rewindPicker = new RewindPicker();
   /** Show full tool blocks instead of one summary line per run. */
   toolsExpanded = false;
+  /** Session whose messages currently back the editor's up-arrow history. */
+  private historyFor: string | null = null;
+  /** Hide assistant thinking blocks (ctrl-t); starts from pi's setting. */
+  thinkingHidden = hideThinkingBlock();
   private activityTimer?: ReturnType<typeof setInterval>;
   editor: InputEditor;
   switcher = new Switcher();
@@ -113,6 +123,7 @@ class Controller {
     this.chatLayout = new VStack([
       { component: this.scroll, basis: 0, grow: 1, shrink: 1, minSize: 1 },
       { component: this.activityLine, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
+      { component: this.rewindPicker, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       // never compress the dock: a shrunken editor was the "cut off" bug
       { component: dock, basis: "auto", grow: 0, shrink: 0, minSize: 4 },
     ]);
@@ -130,6 +141,7 @@ class Controller {
   }
 
   async run(): Promise<void> {
+    trimCommands(HISTORY_FILE);
     try {
       await this.connect();
     } catch {
@@ -410,8 +422,15 @@ class Controller {
     if (this.switching.isOpen) {
       return this.switching.keys(data);
     }
+    if (this.rewindPicker.isOpen) {
+      return this.session.pickerKeys(data);
+    }
     if (matchesKey(data, Key.ctrl("o"))) {
       this.toggleTools();
+      return true;
+    }
+    if (matchesKey(data, Key.ctrl("t"))) {
+      this.toggleThinking();
       return true;
     }
     return this.session.keys(data);
@@ -424,6 +443,11 @@ class Controller {
       } catch {
         // debug only
       }
+    }
+    const command = text.trim();
+    if (command.length > 1 && command.startsWith("/")) {
+      recordCommand(HISTORY_FILE, command);
+      this.editor.addToHistory(command);
     }
     if (this.switching.isOpen) {
       this.switching.submit(text.trim());
@@ -475,29 +499,76 @@ class Controller {
 
   /** Mount new items immediately on the viewed session; rebuildChat() mounts the rest. */
   addItem(view: SessionView, key: string, item: Item): void {
-    if (item.kind === "tools") {
-      item.component.expanded = this.toolsExpanded;
-    }
+    this.applyDisplay(item);
     view.items.push(item);
     if (key === this.viewing) {
       this.chatRoot.addChild(item.component);
     }
   }
 
+  /** Apply the global display toggles (tools expanded, thinking hidden) to one item. */
+  private applyDisplay(item: Item): void {
+    if (item.kind === "tools") {
+      item.component.expanded = this.toolsExpanded;
+    } else if (item.kind === "assistant") {
+      item.component.setHideThinkingBlock(this.thinkingHidden);
+    }
+  }
+
+  /** Re-apply the display toggles everywhere without moving the scroll position. */
+  private redisplay(): void {
+    for (const view of this.views.values()) {
+      for (const item of view.items) {
+        this.applyDisplay(item);
+      }
+    }
+    this.chatRoot.invalidate();
+    this.tui.requestRender(true);
+  }
+
+  /** Show/hide thinking blocks (ctrl-t); applies to all sessions. */
+  toggleThinking(): void {
+    this.thinkingHidden = !this.thinkingHidden;
+    this.redisplay();
+  }
+
   /** Expand/collapse every tool run (ctrl-o); applies to all sessions. */
   toggleTools(): void {
     this.toolsExpanded = !this.toolsExpanded;
-    this.rebuildChat();
+    this.redisplay();
+  }
+
+  /**
+   * Up-arrow history for what is on screen: the viewed session's own prompts
+   * (read from its file, so it survives restarts) merged with the shared
+   * command log; in the switcher, commands only. `force` re-reads even when
+   * the context has not changed (after a rewind).
+   */
+  syncHistory(force = false): void {
+    const token = this.switching.isOpen ? SWITCHER_HISTORY : this.viewing;
+    if (!force && token === this.historyFor) {
+      return;
+    }
+    let prompts: Array<{ ts: number; text: string }> = [];
+    const key = this.viewing;
+    if (token !== SWITCHER_HISTORY && key && fs.existsSync(key)) {
+      try {
+        prompts = rewindTargets(key);
+      } catch {
+        // unreadable file: commands only
+      }
+    }
+    this.editor.setHistory(mergeHistory(prompts, loadCommands(HISTORY_FILE)));
+    this.historyFor = token;
   }
 
   rebuildChat(): void {
+    this.syncHistory();
     this.chatRoot.clear();
     const view = this.viewing ? this.views.get(this.viewing) : undefined;
     if (view) {
       for (const item of view.items) {
-        if (item.kind === "tools") {
-          item.component.expanded = this.toolsExpanded;
-        }
+        this.applyDisplay(item);
         this.chatRoot.addChild(item.component);
       }
     }

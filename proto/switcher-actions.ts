@@ -53,6 +53,7 @@ export class SwitcherActions {
     this.isOpen = true;
     this.h.tui.setLayoutRoot(this.h.switcherLayout);
     this.h.editor.setText("");
+    this.h.syncHistory();
     this.h.renderChrome();
     this.h.tui.requestRender(true);
   }

@@ -7,6 +7,7 @@ export const SOCK = process.env.RONPI_SOCK ?? `${process.env.XDG_RUNTIME_DIR ?? 
 export const PID_FILE = `${SOCK}.pid`;
 export const DATA_DIR = process.env.XDG_DATA_HOME ?? path.join(process.env.HOME ?? "", ".local", "share");
 export const TRASH_DIR = process.env.RONPI_TRASH ?? path.join(DATA_DIR, "ronpi", "trash");
+export const HISTORY_FILE = process.env.RONPI_HISTORY ?? path.join(DATA_DIR, "ronpi", "history.jsonl");
 export const LOG = process.env.RONPI_LOG ?? path.join(import.meta.dirname, "daemon.log");
 export const PI_CLI =
   process.env.RONPI_PI_CLI ??

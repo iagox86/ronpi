@@ -62,12 +62,23 @@ describe("applyEvent", () => {
     assert.equal(items[0].kind, "assistant");
   });
 
-  it("shows a provider error as its own row", () => {
+  it("leaves plain provider errors to pi's own assistant component", () => {
     const items: Item[] = [];
     const view = newView();
     applyEvent(view, { type: "message_start", message: { role: "assistant", content: [] } }, env(items));
     view.items.push(...items);
+    const before = items.length;
     applyEvent(view, { type: "message_end", message: { role: "assistant", stopReason: "error", content: [] } }, env(items));
+    assert.equal(items.length, before);
+  });
+
+  it("adds an error row when the failed message has tool calls, which pi does not draw", () => {
+    const items: Item[] = [];
+    const view = newView();
+    applyEvent(view, { type: "message_start", message: { role: "assistant", content: [] } }, env(items));
+    view.items.push(...items);
+    const msg = { role: "assistant", stopReason: "error", errorMessage: "boom", content: [{ type: "toolCall", id: "t", name: "bash" }] };
+    applyEvent(view, { type: "message_end", message: msg }, env(items));
     assert.equal(items[items.length - 1].kind, "other");
   });
 

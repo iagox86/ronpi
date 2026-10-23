@@ -27,6 +27,7 @@ import {
   type DaemonMessage,
   type SessionMeta,
 } from "./shared.ts";
+import { rewindFile } from "./rewind.ts";
 import { trashSessionFile } from "./trash.ts";
 
 function makeSession(cwd: string, sessionFile?: string): DaemonSession {
@@ -410,6 +411,27 @@ async function handleDelete(
   res(true, undefined, { trashedTo });
 }
 
+async function handleRewind(cmd: Extract<ClientCommand, { type: "rewind" }>, res: Responder): Promise<void> {
+  const s = findSession(cmd);
+  const file = s?.sessionFile ?? cmd.path;
+  if (!file) {
+    throw new Error("rewind requires a session or path");
+  }
+  if (presence.has(file)) {
+    throw new Error("session is open in another pi process; close it first");
+  }
+  if (s?.streaming) {
+    throw new Error("session is working; abort it first");
+  }
+  if (s?.child) {
+    await deactivate(s);
+  }
+  const result = rewindFile(file, cmd.entryId, TRASH_DIR);
+  log(`rewound ${file} before ${cmd.entryId}: ${result.removed} entries -> ${result.trashedTo}`);
+  broadcastSessions();
+  res(true, undefined, { text: result.text, removed: result.removed, trashedTo: result.trashedTo });
+}
+
 async function handleRename(
   cmd: Extract<ClientCommand, { type: "rename" }>,
   res: Responder,
@@ -490,6 +512,9 @@ async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder):
     }
     case "delete":
       await handleDelete(cmd, res);
+      break;
+    case "rewind":
+      await handleRewind(cmd, res);
       break;
     case "rename":
       await handleRename(cmd, res);

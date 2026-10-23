@@ -96,9 +96,11 @@ Steps, each independently shippable, in order:
    restores pi's default). Fake pi: FAKE_PI_SLOW=1 scripts thinking/tool/text/
    error and queues mid-run prompts. Not yet: switcher-row spinner, Esc ->
    clear_queue.
-4. (PARTLY BUILT 2026-10-22: tool-run.ts groups consecutive tool calls into one
-   collapsed summary line, ctrl-o toggles all sessions; the thinking toggle and
-   per-item expand remain.) Collapse/expand: global `expanded` flag toggled by ctrl-o (pi's own key),
+4. (BUILT 2026-10-22 except per-item expand: tool-run.ts groups consecutive tool
+   calls into one collapsed summary line, ctrl-o toggles all sessions; ctrl-t
+   toggles thinking, starting from pi's hideThinkingBlock setting. Step 5: pi's
+   own assistant component already draws errors, so ours only adds a row for
+   error messages that contain tool calls.) Collapse/expand: global `expanded` flag toggled by ctrl-o (pi's own key),
    applied with ToolExecutionComponent.setExpanded on every tool item; a second
    toggle (ctrl-t?) calls AssistantMessageComponent.setHideThinkingBlock
    (currently always hidden). All-or-nothing like pi; per-item expand would
@@ -365,6 +367,36 @@ export_html; get_commands.
 - NEXT BIG PROJECT: session UX (solarized, indicator, collapse); see the
   section of that name above. Controller-class split is deferred behind it.
 
+## Next session (medium priority, added 2026-10-23): custom tools + history search
+
+- ctrl-r backward search over the session's input history (shell-style:
+  type to filter, ctrl-r again for the next older match, enter accepts,
+  esc cancels). NOTE ctrl-r is already "rename" in the switcher, so search
+  would be session-view only. History already seeds from the session file; this is the
+  search UI on top (a docked line like the rewind picker).
+- Web search tool, and a wider look at custom tools. Mechanism: pi extension
+  tools (`pi.registerTool()`) living in the repo's pi/extensions/ (installed
+  by install.ts), so they work in standalone pi AND ronpi children from one
+  implementation. Alternative: a stdio MCP server (`pi.registerMcpServer()` or
+  mcp.json) - reuses the MCP ecosystem but is an extra process per session.
+  To decide: search backend (Brave Search API / Tavily / Exa / Kagi need a key;
+  self-hosted SearXNG needs none but needs hosting; scraping DuckDuckGo is
+  fragile), key storage (env or an auth file, never the repo), and permission
+  behavior (auto-allow search, prompt for fetching arbitrary URLs?).
+  Search alone returns snippets; pair it with `web_fetch(url)` (readable-text
+  extraction, size cap). Security: fetch is an SSRF vector - block loopback,
+  link-local and private ranges and re-check after redirects; web content is
+  untrusted input to the model (prompt injection) - label results as such and
+  keep the permission prompt for anything with side effects.
+  Other candidates, roughly by value: ronpi-aware tools via the daemon socket
+  (spawn a named agent, message another session; see "Agent definitions");
+  a notify tool (push when a long run finishes or needs input); docs lookup
+  (pi's own docs dir). Tool declarations cost context for small models, so
+  agent profiles should list tools explicitly, and pi's tool_search/codemode
+  built-ins (defaultTools "+codemode" today) already reduce the cost.
+  Note for the parked file-restore: pi's `tool_call` event can mutate or block
+  a call before it runs, so a pre-edit snapshot extension looks feasible.
+
 ## M2+ roadmap (tracked 2026-10-22, Ron's list)
 
 Near-term (post-budget-reset), rough order = dependency + value:
@@ -394,9 +426,29 @@ Near-term (post-budget-reset), rough order = dependency + value:
    restore); wired addToHistory on successful submit and bound
    tui.editor.historyPrevious/Next to up/down (defaults are empty).
    Verified: recall, draft stash/restore, switcher navigation unaffected.
-   Remaining: ctrl-r backward search + seeding history from the session
-   file's prior user messages on entry.
-6. Rewind + /fork (related, different semantics):
+   Seeding DONE 2026-10-23: entering a session replaces the editor history
+   with that session's own user messages (from the file, so it survives
+   restarts and includes messages sent from standalone pi); a rewind reseeds.
+   Slash commands (session editor AND switcher box) are logged to
+   ~/.local/share/ronpi/history.jsonl (RONPI_HISTORY; trimmed to 500 at
+   startup; history.ts) and merged by time with the session's prompts; the
+   switcher's up-arrow shows commands only. Not built: a global cross-session
+   history of prompts. ctrl-r backward search is wanted (see "Next
+   session").
+6. Rewind + /fork (related, different semantics). REWIND BUILT 2026-10-23
+   (rewind.ts, daemon `rewind` command, rewind-picker.ts; esc esc on an idle
+   session with an empty editor): conversation only, tail -> trash with a
+   manifest, text returns to the editor, child stops and lazily respawns.
+   Limits: cuts by file position, so a session branched in place via pi's
+   /tree is only rewound correctly if the chosen message's parent is the
+   entry right before it. /restore (undo) is not built; the trash manifest
+   has what it needs. FUTURE (parked): rewind that also restores files.
+   Replaying edits backwards is not viable (write loses the old content,
+   bash is opaque); checkpoint before changes instead: (a) an extension in
+   pi/extensions/ snapshots files before edit/write (check whether tool_call
+   events fire before execution), or (b) a shadow git repo snapshotting the
+   working tree per user message (covers bash, costs disk/time). Restore
+   must warn when a file changed since the checkpoint.
    - esc esc = REMOVE: pi ships a user-message-selector component (the
      same popup as its escape-escape) - reuse it, but wire selection to
      truncate the session file back to before the chosen message and

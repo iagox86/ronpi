@@ -41,6 +41,17 @@ export class InputEditor extends Editor {
   onKey?: (data: string) => boolean;
   debugLog?: string;
 
+  /** Replace the up/down history with `texts` (oldest first). */
+  setHistory(texts: string[]): void {
+    // Editor keeps history in private fields and only exposes addToHistory.
+    const inner = this as unknown as { history: string[]; historyIndex: number };
+    inner.history = [];
+    inner.historyIndex = -1;
+    for (const text of texts) {
+      this.addToHistory(text);
+    }
+  }
+
   handleInput(data: string): void {
     if (this.debugLog) {
       try {

@@ -136,6 +136,40 @@ describe("daemon: lifecycle", () => {
     assert.equal(c.sessions().some((s) => s.id === sessionId), false);
   });
 
+  it("rewinds to before a user message, trashes the tail, and lets the session carry on", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "one" });
+    await c.waitFor(isSettled);
+    await c.request({ type: "prompt", session: sessionId, message: "two" });
+    await c.waitFor((m) => isSettled(m) && c.messages.filter(isSettled).length >= 2);
+    const file = c.sessions().find((s) => s.id === sessionId)?.sessionFile as string;
+    const entries = () => fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const second = entries().find((e) => e.message?.content === "two");
+
+    const r = await c.request({ type: "rewind", session: sessionId, entryId: second.id });
+    assert.equal(r.text, "two");
+    assert.equal(r.removed, 2);
+    assert.equal(entries().some((e) => JSON.stringify(e).includes("two")), false);
+    assert.ok(fs.readFileSync(r.trashedTo, "utf8").includes("two"));
+    assert.equal(c.sessions().find((s) => s.id === sessionId)?.active, false, "the child is stopped");
+
+    await c.request({ type: "prompt", session: sessionId, message: "three" });
+    await c.waitFor((m) => isSettled(m) && c.messages.filter(isSettled).length >= 3);
+    assert.ok(entries().some((e) => e.message?.content === "three"));
+  });
+
+  it("refuses to rewind a session that is mid-run", async () => {
+    harness = await startDaemon({ FAKE_PI_RUN_MS: "1500" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "slow" });
+    await assert.rejects(c.request({ type: "rewind", session: sessionId, entryId: "x" }), /working/);
+  });
+
   it("drops a never-prompted session on delete without touching the disk", async () => {
     harness = await startDaemon();
     const c = await harness.connect();

@@ -170,9 +170,11 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
           // attached mid-run: the completed message never streamed here
           env.addItem(assistantItem(m as Record<string, unknown>));
         }
-        if (m.stopReason === "error") {
-          const errText = messageText(m).trim() || "(provider error)";
-          env.addItem({ kind: "other", component: new Text(attention(`error: ${errText}`), 1, 0) });
+        // pi's component draws errors itself, except on messages with tool calls
+        const hasToolCalls = Array.isArray(m.content) && (m.content as Array<{ type?: string }>).some((c) => c?.type === "toolCall");
+        if (m.stopReason === "error" && hasToolCalls) {
+          const errText = (m as { errorMessage?: string }).errorMessage || "provider error";
+          env.addItem({ kind: "other", component: new Text(attention(`Error: ${errText}`), 1, 0) });
         }
       }
       break;
