@@ -163,20 +163,6 @@ export class Switcher extends Container implements Focusable {
     return row?.kind === "session" ? row.s : undefined;
   }
 
-  /** Enter-target: the highlighted session, or the first of a highlighted group. */
-  currentOrGroupFirst(): SwitcherSession | undefined {
-    return this.current() ?? this.firstUnderHeader();
-  }
-
-  private firstUnderHeader(): SwitcherSession | undefined {
-    const row = this.rows[this.selRow];
-    if (row?.kind !== "header") {
-      return undefined;
-    }
-    const next = this.rows[this.selRow + 1];
-    return next?.kind === "session" ? next.s : undefined;
-  }
-
   currentIsHeader(): boolean {
     return this.rows[this.selRow]?.kind === "header";
   }

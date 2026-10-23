@@ -77,6 +77,14 @@ without a model. Light variant: let the background be the terminal default.
 Risk: Loader/diff components are interactive-mode internals, not all exported
 (see the caveat under "Building blocks"); use the shim-module plan there.
 
+## Switcher backlog
+
+- Group headers: enter/right on a header is a no-op (2026-10-22; it used to
+  open the group's first session). Planned: enter/right on a header toggles
+  collapse (hide that group's rows, show a count, persist per group in
+  groups.json or alongside). Keyboard-only, in line with the session UX
+  project's no-mouse decision.
+
 ## M0 findings (corrections to earlier assumptions)
 
 - **Fullscreen layout is the right model, not main-screen.**
