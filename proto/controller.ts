@@ -29,9 +29,12 @@ import type { DialogRequest, } from "./dialogs.ts";
 import { configureEditorKeys, InputEditor, } from "./editor.ts";
 import { lastLine } from "./format.ts";
 import { RewindPicker } from "./rewind-picker.ts";
+import { CommandAutocomplete } from "./autocomplete.ts";
+import { HistorySearch } from "./history-search.ts";
+import { settingsMtime } from "./settings.ts";
 import { loadCommands, mergeHistory, recordCommand, trimCommands } from "./history.ts";
 import { rewindTargets } from "./rewind.ts";
-import { hideThinkingBlock, wheelScrollLines } from "./pi-settings.ts";
+import { autocompleteMaxVisible, hideThinkingBlock, wheelScrollLines } from "./pi-settings.ts";
 import { SessionActions } from "./session-actions.ts";
 import { SwitcherActions } from "./switcher-actions.ts";
 import { ensureDaemon, killServer } from "./lifecycle.ts";
@@ -41,8 +44,9 @@ import {
   type LocalSession,
 } from "./session-list.ts";
 import { type ClientCommand, type DaemonMessage, type DistributiveOmit, encodeLine, LineSplitter, type SessionMeta } from "./shared.ts";
-import { buildStatusLine, fleetStats } from "./status.ts";
+import { buildStatusLine, fleetStats, settingsNotice } from "./status.ts";
 import { ActivityLine } from "./activity.ts";
+import type { ToolRun } from "./tool-run.ts";
 import { assertTruecolor, dim, OSC_RESET_BG, OSC_SET_BG } from "./theme.ts";
 import { Switcher, } from "./switcher.ts";
 import {
@@ -59,6 +63,14 @@ const editorTheme: EditorTheme = {
   selectList: selectListTheme,
 };
 
+/** Only the newest tool run advertises ctrl-o; the hint on every line is noise. */
+function markLatestRun(view: SessionView): void {
+  const runs = view.items.filter((i) => i.kind === "tools");
+  runs.forEach((run, i) => {
+    (run.component as ToolRun).showHint = i === runs.length - 1;
+  });
+}
+
 const SWITCHER_HISTORY = "<switcher>";
 
 class Controller {
@@ -70,6 +82,7 @@ class Controller {
   statusLine = new Text("", 0, 0);
   activityLine = new ActivityLine();
   rewindPicker = new RewindPicker();
+  historySearch = new HistorySearch();
   /** Show full tool blocks instead of one summary line per run. */
   toolsExpanded = false;
   /** Session whose messages currently back the editor's up-arrow history. */
@@ -98,6 +111,11 @@ class Controller {
   pendingEnterId: number | null = null;
   /** Text to send once pendingEnterId resolves (adopt-then-prompt flow). */
   pendingPrompt: string | null = null;
+  /** pi's slash commands for the viewed session (from the daemon). */
+  piCommands: Array<{ name: string; description?: string }> = [];
+  private commandsFor: string | null = null;
+  /** Editor text from before ctrl-r, restored on cancel. */
+  private searchDraft = "";
   private sessionsLoaded = false;
   private reqSeq = 0;
   private responses = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
@@ -111,6 +129,14 @@ class Controller {
     this.tui = new TuiAltScreen(new ProcessTerminal(), true, undefined, { wheelScrollLines: wheelScrollLines() });
     this.scroll = new ScrollView(this.chatRoot, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" });
     this.editor = new InputEditor(this.tui, editorTheme, { paddingX: 1 });
+    this.editor.setAutocompleteMaxVisible(autocompleteMaxVisible());
+    this.editor.setAutocompleteProvider(
+      new CommandAutocomplete(() => ({
+        switcher: this.switching.isOpen,
+        piCommands: this.piCommands,
+        cwd: (this.viewing && (this.metaForPath(this.viewing)?.cwd ?? this.local.get(this.viewing)?.cwd)) || process.cwd(),
+      })),
+    );
     this.editor.debugLog = process.env.RONPI_KEYS ?? "";
     this.editor.onSubmit = (text) => this.submit(text);
     this.editor.onKey = (data) => this.keys(data);
@@ -161,6 +187,7 @@ class Controller {
         void this.loadLocal().then(() => {
           if (this.switching.isOpen) {
             this.switching.refresh();
+            this.renderChrome(); // picks up a changed settings file
           }
         });
       }, 10_000);
@@ -419,6 +446,17 @@ class Controller {
     if (view?.dialog && this.session.dialogKeys(view, data)) {
       return true;
     }
+    if (this.historySearch.isOpen) {
+      return this.searchKeys(data);
+    }
+    if (matchesKey(data, Key.ctrl("r")) && !this.rewindPicker.isOpen) {
+      this.searchDraft = this.editor.getText();
+      this.historySearch.open(this.currentHistory());
+      this.editor.setText(this.historySearch.promptText());
+      this.notify("ctrl-r older - ctrl-s newer - enter use - esc cancel");
+      this.tui.requestRender();
+      return true;
+    }
     if (this.switching.isOpen) {
       return this.switching.keys(data);
     }
@@ -488,7 +526,9 @@ class Controller {
       view.activity = { label: "working", since: Date.now() };
     }
     this.activityLine.state = view ?? { queue: [] };
-    const animate = Boolean(view?.activity) && !this.switching.isOpen;
+    // the transcript spinner, or (switcher open) the spinner on streaming rows
+    const switcherBusy = this.switching.isOpen && [...this.sessions.values()].some((m) => m.streaming);
+    const animate = (Boolean(view?.activity) && !this.switching.isOpen) || switcherBusy;
     if (animate && !this.activityTimer) {
       this.activityTimer = setInterval(() => this.tui.requestRender(), 100);
     } else if (!animate && this.activityTimer) {
@@ -501,6 +541,9 @@ class Controller {
   addItem(view: SessionView, key: string, item: Item): void {
     this.applyDisplay(item);
     view.items.push(item);
+    if (item.kind === "tools") {
+      markLatestRun(view);
+    }
     if (key === this.viewing) {
       this.chatRoot.addChild(item.component);
     }
@@ -544,29 +587,71 @@ class Controller {
    * command log; in the switcher, commands only. `force` re-reads even when
    * the context has not changed (after a rewind).
    */
-  syncHistory(force = false): void {
-    const token = this.switching.isOpen ? SWITCHER_HISTORY : this.viewing;
-    if (!force && token === this.historyFor) {
-      return;
+  /** Keys while the ctrl-r search line is open; it swallows everything. */
+  private searchKeys(data: string): boolean {
+    const result = this.historySearch.handleKey(data);
+    if (result === "none") {
+      this.editor.setText(this.historySearch.promptText());
+    } else {
+      this.editor.setText(result === "accept" ? (this.historySearch.current() ?? "") : this.searchDraft);
+      this.historySearch.close();
     }
+    this.tui.requestRender();
+    return true;
+  }
+
+  /** History texts (oldest first) for what is on screen. */
+  private currentHistory(): string[] {
     let prompts: Array<{ ts: number; text: string }> = [];
     const key = this.viewing;
-    if (token !== SWITCHER_HISTORY && key && fs.existsSync(key)) {
+    if (!this.switching.isOpen && key && fs.existsSync(key)) {
       try {
         prompts = rewindTargets(key);
       } catch {
         // unreadable file: commands only
       }
     }
-    this.editor.setHistory(mergeHistory(prompts, loadCommands(HISTORY_FILE)));
+    return mergeHistory(prompts, loadCommands(HISTORY_FILE));
+  }
+
+  syncHistory(force = false): void {
+    const token = this.switching.isOpen ? SWITCHER_HISTORY : this.viewing;
+    if (!force && token === this.historyFor) {
+      return;
+    }
+    this.editor.setHistory(this.currentHistory());
     this.historyFor = token;
+  }
+
+  /** Fetch pi's slash commands for the viewed session, once per session on screen. */
+  private syncCommands(): void {
+    const key = this.viewing;
+    if (!key || key === this.commandsFor) {
+      return;
+    }
+    this.commandsFor = key;
+    const session = this.metaForPath(key)?.id;
+    this.request({ type: "commands", session })
+      .then((list) => {
+        if (key === this.commandsFor && Array.isArray(list)) {
+          this.piCommands = list as Array<{ name: string; description?: string }>;
+          if (list.length === 0) {
+            this.commandsFor = null; // no child to ask yet; try again next time
+          }
+        }
+      })
+      .catch(() => {
+        this.commandsFor = null; // retry on the next view change
+      });
   }
 
   rebuildChat(): void {
     this.syncHistory();
+    this.syncCommands();
     this.chatRoot.clear();
     const view = this.viewing ? this.views.get(this.viewing) : undefined;
     if (view) {
+      markLatestRun(view);
       for (const item of view.items) {
         this.applyDisplay(item);
         this.chatRoot.addChild(item.component);
@@ -606,6 +691,7 @@ class Controller {
       stats,
       flash: this.flash,
       dialog: key ? this.views.get(key)?.dialog : undefined,
+      notice: settingsNotice(this.sessions.values(), settingsMtime()),
     });
     this.statusLine.setText(truncateToWidth(status, width));
     this.tui.requestRender();

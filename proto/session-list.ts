@@ -127,6 +127,18 @@ export function sortSessions(list: SwitcherSession[], manualOrder: string[], ope
   });
 }
 
+/**
+ * Sessions the manual order does not know yet (new ones; on first run, all of
+ * them) are appended in display order, so a new session lands at the bottom
+ * instead of wherever file recency would put it. Returns the new order, or
+ * null when nothing was missing.
+ */
+export function appendUnranked(order: string[] | undefined, displayed: SwitcherSession[]): string[] | null {
+  const known = new Set(order ?? []);
+  const missing = displayed.flatMap((s) => (s.sessionId !== undefined && !known.has(s.sessionId) ? [s.sessionId] : []));
+  return missing.length === 0 ? null : [...(order ?? []), ...missing];
+}
+
 export interface MutationResult {
   changed: boolean;
   /** Message for the switcher hint line. */

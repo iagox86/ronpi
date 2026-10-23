@@ -2,11 +2,12 @@
 // actions (enter/new/kill/rename/group/move), the command line and its keys.
 import * as fs from "node:fs";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
-import { parseCommand } from "./commands.ts";
+import { helpText, parseCommand, SWITCHER_COMMANDS } from "./commands.ts";
 import type { Host } from "./host.ts";
 import { loadGroups, resolveGroup, saveGroups, type GroupsFile } from "./groups.ts";
 import {
   buildSessionList,
+  appendUnranked,
   deleteEmptyGroup,
   moveGroup,
   moveSession,
@@ -48,7 +49,7 @@ export class SwitcherActions {
     this.h.switcher.selectedKey = this.h.viewing;
     this.refresh();
     this.h.switcher.height = this.h.tui.terminal.rows || 24;
-    this.h.switcher.hint = "type / for commands - enter open - ctrl-n new - ctrl-x kill - ctrl-r rename - ctrl-g group";
+    this.h.switcher.hint = "type / for commands, or a message to start a session - enter open - ctrl-n new - ctrl-x kill - f2 rename - ctrl-g group - ctrl-r search";
     this.h.switcher.heightProvider = () => Math.max(6, (this.h.tui.terminal.rows || 24) - 4);
     this.isOpen = true;
     this.h.tui.setLayoutRoot(this.h.switcherLayout);
@@ -80,6 +81,11 @@ export class SwitcherActions {
       this.switchOrder = list.map((s) => s.key);
     }
     sortSessions(list, this.groups.order ?? [], this.switchOrder);
+    const order = appendUnranked(this.groups.order, list);
+    if (order) {
+      this.groups.order = order;
+      saveGroups(this.groups);
+    }
     if (process.env.RONPI_KEYS) {
       try {
         fs.appendFileSync(process.env.RONPI_KEYS, `REFRESH_SWITCHER paths=${list.length} local=${this.h.local.size} daemon=${this.h.sessions.size}: ${list.map((x) => x.key.split("/").pop()).join(",")}\n`);
@@ -114,7 +120,8 @@ export class SwitcherActions {
     this.h.rebuildChat();
   }
 
-  async newSession(): Promise<void> {
+  /** Spawn a session; `firstMessage` is prompted once it is entered. */
+  async newSession(firstMessage?: string): Promise<void> {
     try {
       const data = (await this.h.request({ type: "spawn", cwd: process.cwd() })) as { sessionId?: number };
       if (typeof data?.sessionId === "number") {
@@ -122,12 +129,19 @@ export class SwitcherActions {
         if (meta) {
           this.h.viewing = this.h.keyFor(meta);
           this.close();
+          if (firstMessage) {
+            void this.h.session.prompt(firstMessage);
+          }
         } else {
           this.h.pendingEnterId = data.sessionId;
+          this.h.pendingPrompt = firstMessage ?? null;
           this.h.switcher.hint = "starting session...";
         }
       }
     } catch (err) {
+      if (firstMessage) {
+        this.h.editor.setText(firstMessage);
+      }
       this.h.switcher.hint = `spawn failed: ${err instanceof Error ? err.message : err}`;
       this.h.tui.requestRender();
     }
@@ -198,8 +212,15 @@ export class SwitcherActions {
   }
 
   async runCommand(cmd: string, target: SwitcherSession | undefined): Promise<void> {
-    const { name, arg } = parseCommand(cmd);
-    switch (name) {
+    const { name: typed, arg } = parseCommand(cmd);
+    const spec = SWITCHER_COMMANDS.find((c) => c.name === typed);
+    if (!spec) {
+      this.h.switcher.hint = `unknown command: /${typed} (/help)`;
+      this.h.tui.requestRender();
+      return;
+    }
+    // exhaustive: a command added to SWITCHER_COMMANDS needs a case here
+    switch (spec.name) {
       case "new":
         await this.newSession();
         break;
@@ -259,7 +280,7 @@ export class SwitcherActions {
         this.h.dispose();
         break;
       case "help":
-        this.h.switcher.hint = "/new /kill /rename <name> /group <name> /adopt /kill-daemon /exit /help";
+        this.h.switcher.hint = helpText(SWITCHER_COMMANDS);
         break;
       case "restore":
         this.h.switcher.hint = "/restore is not built yet (trash keeps everything)";
@@ -296,7 +317,7 @@ export class SwitcherActions {
         this.h.switcher.hint = "daemon shutting down (children stop too)";
         break;
       default:
-        this.h.switcher.hint = `unknown command: /${name} (/help)`;
+        spec satisfies never;
     }
     this.h.tui.requestRender();
   }
@@ -355,7 +376,7 @@ export class SwitcherActions {
       }
       return true;
     }
-    if (matchesKey(data, Key.ctrl("r"))) {
+    if (matchesKey(data, "f2")) {
       const target = this.h.switcher.current();
       if (this.h.switcher.currentIsHeader() || !target) {
         this.h.switcher.hint = "rename works on sessions, not group headers";
@@ -385,6 +406,11 @@ export class SwitcherActions {
     this.h.editor.setText("");
     if (trimmed.startsWith("/")) {
       void this.runCommand(trimmed, this.h.switcher.current());
+      return;
+    }
+    // plain text = the first message of a new session
+    if (trimmed.length > 0) {
+      void this.newSession(trimmed);
       return;
     }
     // enter opens the highlighted session; on a group header it is a no-op

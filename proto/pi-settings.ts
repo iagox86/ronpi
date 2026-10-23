@@ -28,3 +28,9 @@ export function wheelScrollLines(settings: Record<string, unknown> = load()): Wh
 export function hideThinkingBlock(settings: Record<string, unknown> = load()): boolean {
   return settings.hideThinkingBlock === true;
 }
+
+/** Rows in the autocomplete popup (pi's `autocompleteMaxVisible`, clamped 3-20 like pi). */
+export function autocompleteMaxVisible(settings: Record<string, unknown> = load()): number {
+  const v = settings.autocompleteMaxVisible;
+  return typeof v === "number" ? Math.max(3, Math.min(20, Math.floor(v))) : 5;
+}

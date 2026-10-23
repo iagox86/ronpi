@@ -13,6 +13,20 @@ y-answer with tool actually executing, two-controller exclusivity +
 take-over + view-only refusal. pi-side groundwork lives in
 ~/stuff/dotfiles/server/pi/extensions/.
 
+**Current state (2026-10-23):** the session UX project is DONE except
+per-item expand (parked: not useful without mouse selection). Built since M1:
+Controller split (host.ts, switcher-actions.ts, session-actions.ts), solarized
+theme as one JSON file driving pi components and the switcher (theme.ts,
+pi/themes/), painted background (OSC 11), real tool renderers + collapsed tool
+runs (ctrl-o), thinking toggle (ctrl-t), working indicator + queued-message
+strip + switcher-row spinner, Esc restores queued messages then aborts,
+rewind (esc esc), history seeded from the session file plus a slash-command
+log, wheel scroll acceleration, scroll position held while output streams,
+steeringMode "all", the ronpi settings file (settings.ts), install.ts for
+pi/ resources. Everything is tested against a fake pi (test/fixtures/fake-pi
+.mjs, incl. FAKE_PI_SLOW=1); real-model runs are the remaining verification.
+Also built 2026-10-22 (night): ctrl-r history search (switcher rename moved to f2), /command autocomplete (registries in commands.ts; pi commands via daemon `commands`), plain text in the switcher starts a session.
+
 Findings below were validated against pi's shipped code (pi 1.3.x era).
 M0/M1 corrections to earlier assumptions are in "M0 findings".
 
@@ -31,13 +45,14 @@ an integration suite that runs the real daemon against a fake pi. Findings:
   (3s tick), not only by the extension's deregister (lost when pi exits).
 - spawn replies as soon as the session is registered; the child starts in the
   background and prompts arriving meanwhile wait on `starting`.
-- Not yet split: the Controller class itself (state + key handling + switcher
-  actions); the next cut would be switcher actions vs session view.
+- The Controller class was split afterwards (2026-10-22/23): switcher actions
+  (switcher-actions.ts) and session actions (session-actions.ts) behind the
+  Host interface in host.ts; controller.ts keeps connection, state and routing.
 
-## NEXT BIG PROJECT: session UX (scoped 2026-10-22)
+## Session UX project (scoped 2026-10-22; DONE 2026-10-23 except per-item expand)
 
 Roadmap items 7 and 8 combined; goal: ronpi sessions should look and feel
-alive. Nothing built yet. Decision (Ron): ONE solarized palette drives both the
+alive. Built; the per-step notes below record what shipped. Decision (Ron): ONE solarized palette drives both the
 session view and the switcher chrome. Keyboard-only: no mouse (reporting would
 break terminal select/copy, and click hit-testing against ScrollView offsets is
 real work).
@@ -94,9 +109,11 @@ Steps, each independently shippable, in order:
    docked under the transcript, 100ms timer only while working); daemon sets
    steeringMode "all" on every child (RONPI_STEERING_MODE=one-at-a-time
    restores pi's default). Fake pi: FAKE_PI_SLOW=1 scripts thinking/tool/text/
-   error and queues mid-run prompts. Not yet: switcher-row spinner, Esc ->
-   clear_queue.
-4. (BUILT 2026-10-22 except per-item expand: tool-run.ts groups consecutive tool
+   error and queues mid-run prompts. DONE 2026-10-23: switcher-row spinner (same
+   timer, runs while the switcher is open and any session streams); Esc on a
+   working session clear_queue's, restores queued text above the editor draft
+   (pi's behavior), then aborts - verified an abort alone would deliver them.
+4. (BUILT 2026-10-22; per-item expand PARKED - not useful without mouse selection: tool-run.ts groups consecutive tool
    calls into one collapsed summary line, ctrl-o toggles all sessions; ctrl-t
    toggles thinking, starting from pi's hideThinkingBlock setting. Step 5: pi's
    own assistant component already draws errors, so ours only adds a row for
@@ -110,7 +127,7 @@ Steps, each independently shippable, in order:
 
 Testing: grow test/fixtures/fake-pi.mjs a slow-streaming mode (thinking, tool
 events, an error) so the indicator and toggles can be smoke-tested in tmux
-without a model. Light variant: let the background be the terminal default.
+without a model.
 Risk: Loader/diff components are interactive-mode internals, not all exported
 (see the caveat under "Building blocks"); use the shim-module plan there.
 
@@ -250,7 +267,7 @@ Code's agent-list shape) mirrors Claude Code's agent list:
 - **Keys in switcher**: up/down move, enter or right enters, esc closes;
   management on the highlighted entry: ctrl-n new, ctrl-x kill
   (context-sensitive: deactivate if active, trash+confirm if inactive),
-  ctrl-r rename, ctrl-g group. A command box at the bottom of the
+  f2 rename (ctrl-r is history search), ctrl-g group. A command box at the bottom of the
   switcher offers typed equivalents (/new, /kill, /rename <name>,
   /group <name>, /exit, /help; /restore later) - every hotkey has a
   command form.
@@ -364,36 +381,66 @@ export_html; get_commands.
   extension, /adopt, live-in-pi markers, prompt-fork confirm, ghost
   pruning, controller announce).
 - M2: the UX batch (see "M2+ roadmap" below) - quick wins first.
-- NEXT BIG PROJECT: session UX (solarized, indicator, collapse); see the
-  section of that name above. Controller-class split is deferred behind it.
+- Session UX project (solarized, indicator, collapse, rewind, history,
+  settings): DONE 2026-10-23; see the section of that name above. The
+  Controller-class split is also done.
+- Done: ctrl-r history search, /command autocomplete, text-starts-session.
 
-## Next session (medium priority, added 2026-10-23): custom tools + history search
+## ronpi settings file (built 2026-10-23)
+
+~/.config/ronpi/settings.json (settings.ts): steeringMode, provider, model,
+thinking, piCli; defaults < file < RONPI_* env. Read by the daemon at EVERY
+child spawn (not at daemon start), so changes need no restart; each child
+records the file's mtime it started with (SessionMeta.settingsMtime) and the
+switcher status line warns how many running sessions are behind (mtime, not
+content hash: a touch is a harmless false alarm, create/delete counts as a
+change). Parse/type problems are reported the same way and logged. Not in the
+file yet: socket/log/trash/history paths (env only, read at import), UI
+options (rendering ones still come from pi's settings.json), idle-exit
+(decided against), search backend (future).
+
+## Next session (medium priority, added 2026-10-23): history search, custom tools
+
+Handoff for the next session (findings checked 2026-10-23):
+
+- /command autocomplete. pi-tui's Editor has `setAutocompleteProvider(p)` and
+  `setAutocompleteMaxVisible(n)`; pass `autocompleteMaxVisible` from pi's
+  settings (default 5). `AutocompleteProvider` = getSuggestions(lines, line,
+  col, {signal, force}) + applyCompletion(...); `force` is the likely Tab hook.
+  `CombinedAutocompleteProvider(commands: SlashCommand[], basePath, fdPath)`
+  gives slash commands (name, description, argumentHint,
+  getArgumentCompletions) AND @file path completion for free - useful in the
+  session editor. Two providers: (a) switcher box: ronpi's own commands from
+  commands.ts (needs descriptions/arg hints, and the session editor's /exit
+  /quit /abort); (b) session editor: the child's `get_commands` list via a new
+  daemon passthrough, plus (a)'s session-level commands. Open: inactive
+  sessions have no child to ask (cache the last list per session, or ask a
+  daemon-wide child); Tab-Tab listing vs popup-as-you-type (the decided
+  preference is readline-style; verify what `force` does before building).
+- ctrl-r. The Editor has no default ctrl-r binding (checked), and
+  InputEditor.onKey already intercepts keys first, so a docked search line
+  (like rewind-picker.ts) fits: type to filter, ctrl-r again = next older
+  match, enter accepts into the editor, esc cancels. Search over the same
+  merged list syncHistory() builds (prompts + commands). Session view only:
+  ctrl-r means rename in the switcher. Consider exposing the merged list from
+  the controller so the picker and the editor share one source.
 
 - ctrl-r backward search over the session's input history (shell-style:
   type to filter, ctrl-r again for the next older match, enter accepts,
   esc cancels). NOTE ctrl-r is already "rename" in the switcher, so search
   would be session-view only. History already seeds from the session file; this is the
   search UI on top (a docked line like the rewind picker).
-- Web search tool, and a wider look at custom tools. Mechanism: pi extension
-  tools (`pi.registerTool()`) living in the repo's pi/extensions/ (installed
-  by install.ts), so they work in standalone pi AND ronpi children from one
-  implementation. Alternative: a stdio MCP server (`pi.registerMcpServer()` or
-  mcp.json) - reuses the MCP ecosystem but is an extra process per session.
-  To decide: search backend (Brave Search API / Tavily / Exa / Kagi need a key;
-  self-hosted SearXNG needs none but needs hosting; scraping DuckDuckGo is
-  fragile), key storage (env or an auth file, never the repo), and permission
-  behavior (auto-allow search, prompt for fetching arbitrary URLs?).
-  Search alone returns snippets; pair it with `web_fetch(url)` (readable-text
-  extraction, size cap). Security: fetch is an SSRF vector - block loopback,
-  link-local and private ranges and re-check after redirects; web content is
-  untrusted input to the model (prompt injection) - label results as such and
-  keep the permission prompt for anything with side effects.
-  Other candidates, roughly by value: ronpi-aware tools via the daemon socket
-  (spawn a named agent, message another session; see "Agent definitions");
-  a notify tool (push when a long run finishes or needs input); docs lookup
-  (pi's own docs dir). Tool declarations cost context for small models, so
-  agent profiles should list tools explicitly, and pi's tool_search/codemode
-  built-ins (defaultTools "+codemode" today) already reduce the cost.
+- Web search: NOT NEEDED - an off-the-shelf pi extension covers it (Ron,
+  2026-10-23), installed outside this repo. Custom tools of our own remain
+  possible via pi extension tools (`pi.registerTool()`) in pi/extensions/;
+  candidates, roughly by value: ronpi-aware tools via the daemon socket
+  (spawn a named agent, message another session; see "Agent definitions"), a
+  notify tool (push when a long run finishes or needs input), docs lookup
+  (pi's own docs dir). If we ever write a fetch-style tool: block loopback,
+  link-local and private ranges (re-check after redirects) and treat fetched
+  content as untrusted model input. Tool declarations cost context for small
+  models, so agent profiles should list tools explicitly; pi's tool_search /
+  codemode built-ins (defaultTools "+codemode" today) already reduce that.
   Note for the parked file-restore: pi's `tool_call` event can mutate or block
   a call before it runs, so a pre-edit snapshot extension looks feasible.
 
@@ -410,7 +457,9 @@ Near-term (post-budget-reset), rough order = dependency + value:
    commands) and the session editor. Ron prefers readline semantics:
    tab completes, tab-tab lists options (the provider's force flag looks
    like the hook); use the popup if it comes free. Session-side needs the
-   child's command list over RPC (check rpc.md, else hardcode).
+   child's command list over RPC: CHECKED 2026-10-23 - `get_commands` exists
+   (name, description, source extension/prompt/skill; run via `prompt` with
+   a leading `/`). See "Next session" for the plan.
 3. Status bar parity: adopt the dotfiles status-bar.ts segments verbatim
    ([session-name] dir | git:(branch) | model | ctx: used/max | thinking:
    level | $cost | prov: id, green->yellow->red "badness" gradient) in
@@ -576,10 +625,23 @@ Bigger goals - design-arounds, not scheduled:
 - Image paste into sessions: needs the RPC prompt path to carry image
   content parts - verify pi's rpc protocol supports them before
   designing the wl-paste -> daemon -> child path.
-- Extension manager: controller installs/updates/enables extensions per
-  session type (probably never, maybe fun). Today's de-facto version is
-  the dotfiles extensions dir + install.sh; a manager would just formalize
-  that plus per-session-type filtering.
+- Tool manager (FUTURE GOAL, Ron 2026-10-23; supersedes "Extension manager"):
+  one place to see and control what a session can use: pi extensions, MCP
+  servers and individual tools, per session or per agent profile, instead of
+  hand-editing settings and dotfiles. Building blocks that exist today: ronpi
+  owns pi/extensions + install.ts (symlink installer); pi's `packages`
+  setting and `pi install` / `pi config`; `defaultTools` with +name/-name
+  entries; `--tools` / `--no-tools` / `--no-extensions` / `--no-mcp` child
+  flags; `tool_search`/`codemode` built-ins; `pi.registerMcpServer()`. Likely
+  shape: a switcher-style list of tools/extensions/servers with on/off per
+  agent profile (ties to "Agent definitions": the profile snapshot records
+  the loadout, since a lazy respawn loses launch flags), plus install/update
+  of the extensions ronpi ships. Open: whether to flip tools on a LIVE
+  session (pi's RPC surface for active tools is unverified) or only at
+  spawn; where profiles live (the ronpi settings file is the natural home).
+  Today's de-facto version is install.ts plus pi's own settings. ronpi's own
+  pieces (the presence extension and the solarized theme in pi/) are the
+  first things the manager should take over from install.ts; not needed yet.
 
 ## Risks
 

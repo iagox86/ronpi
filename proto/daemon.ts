@@ -17,7 +17,7 @@
 import * as fs from "node:fs";
 import * as net from "node:net";
 import { RpcClient, SessionManager } from "@earendil-works/pi-coding-agent";
-import { DIALOG_METHODS, PI_CLI, PID_FILE, SOCK, TRASH_DIR } from "./config.ts";
+import { DIALOG_METHODS, PID_FILE, SOCK, TRASH_DIR } from "./config.ts";
 import { log } from "./log.ts";
 import { Presence } from "./presence.ts";
 import {
@@ -28,6 +28,7 @@ import {
   type SessionMeta,
 } from "./shared.ts";
 import { rewindFile } from "./rewind.ts";
+import { type ChildConfig, loadSettings, resolveChildConfig, settingsMtime } from "./settings.ts";
 import { trashSessionFile } from "./trash.ts";
 
 function makeSession(cwd: string, sessionFile?: string): DaemonSession {
@@ -52,6 +53,9 @@ interface DaemonSession {
   sessionFile?: string;
   /** Live child process; undefined = inactive. */
   child?: RpcClient;
+  /** Settings-file mtime (null = no file) and problems when the child started. */
+  settingsMtime?: number | null;
+  settingsProblem?: string;
   /** Socket holding the exclusive input attach; undefined = nobody. */
   attachedTo?: net.Socket;
   sessionId?: string;
@@ -98,6 +102,8 @@ function metaFor(s: DaemonSession, socket: net.Socket): SessionMeta {
     dead: s.dead,
     active: s.child !== undefined,
     pendingDialog: s.pendingDialog,
+    settingsMtime: s.child ? s.settingsMtime : undefined,
+    settingsProblem: s.child ? s.settingsProblem : undefined,
     attachedToYou: s.attachedTo === socket,
     attachedElsewhere: s.attachedTo !== undefined && s.attachedTo !== socket,
     externallyLive: s.sessionFile !== undefined && presence.has(s.sessionFile),
@@ -179,9 +185,28 @@ function onChildEvent(s: DaemonSession, event: Record<string, unknown>): void {
   }
 }
 
-function makeChildClient(s: DaemonSession, args: string[]): RpcClient {
+/**
+ * Settings for a child about to start, read fresh so edits apply to new and
+ * respawned sessions. Records the file's mtime and any problems on the session
+ * so the switcher can say which running sessions are behind.
+ */
+function childConfigFor(s: DaemonSession): ChildConfig {
+  const mtime = settingsMtime();
+  const { settings, problems } = loadSettings();
+  s.settingsMtime = mtime;
+  s.settingsProblem = problems.length > 0 ? problems.join("; ") : undefined;
+  if (problems.length > 0) {
+    log(`settings problems: ${s.settingsProblem}`);
+  }
+  return resolveChildConfig(settings);
+}
+
+/** Newest slash-command list any child reported; serves sessions with no child. */
+let lastCommands: Array<{ name: string; description?: string; source: string }> = [];
+
+function makeChildClient(s: DaemonSession, args: string[], cfg: ChildConfig): RpcClient {
   return new RpcClient({
-    cliPath: PI_CLI,
+    cliPath: cfg.piCli,
     cwd: s.cwd,
     args,
     env: { ...process.env, RONPI_CHILD: "1" },
@@ -208,18 +233,19 @@ async function startChild(
     if (opts.name) {
       args.push("--name", opts.name);
     }
-    if (process.env.RONPI_THINKING) {
-      args.push("--thinking", process.env.RONPI_THINKING);
+    const cfg = childConfigFor(s);
+    if (cfg.thinking) {
+      args.push("--thinking", cfg.thinking);
     }
-    if (process.env.RONPI_MODEL) {
-      args.push("--model", process.env.RONPI_MODEL);
+    if (cfg.model) {
+      args.push("--model", cfg.model);
     }
-    if (process.env.RONPI_PROVIDER) {
-      args.push("--provider", process.env.RONPI_PROVIDER);
+    if (cfg.provider) {
+      args.push("--provider", cfg.provider);
     }
-    const client = makeChildClient(s, args);
+    const client = makeChildClient(s, args, cfg);
     client.onEvent((event) => onChildEvent(s, event as Record<string, unknown>));
-    await startClient(client);
+    await startClient(client, cfg.steeringMode);
     s.child = client;
     s.dead = false;
     await refreshMeta(s);
@@ -233,11 +259,10 @@ async function startChild(
 /**
  * Start a child and apply ronpi's queue preference: messages sent while a run
  * is in flight are all delivered together at the next turn boundary (pi's own
- * default is one per turn). RONPI_STEERING_MODE=one-at-a-time restores that.
+ * default is one per turn). Set steeringMode in the ronpi settings to change.
  */
-async function startClient(client: RpcClient): Promise<void> {
+async function startClient(client: RpcClient, mode: ChildConfig["steeringMode"]): Promise<void> {
   await client.start();
-  const mode = process.env.RONPI_STEERING_MODE === "one-at-a-time" ? "one-at-a-time" : "all";
   try {
     await client.setSteeringMode(mode);
   } catch (err) {
@@ -500,6 +525,26 @@ async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder):
       res(true);
       break;
     }
+    case "clear_queue": {
+      const s = sessions.get(cmd.session);
+      if (!s?.child) {
+        throw new Error("session is not active");
+      }
+      res(true, undefined, await s.child.clearQueue());
+      break;
+    }
+    case "commands": {
+      const s = cmd.session === undefined ? undefined : sessions.get(cmd.session);
+      if (s?.child) {
+        try {
+          lastCommands = await s.child.getCommands();
+        } catch (err) {
+          log(`get_commands failed: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+      res(true, undefined, lastCommands);
+      break;
+    }
     case "deactivate": {
       const s = sessions.get(cmd.session);
       if (!s) {
@@ -582,9 +627,10 @@ async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder):
       s.spawning = true;
       broadcastSessions();
       try {
-        const client = makeChildClient(s, ["--fork", cmd.path]);
+        const cfg = childConfigFor(s);
+        const client = makeChildClient(s, ["--fork", cmd.path], cfg);
         client.onEvent((event) => onChildEvent(s, event as Record<string, unknown>));
-        await startClient(client);
+        await startClient(client, cfg.steeringMode);
         s.child = client;
         s.dead = false;
         await refreshMeta(s);

@@ -43,8 +43,7 @@ export class SessionActions {
       }
       this.lastEsc = now;
       if (meta?.id !== undefined && meta.attachedToYou && meta.streaming) {
-        this.h.send({ type: "abort", session: meta.id });
-        this.h.notify("aborted");
+        void this.abortRestoringQueue(meta.id);
       }
       return true;
     }
@@ -55,6 +54,32 @@ export class SessionActions {
     return false;
   }
 
+
+  /**
+   * Abort the run. Messages still queued are pulled back into the editor
+   * first (pi's own Esc behavior) - an abort alone would go on to deliver them.
+   */
+  private async abortRestoringQueue(session: number): Promise<void> {
+    let queued: string[] = [];
+    try {
+      const q = (await this.h.request({ type: "clear_queue", session })) as { steering?: string[]; followUp?: string[] };
+      queued = [...(q.steering ?? []), ...(q.followUp ?? [])];
+    } catch {
+      // queue state unknown; still abort
+    }
+    this.h.send({ type: "abort", session });
+    const view = this.h.viewing ? this.h.views.get(this.h.viewing) : undefined;
+    if (view) {
+      view.queue = [];
+    }
+    if (queued.length > 0) {
+      this.h.editor.setText([...queued, this.h.editor.getText()].filter((t) => t.trim()).join("\n\n"));
+      this.h.notify(`aborted - ${queued.length} queued message${queued.length === 1 ? "" : "s"} back in the editor`);
+    } else {
+      this.h.notify("aborted");
+    }
+    this.h.tui.requestRender();
+  }
 
   /** Open the rewind list for the viewed session. */
   private openRewind(): void {

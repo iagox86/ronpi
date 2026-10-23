@@ -37,6 +37,32 @@ export function stateLabel(meta: SessionMeta | undefined): "inactive" | "working
   return meta.dead ? "crashed" : "idle";
 }
 
+/**
+ * Warning about sessions that started before the ronpi settings file last
+ * changed (they keep the old values until they respawn), or about a settings
+ * file that did not parse. Empty when there is nothing to say.
+ */
+export function settingsNotice(metas: Iterable<SessionMeta>, currentMtime: number | null): string {
+  let stale = 0;
+  let problem = "";
+  for (const m of metas) {
+    if (!m.active || m.settingsMtime === undefined) {
+      continue;
+    }
+    if (m.settingsProblem) {
+      problem = m.settingsProblem;
+    }
+    if (m.settingsMtime !== currentMtime) {
+      stale++;
+    }
+  }
+  if (stale > 0) {
+    const noun = stale === 1 ? "running session uses" : "running sessions use";
+    return `settings changed - ${stale} ${noun} the old values until restarted`;
+  }
+  return problem ? `settings problem: ${problem}` : "";
+}
+
 export interface StatusInputs {
   switcherOpen: boolean;
   /** Name of the highlighted switcher row, if any. */
@@ -48,6 +74,8 @@ export interface StatusInputs {
   stats: FleetStats;
   flash: string;
   dialog?: DialogRequest;
+  /** Settings warning (see settingsNotice), shown in the switcher. */
+  notice?: string;
 }
 
 export function buildStatusLine(inp: StatusInputs): string {
@@ -60,11 +88,14 @@ export function buildStatusLine(inp: StatusInputs): string {
     return accent(inp.flash);
   }
   if (inp.switcherOpen) {
-    return dim(
+    const base = dim(
       inp.selectedName
         ? `switcher - ${inp.selectedName} - enter open, arrows navigate, / for commands`
         : "switcher - esc or left closes",
     );
+    // a warning replaces the hints rather than trailing them, so a narrow
+    // terminal truncates the hints, not the warning
+    return inp.notice ? `${dim("switcher")}${dim(" | ")}${attention(inp.notice)}` : base;
   }
   if (!inp.viewing) {
     return dim(`${counts} | left: switcher`);

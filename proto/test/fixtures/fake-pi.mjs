@@ -167,6 +167,13 @@ async function handle(cmd) {
     case "abort":
       aborted = true;
       return ok(cmd.id, "abort", null);
+    case "get_commands":
+      return ok(cmd.id, "get_commands", {
+        commands: [
+          { name: "skill:demo", description: "A demo skill", source: "skill" },
+          { name: "compact", description: "Compact the context", source: "extension" },
+        ],
+      });
     case "clear_queue": {
       const steering = queue.splice(0, queue.length);
       queueUpdate();

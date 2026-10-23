@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { GroupsFile } from "../groups.ts";
 import {
+  appendUnranked,
   buildSessionList,
   deleteEmptyGroup,
   displayName,
@@ -244,5 +245,18 @@ describe("deleteEmptyGroup", () => {
   it("never deletes the ungrouped section", () => {
     const groups: GroupsFile = { groups: [], assignments: {} };
     assert.equal(deleteEmptyGroup(groups, [], "(ungrouped)").changed, false);
+  });
+});
+
+describe("appendUnranked", () => {
+  const row = (sessionId?: string) => ({ sessionId }) as SwitcherSession;
+  it("puts sessions the order does not know at the end, in display order", () => {
+    assert.deepEqual(appendUnranked(["a", "b"], [row("c"), row("a"), row("d"), row("b")]), ["a", "b", "c", "d"]);
+  });
+  it("ranks everything on first run and ignores rows without an id", () => {
+    assert.deepEqual(appendUnranked(undefined, [row("x"), row(), row("y")]), ["x", "y"]);
+  });
+  it("reports no change when the order is complete", () => {
+    assert.equal(appendUnranked(["a"], [row("a"), row()]), null);
   });
 });

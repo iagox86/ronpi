@@ -25,6 +25,10 @@ export interface SessionMeta {
   /** False when the child has been deactivated (session is file-only). */
   active: boolean;
   pendingDialog: boolean;
+  /** ronpi settings-file mtime this child started with (null = no file); undefined when inactive. */
+  settingsMtime?: number | null;
+  /** Problems the settings file had when this child started. */
+  settingsProblem?: string;
   /** The session file is open in an external pi process (presence ext). */
   externallyLive?: boolean;
   /** Lifetime token/cost rollup tracked by the daemon. */
@@ -56,6 +60,11 @@ type ClientCommandBody =
       name?: string;
     }
   | { type: "abort"; session: number }
+  /** Drop queued steering/follow-up messages; the response carries their text. */
+  | { type: "clear_queue"; session: number }
+  /** pi's slash commands (extensions, skills, prompt templates). Without a
+   * live session the daemon answers from the last list any child reported. */
+  | { type: "commands"; id?: string; session?: number }
   | { type: "spawn"; id?: string; cwd: string; sessionFile?: string; name?: string }
   | { type: "deactivate"; id?: string; session: number }
   /** Deactivate if live, then move the session file to the trash dir. */

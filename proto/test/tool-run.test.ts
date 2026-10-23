@@ -20,6 +20,14 @@ describe("tool run", () => {
     assert.match(summaryLine([call("ls")]), /1 tool call:/);
   });
 
+  it("mentions ctrl-o only when it is the hinted run", () => {
+    const run = new ToolRun();
+    run.calls.push(call("bash"));
+    assert.match(run.render(120)[0] as string, /ctrl-o to expand/);
+    run.showHint = false;
+    assert.doesNotMatch(run.render(120)[0] as string, /ctrl-o/);
+  });
+
   it("expands to every call's full block", () => {
     const run = new ToolRun();
     run.calls.push(call("a", false, ["a1", "a2"]), call("b", false, ["b1"]));

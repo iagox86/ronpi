@@ -4,6 +4,7 @@
 // height (the terminal's) with a tinted background so its bounds are always
 // visible; content is windowed inside that. Input flows through the
 // controller's chat box (the editor): this component only renders and moves.
+import { spinnerFrame } from "./activity.ts";
 import { appendFileSync } from "node:fs";
 import { Container, truncateToWidth, type Focusable } from "@earendil-works/pi-tui";
 import { fmtTokens, oneLine } from "./format.ts";
@@ -278,7 +279,7 @@ export class Switcher extends Container implements Focusable {
       }
       const s = row.s;
       const isSel = s.key === this.selectedKey;
-      const marker = s.note === "waiting on permission" ? attention("!") : s.state === "streaming" ? streamingStyle("*") : MARKERS[s.state];
+      const marker = s.note === "waiting on permission" ? attention("!") : s.state === "streaming" ? streamingStyle(spinnerFrame(Date.now())) : MARKERS[s.state];
       const markerText = isSel ? marker : dim(marker);
       const displayName = s.muted ? `[pi] ${oneLine(s.name)}` : oneLine(s.name);
       const bodyCell = truncateToWidth(displayName, nameWidth - 3).padEnd(nameWidth - 3);

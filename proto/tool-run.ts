@@ -21,16 +21,18 @@ export function toolNames(calls: ToolCall[]): string {
   return [...counts].map(([name, n]) => (n > 1 ? `${name} x${n}` : name)).join(", ");
 }
 
-export function summaryLine(calls: ToolCall[]): string {
+export function summaryLine(calls: ToolCall[], hint = true): string {
   const failed = calls.filter((c) => c.failed).length;
   const noun = calls.length === 1 ? "tool call" : "tool calls";
   const fail = failed > 0 ? ` ${attention(`(${failed} failed)`)}` : "";
-  return dim(` > ${calls.length} ${noun}: ${toolNames(calls)}`) + fail + dim("  ctrl-o to expand");
+  return dim(` > ${calls.length} ${noun}: ${toolNames(calls)}`) + fail + (hint ? dim("  ctrl-o to expand") : "");
 }
 
 export class ToolRun implements Component {
   calls: ToolCall[] = [];
   expanded = false;
+  /** Whether the collapsed line mentions ctrl-o (only the latest run does). */
+  showHint = true;
 
   render(width: number): string[] {
     if (this.expanded) {
@@ -39,7 +41,7 @@ export class ToolRun implements Component {
         return c.component.render(width);
       });
     }
-    return [truncateToWidth(summaryLine(this.calls), width)];
+    return [truncateToWidth(summaryLine(this.calls, this.showHint), width)];
   }
 
   invalidate(): void {

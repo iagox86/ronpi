@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { type Harness, type Msg, startDaemon } from "./helpers.ts";
@@ -159,6 +160,55 @@ describe("daemon: lifecycle", () => {
     await c.request({ type: "prompt", session: sessionId, message: "three" });
     await c.waitFor((m) => isSettled(m) && c.messages.filter(isSettled).length >= 3);
     assert.ok(entries().some((e) => e.message?.content === "three"));
+  });
+
+  it("hands queued messages back on clear_queue so an abort does not deliver them", async () => {
+    harness = await startDaemon({ FAKE_PI_SLOW: "1", FAKE_PI_STEP_MS: "150" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "running" });
+    await c.request({ type: "prompt", session: sessionId, message: "queued message" });
+    await c.waitFor((m) => m.type === "event" && m.event?.type === "queue_update" && m.event.steering.length === 1);
+
+    const q = await c.request({ type: "clear_queue", session: sessionId });
+    assert.deepEqual(q.steering, ["queued message"]);
+    await c.request({ type: "abort", session: sessionId });
+    await c.waitFor(isSettled);
+    const file = c.sessions().find((s) => s.id === sessionId)?.sessionFile as string;
+    assert.equal(fs.readFileSync(file, "utf8").includes("queued message"), false);
+  });
+
+  it("serves pi's slash commands, and the last list once the child is gone", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const live = await c.request({ type: "commands", session: sessionId });
+    assert.deepEqual(live.map((x: { name: string }) => x.name), ["skill:demo", "compact"]);
+    await c.request({ type: "deactivate", session: sessionId });
+    const cached = await c.request({ type: "commands", session: sessionId });
+    assert.equal(cached.length, 2);
+  });
+
+  it("records the settings file's mtime per child and re-reads it on respawn", async () => {
+    const settings = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-settings-")), "settings.json");
+    fs.writeFileSync(settings, '{"model":"a"}');
+    fs.utimesSync(settings, new Date(1_000_000), new Date(1_000_000));
+    harness = await startDaemon({ RONPI_SETTINGS: settings });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const mtimeOf = () => c.sessions().find((s) => s.id === sessionId)?.settingsMtime;
+    assert.equal(mtimeOf(), 1_000_000);
+
+    fs.utimesSync(settings, new Date(2_000_000), new Date(2_000_000));
+    assert.equal(mtimeOf(), 1_000_000, "a running child keeps the values it started with");
+    await c.request({ type: "deactivate", session: sessionId });
+    await c.request({ type: "prompt", session: sessionId, message: "wake up" });
+    await c.waitFor(isSettled);
+    assert.equal(mtimeOf(), 2_000_000, "the respawned child read the edited file");
+    fs.rmSync(path.dirname(settings), { recursive: true, force: true });
   });
 
   it("refuses to rewind a session that is mid-run", async () => {

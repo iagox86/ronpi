@@ -58,10 +58,23 @@ regardless of PATH.
 
 ## Keys
 
+In a session: `ctrl-r` reverse-searches this session's history (type to filter, `ctrl-r` older, `ctrl-s` newer, `enter` use, `esc` cancel); `/` completes ronpi's and pi's commands (fetched from the running pi via the daemon), `@`/paths complete files.
+
 Session view (chat):
-- `up`/`down` on the editor - recall previous prompts (draft is stashed
-  and restored; cursor movement wins in multi-line editors)
-- `esc` - abort the running agent (interrupt; no-op when idle)
+- `up`/`down` on the editor - recall earlier input: this session's prompts
+  (read from its file, so it survives restarts) and slash commands, in the
+  order typed (draft is stashed and restored; cursor movement wins in
+  multi-line editors)
+- `esc` - abort the running agent; messages still queued come back into the
+  editor first (above your draft) so the abort does not deliver them
+- `esc esc` on an idle session with an empty editor - rewind: pick an earlier
+  message, the session is cut back to before it and the text returns to the
+  editor (conversation only, file edits are not undone; the removed part is
+  kept in the trash)
+- `ctrl-o` - expand/collapse tool runs (collapsed: one summary line per run)
+- `ctrl-t` - show/hide thinking (starts from pi's `hideThinkingBlock`)
+- mouse wheel scrolls (speed from pi's `fullscreenWheelScrollLines`); the
+  view stays where you scrolled while output arrives
 - `left` on empty editor - open the switcher
 - `/abort` - abort the current run (intercepted here, never sent to the child)
 - `/quit` - back to the switcher (intercepted here too)
@@ -81,8 +94,12 @@ request/response):
 - `shift+up`/`shift+down` move the highlighted session or group (crossing a
   header moves the session between groups; persisted to groups.json)
 - `ctrl-n` new session (controller's cwd), `ctrl-x` kill highlighted
-  (sessions: deactivate; empty groups: delete), `ctrl-r` rename (prefilled
-  with the current name), `ctrl-g` group
+  (sessions: deactivate; empty groups: delete), `f2` rename (prefilled
+  with the current name), `ctrl-g` group, `ctrl-r` search the command history
+- typing plain text (not starting with `/`) and pressing enter starts a new
+  session with that as its first message
+- `/` completes commands (popup, tab); the list comes from `commands.ts`, so
+  new commands appear automatically
 - the bottom chat box doubles as the switcher command line: `/new` `/kill`
   `/rename <name>` `/group <name>` `/adopt` `/kill-daemon` `/quit` `/exit`
   `/help` (`/restore` later)
@@ -124,6 +141,17 @@ request/response):
   a ctrl-chord in the first second after start can be swallowed by pi-tui's
   keyboard negotiation.
 
+## Settings
+
+`~/.config/ronpi/settings.json` (`$XDG_CONFIG_HOME`, or `RONPI_SETTINGS` for
+a different path). All keys optional: `steeringMode` (`"all"`, the default, or
+`"one-at-a-time"`), `provider`, `model`, `thinking`, `piCli`. Layers: built-in
+defaults, then this file, then the `RONPI_*` environment variables below. The
+daemon re-reads the file every time it starts a child, so edits apply to new
+and respawned sessions without a restart; running sessions keep the values
+they started with, and the switcher status line says how many are behind
+(by file mtime). Bad values are ignored and reported there too.
+
 ## Env
 
 - `RONPI_SOCK` - socket path (default `$XDG_RUNTIME_DIR/ronpi.sock`; the
@@ -131,7 +159,8 @@ request/response):
 - `RONPI_PI_CLI` - pi cli.js the daemon spawns as children (tests point this at the fake pi)
 - `RONPI_LOG` - daemon log (default `daemon.log` next to daemon.ts)
 - `RONPI_TRASH` - trash dir (default `$XDG_DATA_HOME/ronpi/trash`)
-- `RONPI_PROVIDER` / `RONPI_MODEL` / `RONPI_THINKING` - provider, model and
+- `RONPI_PROVIDER` / `RONPI_MODEL` / `RONPI_THINKING` / `RONPI_STEERING_MODE` -
+  override the settings file: provider, model and
   thinking level for spawned
   children (e.g. `RONPI_PROVIDER=ollama RONPI_MODEL=gemma4:12b` for free
   local tests, or `RONPI_MODEL=glm-4.7 RONPI_THINKING=low` for cheap test
@@ -144,18 +173,28 @@ request/response):
 Daemon side:
 - `daemon.ts` - sockets, session table, child lifecycle, command dispatch
 - `presence.ts` - sessions open in external pi processes (heartbeat/pid/ghost pruning)
-- `trash.ts` - delete-to-trash with manifest
+- `trash.ts` - delete-to-trash with manifest; `rewind.ts` - cut a session file back to before a user message (tail to trash)
+- `settings.ts` - ronpi settings file, layered with `RONPI_*` env, re-read at every child spawn
 - `config.ts`, `log.ts` - env-derived paths, daemon log
 
 Controller side:
-- `controller.ts` - connection, state, key handling, switcher actions
+- `controller.ts` - connection, state, key routing, display toggles; `host.ts` - what the action classes need from it
+- `switcher-actions.ts` / `session-actions.ts` - switcher keys and commands / chat-view keys, prompting, rewind, Esc
 - `session-list.ts` - pure: daemon sessions + files -> rows, ordering, group moves
-- `transcript.ts` - pure-ish: live events and file replays -> pi message components
+- `transcript.ts` - live events and file replays -> pi message components; `tool-run.ts` (collapsible tool runs), `tool-defs.ts` (pi's built-in tool renderers), `components.ts` (user/assistant message tweaks)
+- `activity.ts` - working indicator and queued-message strip (events -> state -> lines)
+- `rewind-picker.ts` - the esc-esc message list; `history.ts` - slash-command log and history merge
 - `status.ts`, `dialogs.ts`, `commands.ts`, `format.ts` - small pure helpers
 - `editor.ts` - chat box (key interception, history bindings), `switcher.ts` - the list UI
+- `pi-settings.ts` - the few pi settings.json options ronpi honors (wheel speed, hide thinking)
 - `lifecycle.ts` - find/start/stop the daemon, `pi-theme.ts` - pi theme init
 
-Shared: `shared.ts` (wire protocol, LF framing), `groups.ts` (session-groups.json), `theme.ts`.
+Shared: `shared.ts` (wire protocol, LF framing), `groups.ts` (session-groups.json),
+`theme.ts` (all colors, read from `../pi/themes/solarized-dark.json`).
+
+Repo root: `pi/` holds the pi-side resources ronpi owns (presence extension, theme);
+`node install.ts` symlinks them into `$PI_CODING_AGENT_DIR` (default `~/.pi/agent`).
+`theme-preview.ts` prints sample components in the active theme.
 
 ## Checks
 
