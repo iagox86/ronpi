@@ -13,6 +13,8 @@ import * as net from "node:net";
 import {
   Container,
   isKeyRelease,
+  Key,
+  matchesKey,
   ProcessTerminal,
   ScrollView,
   Text,
@@ -36,7 +38,8 @@ import {
 } from "./session-list.ts";
 import { type ClientCommand, type DaemonMessage, type DistributiveOmit, encodeLine, LineSplitter, type SessionMeta } from "./shared.ts";
 import { buildStatusLine, fleetStats } from "./status.ts";
-import { dim } from "./theme.ts";
+import { ActivityLine } from "./activity.ts";
+import { assertTruecolor, dim } from "./theme.ts";
 import { Switcher, } from "./switcher.ts";
 import {
   applyEvent,
@@ -59,6 +62,10 @@ class Controller {
   switcherLayout: VStack;
   scroll: ScrollView;
   statusLine = new Text("", 0, 0);
+  activityLine = new ActivityLine();
+  /** Show full tool blocks instead of one summary line per run. */
+  toolsExpanded = false;
+  private activityTimer?: ReturnType<typeof setInterval>;
   editor: InputEditor;
   switcher = new Switcher();
   socket!: net.Socket;
@@ -104,6 +111,7 @@ class Controller {
     // (full-screen minus the dock, so the input box is never covered).
     this.chatLayout = new VStack([
       { component: this.scroll, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+      { component: this.activityLine, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       // never compress the dock: a shrunken editor was the "cut off" bug
       { component: dock, basis: "auto", grow: 0, shrink: 0, minSize: 4 },
     ]);
@@ -266,7 +274,14 @@ class Controller {
       case "history": {
         const key = this.keyById(msg.session);
         if (key) {
-          this.views.set(key, { items: itemsFromMessages(msg.messages, this.tui, this.metaForPath(key)?.cwd ?? ""), tools: new Map() });
+          const old = this.views.get(key);
+          this.views.set(key, {
+            ...newView(),
+            items: itemsFromMessages(msg.messages, this.tui, this.metaForPath(key)?.cwd ?? ""),
+            // keep live activity if events raced ahead of the history reply
+            activity: old?.activity,
+            queue: old?.queue ?? [],
+          });
           if (key === this.viewing) {
             this.rebuildChat();
           }
@@ -389,6 +404,10 @@ class Controller {
     if (this.switching.isOpen) {
       return this.switching.keys(data);
     }
+    if (matchesKey(data, Key.ctrl("o"))) {
+      this.toggleTools();
+      return true;
+    }
     return this.session.keys(data);
   }
 
@@ -421,17 +440,48 @@ class Controller {
       info.modified = Date.now();
     }
     if (key === this.viewing) {
-      this.scroll.scrollToEnd();
+      this.syncActivity();
       this.tui.requestRender();
+    }
+  }
+
+  /**
+   * Point the activity strip at the viewed session and run the animation
+   * timer only while there is something to animate (no idle redraws).
+   */
+  syncActivity(opened = false): void {
+    const view = this.viewing ? this.views.get(this.viewing) : undefined;
+    if (opened && view && !view.activity && this.viewing && this.metaForPath(this.viewing)?.streaming) {
+      // opened mid-run: the start event predates us. Only on open - the
+      // daemon's streaming flag lags behind events and would resurrect a
+      // spinner after agent_settled.
+      view.activity = { label: "working", since: Date.now() };
+    }
+    this.activityLine.state = view ?? { queue: [] };
+    const animate = Boolean(view?.activity) && !this.switching.isOpen;
+    if (animate && !this.activityTimer) {
+      this.activityTimer = setInterval(() => this.tui.requestRender(), 100);
+    } else if (!animate && this.activityTimer) {
+      clearInterval(this.activityTimer);
+      this.activityTimer = undefined;
     }
   }
 
   /** Mount new items immediately on the viewed session; rebuildChat() mounts the rest. */
   addItem(view: SessionView, key: string, item: Item): void {
+    if (item.kind === "tools") {
+      item.component.expanded = this.toolsExpanded;
+    }
     view.items.push(item);
     if (key === this.viewing) {
       this.chatRoot.addChild(item.component);
     }
+  }
+
+  /** Expand/collapse every tool run (ctrl-o); applies to all sessions. */
+  toggleTools(): void {
+    this.toolsExpanded = !this.toolsExpanded;
+    this.rebuildChat();
   }
 
   rebuildChat(): void {
@@ -439,10 +489,14 @@ class Controller {
     const view = this.viewing ? this.views.get(this.viewing) : undefined;
     if (view) {
       for (const item of view.items) {
+        if (item.kind === "tools") {
+          item.component.expanded = this.toolsExpanded;
+        }
         this.chatRoot.addChild(item.component);
       }
     }
     this.scroll.scrollToEnd();
+    this.syncActivity(true);
     this.tui.requestRender(true);
   }
 
@@ -459,6 +513,7 @@ class Controller {
   }
 
   renderChrome(): void {
+    this.syncActivity();
     const width = this.tui.terminal.columns || process.stdout.columns || 80;
     const key = this.viewing;
     const stats = fleetStats(this.sessions.values());
@@ -484,6 +539,12 @@ function main(): void {
   if (process.argv[2] === "kill-server") {
     void killServer();
     return;
+  }
+  try {
+    assertTruecolor();
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n`);
+    process.exit(1);
   }
   const controller = new Controller();
   process.on("SIGINT", () => controller.dispose());

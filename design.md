@@ -42,6 +42,18 @@ session view and the switcher chrome. Keyboard-only: no mouse (reporting would
 break terminal select/copy, and click hit-testing against ScrollView offsets is
 real work).
 
+Packaging (decided 2026-10-22): ronpi owns its pi-side resources in the repo
+(`pi/extensions/`, `pi/themes/`) and `node proto/install.ts` symlinks them into
+$PI_CODING_AGENT_DIR (default ~/.pi/agent). Idempotent; refuses to replace
+anything that is not its own link. The presence extension moves here from
+dotfiles (remove it there, or it loads twice). NOTE ~/.pi/agent/extensions is
+currently a symlink into the dotfiles repo, so the link lands inside it
+(install.ts prints where). WORKAROUND: the controller's own process loads the
+theme straight from the repo: pi-theme.ts points PI_CODING_AGENT_DIR at the
+repo's pi/ dir (it has themes/) for the duration of initTheme(), so it needs
+no install step. test/theme.test.ts fails if pi silently falls back. Drop the
+hack when pi exports setThemeInstance / loadThemeFromPath (upstream ask).
+
 Steps, each independently shippable, in order:
 
 1. Theme-loading spike (~10 min, gates everything). pi themes are JSON files;
@@ -63,7 +75,30 @@ Steps, each independently shippable, in order:
    while the viewed session streams (flicker risk on alt-screen full redraws).
    Check whether pi-tui's Loader is importable, else a ~30-line spinner.
    Events already flow (message_update/thinking deltas, tool_execution_*).
-4. Collapse/expand: global `expanded` flag toggled by ctrl-o (pi's own key),
+   Queued (not yet processed) messages (Ron, 2026-10-22): steering is always
+   what we send (no follow-up, no queue-mode commands; settings.json modes
+   apply to children as-is). Pi emits `queue_update {steering[], followUp[]}`
+   with the COMPLETE queue on every change, so render the latest queue as
+   pending user items at the very bottom of the transcript (below the last
+   item, above the spinner line), dimmed with a "queued" marker; the real
+   user item appears in place when message_start arrives and the queue entry
+   drops. Esc-abort should `clear_queue` first and put the returned text back
+   in the editor (pi's own behavior; rpc-commands.md "clear_queue"). Visual
+   vocabulary (queued vs tool vs thinking vs error) will be tuned by eye;
+   keep every style a theme token so it is one-file tweaking. To verify: does
+   the daemon/controller already echo a user message at submit time (VERIFIED
+   with fake-pi slow mode: no, a queued message shows only via queue_update),
+   and does abort leave the queue intact (rpc says abort continues queued
+   messages; still open, plus the clear_queue-on-Esc flow).
+   STATUS 2026-10-22: indicator + queued strip BUILT (activity.ts, the strip
+   docked under the transcript, 100ms timer only while working); daemon sets
+   steeringMode "all" on every child (RONPI_STEERING_MODE=one-at-a-time
+   restores pi's default). Fake pi: FAKE_PI_SLOW=1 scripts thinking/tool/text/
+   error and queues mid-run prompts. Not yet: switcher-row spinner, Esc ->
+   clear_queue.
+4. (PARTLY BUILT 2026-10-22: tool-run.ts groups consecutive tool calls into one
+   collapsed summary line, ctrl-o toggles all sessions; the thinking toggle and
+   per-item expand remain.) Collapse/expand: global `expanded` flag toggled by ctrl-o (pi's own key),
    applied with ToolExecutionComponent.setExpanded on every tool item; a second
    toggle (ctrl-t?) calls AssistantMessageComponent.setHideThinkingBlock
    (currently always hidden). All-or-nothing like pi; per-item expand would

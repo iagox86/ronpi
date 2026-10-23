@@ -3,7 +3,10 @@
 // message/tool components; this module builds and updates them.
 import * as fs from "node:fs";
 import { Text, type TuiAltScreen } from "@earendil-works/pi-tui";
-import { AssistantMessageComponent, ToolExecutionComponent, UserMessageComponent } from "@earendil-works/pi-coding-agent";
+import { ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import { AssistantMessage, UserMessage } from "./components.ts";
+import { type ActivityState, reduceActivity } from "./activity.ts";
+import { type ToolCall, ToolRun } from "./tool-run.ts";
 import type { DialogRequest } from "./dialogs.ts";
 import { messageText, oneLineFlat } from "./format.ts";
 import { mdTheme } from "./pi-theme.ts";
@@ -11,18 +14,18 @@ import { attention, dim } from "./theme.ts";
 
 export interface UserItem {
   kind: "user";
-  component: UserMessageComponent;
+  component: UserMessage;
 }
 export interface AssistantItem {
   kind: "assistant";
-  component: AssistantMessageComponent;
+  component: AssistantMessage;
   partial: Record<string, unknown> & { content: unknown[] };
   text: Map<number, string>;
   thinking: Map<number, string>;
 }
 export interface ToolItem {
-  kind: "tool";
-  component: ToolExecutionComponent;
+  kind: "tools";
+  component: ToolRun;
 }
 export interface OtherItem {
   kind: "other";
@@ -30,14 +33,15 @@ export interface OtherItem {
 }
 export type Item = UserItem | AssistantItem | ToolItem | OtherItem;
 
-export interface SessionView {
+export interface SessionView extends ActivityState {
   items: Item[];
-  tools: Map<string, ToolItem>;
+  /** Tool calls of this view by toolCallId, across all runs. */
+  tools: Map<string, ToolCall>;
   dialog?: DialogRequest;
 }
 
 export function newView(): SessionView {
-  return { items: [], tools: new Map() };
+  return { items: [], tools: new Map(), queue: [] };
 }
 
 export function lastAssistant(view: SessionView): AssistantItem | undefined {
@@ -54,7 +58,7 @@ function assistantItem(message: Record<string, unknown>): AssistantItem {
   const partial = message as AssistantItem["partial"];
   return {
     kind: "assistant",
-    component: new AssistantMessageComponent(partial as never, true, mdTheme, undefined, 1),
+    component: new AssistantMessage(partial as never, true, mdTheme, undefined, 1),
     partial,
     text: new Map(),
     thinking: new Map(),
@@ -113,14 +117,27 @@ export interface EventEffects {
   messageEnded?: boolean;
 }
 
+/** Add a call to the trailing tool run, or start a new run. */
+function appendCall(view: SessionView, env: EventEnv, call: ToolCall): void {
+  const last = view.items[view.items.length - 1];
+  if (last?.kind === "tools") {
+    last.component.calls.push(call);
+    return;
+  }
+  const run = new ToolRun();
+  run.calls.push(call);
+  env.addItem({ kind: "tools", component: run });
+}
+
 /** Apply one live pi event to a session view. */
 export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: EventEnv): EventEffects {
   const effects: EventEffects = {};
+  reduceActivity(view, ev, Date.now());
   switch (ev.type as string) {
     case "message_start": {
       const m = ev.message as { role?: string; content?: unknown };
       if (m?.role === "user") {
-        env.addItem({ kind: "user", component: new UserMessageComponent(messageText(m), mdTheme, 1) });
+        env.addItem({ kind: "user", component: new UserMessage(messageText(m), mdTheme, 1) });
       } else if (m?.role === "assistant") {
         env.addItem(assistantItem(m as Record<string, unknown>));
       }
@@ -170,9 +187,9 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
         env.cwd,
       );
       component.markExecutionStarted();
-      const item: ToolItem = { kind: "tool", component };
-      env.addItem(item);
-      view.tools.set(ev.toolCallId as string, item);
+      const call: ToolCall = { name: ev.toolName as string, component, failed: false };
+      appendCall(view, env, call);
+      view.tools.set(ev.toolCallId as string, call);
       break;
     }
     case "tool_execution_update": {
@@ -191,6 +208,7 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
       if (item) {
         item.component.setArgsComplete();
         item.component.updateResult(ev.result as never, false);
+        item.failed = Boolean(ev.isError);
       }
       break;
     }
@@ -219,7 +237,7 @@ export function itemsFromMessages(messages: unknown[], tui: TuiAltScreen, cwd: s
       }
     }
     if (m.role === "user") {
-      items.push({ kind: "user", component: new UserMessageComponent(messageText(m), mdTheme, 1) });
+      items.push({ kind: "user", component: new UserMessage(messageText(m), mdTheme, 1) });
     } else if (m.role === "assistant") {
       items.push(assistantItem(m as Record<string, unknown>));
     } else if (m.role === "toolResult") {
@@ -238,7 +256,15 @@ export function itemsFromMessages(messages: unknown[], tui: TuiAltScreen, cwd: s
         );
         component.setArgsComplete();
         component.updateResult({ content: (m.content ?? []) as never, isError: m.isError ?? false }, false);
-        items.push({ kind: "tool", component });
+        const toolCall: ToolCall = { name: m.toolName, component, failed: m.isError ?? false };
+        const last = items[items.length - 1];
+        if (last?.kind === "tools") {
+          last.component.calls.push(toolCall);
+        } else {
+          const run = new ToolRun();
+          run.calls.push(toolCall);
+          items.push({ kind: "tools", component: run });
+        }
       } else {
         const text = messageText(m).trim();
         items.push({ kind: "other", component: new Text(dim(`(tool result) ${text.slice(0, 300)}`), 1, 0) });

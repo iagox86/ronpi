@@ -14,7 +14,7 @@ import {
   type MutationResult,
 } from "./session-list.ts";
 import type { SwitcherSession } from "./switcher.ts";
-import { itemsFromFile } from "./transcript.ts";
+import { itemsFromFile, newView } from "./transcript.ts";
 
 export class SwitcherActions {
   groups: GroupsFile = { groups: [], assignments: {} };
@@ -107,7 +107,7 @@ export class SwitcherActions {
     }
     this.h.viewing = s.key;
     if (!this.h.views.has(s.key)) {
-      this.h.views.set(s.key, { items: itemsFromFile(s.key, this.h.tui, s.cwd ?? process.cwd()), tools: new Map() });
+      this.h.views.set(s.key, { ...newView(), items: itemsFromFile(s.key, this.h.tui, s.cwd ?? process.cwd()) });
     }
     this.close();
     this.h.rebuildChat();

@@ -218,7 +218,7 @@ async function startChild(
     }
     const client = makeChildClient(s, args);
     client.onEvent((event) => onChildEvent(s, event as Record<string, unknown>));
-    await client.start();
+    await startClient(client);
     s.child = client;
     s.dead = false;
     await refreshMeta(s);
@@ -226,6 +226,21 @@ async function startChild(
   } finally {
     s.spawning = false;
     broadcastSessions();
+  }
+}
+
+/**
+ * Start a child and apply ronpi's queue preference: messages sent while a run
+ * is in flight are all delivered together at the next turn boundary (pi's own
+ * default is one per turn). RONPI_STEERING_MODE=one-at-a-time restores that.
+ */
+async function startClient(client: RpcClient): Promise<void> {
+  await client.start();
+  const mode = process.env.RONPI_STEERING_MODE === "one-at-a-time" ? "one-at-a-time" : "all";
+  try {
+    await client.setSteeringMode(mode);
+  } catch (err) {
+    log(`setSteeringMode(${mode}) failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -544,7 +559,7 @@ async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder):
       try {
         const client = makeChildClient(s, ["--fork", cmd.path]);
         client.onEvent((event) => onChildEvent(s, event as Record<string, unknown>));
-        await client.start();
+        await startClient(client);
         s.child = client;
         s.dead = false;
         await refreshMeta(s);

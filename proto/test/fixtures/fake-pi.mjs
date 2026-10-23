@@ -4,6 +4,11 @@
 //
 // Env: FAKE_PI_DIR (where new session files go; default: $TMPDIR/fake-pi-sessions), FAKE_PI_STARTUP_MS (delay
 // before answering the first command), FAKE_PI_RUN_MS (how long a run lasts).
+// FAKE_PI_SLOW=1 scripts a realistic run (thinking deltas, a bash tool call,
+// streamed text; a prompt containing "fail" ends in a provider error). Each
+// step lasts FAKE_PI_STEP_MS (default 400). Prompts that arrive mid-run queue
+// (queue_update) and are delivered together when the turn ends, like pi's
+// steeringMode "all".
 import { tmpdir } from "node:os";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -57,6 +62,80 @@ function persist(message) {
 
 let streaming = false;
 let started = false;
+let aborted = false;
+const slow = process.env.FAKE_PI_SLOW === "1";
+const stepMs = Number(process.env.FAKE_PI_STEP_MS ?? 400);
+const queue = [];
+const queueUpdate = () => out({ type: "queue_update", steering: [...queue], followUp: [] });
+
+async function pause() {
+  await sleep(stepMs);
+  return !aborted;
+}
+
+// One scripted turn answering `texts` (already-delivered user messages).
+async function slowRun(texts) {
+  const prompt = texts.join("\n");
+  const partial = { role: "assistant", content: [] };
+  out({ type: "message_start", message: partial });
+  const update = (e) => out({ type: "message_update", message: partial, assistantMessageEvent: e });
+  update({ type: "thinking_start", contentIndex: 0 });
+  for (const word of ["Let me", " think", " about", " that..."]) {
+    if (!(await pause())) {
+      return;
+    }
+    update({ type: "thinking_delta", contentIndex: 0, delta: word });
+  }
+  update({ type: "thinking_end", contentIndex: 0, content: "Let me think about that..." });
+  if (prompt.includes("fail")) {
+    const err = { role: "assistant", content: [], stopReason: "error", errorMessage: "provider exploded" };
+    out({ type: "message_end", message: err });
+    return;
+  }
+  const args = { command: "ls" };
+  out({ type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args });
+  if (!(await pause())) {
+    return;
+  }
+  out({ type: "tool_execution_end", toolCallId: "t1", toolName: "bash", isError: false, result: { content: [{ type: "text", text: "a.ts\nb.ts" }] } });
+  update({ type: "text_start", contentIndex: 1 });
+  for (const word of ["echo: ", prompt]) {
+    if (!(await pause())) {
+      return;
+    }
+    update({ type: "text_delta", contentIndex: 1, delta: word });
+  }
+  const final = {
+    role: "assistant",
+    content: [{ type: "text", text: `echo: ${prompt}` }],
+    usage: { totalTokens: 10, cost: { total: 0.001 } },
+    stopReason: "stop",
+  };
+  persist(final);
+  out({ type: "message_end", message: final });
+}
+
+async function slowPrompt(first) {
+  streaming = true;
+  aborted = false;
+  out({ type: "agent_start" });
+  let texts = [first];
+  while (texts.length > 0) {
+    for (const t of texts) {
+      const user = { role: "user", content: t };
+      out({ type: "message_start", message: user });
+      persist(user);
+      out({ type: "message_end", message: user });
+    }
+    await slowRun(texts);
+    texts = queue.splice(0, queue.length);
+    if (texts.length > 0) {
+      queueUpdate();
+    }
+  }
+  streaming = false;
+  out({ type: "agent_settled" });
+}
 
 async function handle(cmd) {
   if (!started) {
@@ -79,8 +158,23 @@ async function handle(cmd) {
       sessionName = cmd.name;
       return ok(cmd.id, "set_session_name", null);
     case "abort":
+      aborted = true;
       return ok(cmd.id, "abort", null);
+    case "clear_queue": {
+      const steering = queue.splice(0, queue.length);
+      queueUpdate();
+      return ok(cmd.id, "clear_queue", { steering, followUp: [] });
+    }
     case "prompt": {
+      if (slow) {
+        if (streaming) {
+          queue.push(cmd.message);
+          queueUpdate();
+          return ok(cmd.id, "prompt", { disposition: "queued" });
+        }
+        ok(cmd.id, "prompt", { disposition: "started" });
+        return slowPrompt(cmd.message);
+      }
       ok(cmd.id, "prompt", { disposition: "started" });
       streaming = true;
       out({ type: "agent_start" });
