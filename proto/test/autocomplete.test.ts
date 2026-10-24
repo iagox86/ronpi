@@ -28,7 +28,7 @@ describe("command autocomplete", () => {
 
   it("completes a typed prefix in the switcher", async () => {
     const out = await suggest({ ...base, switcher: true }, "/ki");
-    assert.deepEqual(out, ["kill", "kill-daemon"]);
+    assert.deepEqual(out, ["kill-daemon"]);
   });
 
   it("picks up commands pi reports after the provider was built", async () => {

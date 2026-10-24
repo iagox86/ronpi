@@ -14,18 +14,19 @@ describe("tool run", () => {
     const run = new ToolRun();
     run.calls.push(call("bash", true), call("read"));
     const out = run.render(120);
-    assert.equal(out.length, 1);
-    assert.match(out[0] as string, /2 tool calls: bash, read/);
-    assert.match(out[0] as string, /1 failed/);
+    assert.equal(out.length, 2);
+    assert.equal(out[0], "");
+    assert.match(out[1] as string, /2 tool calls: bash, read/);
+    assert.match(out[1] as string, /1 failed/);
     assert.match(summaryLine([call("ls")]), /1 tool call:/);
   });
 
   it("mentions ctrl-o only when it is the hinted run", () => {
     const run = new ToolRun();
     run.calls.push(call("bash"));
-    assert.match(run.render(120)[0] as string, /ctrl-o to expand/);
+    assert.match(run.render(120)[1] as string, /ctrl-o to expand/);
     run.showHint = false;
-    assert.doesNotMatch(run.render(120)[0] as string, /ctrl-o/);
+    assert.doesNotMatch(run.render(120)[1] as string, /ctrl-o/);
   });
 
   it("expands to every call's full block", () => {

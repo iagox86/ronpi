@@ -6,12 +6,13 @@
   "description": "M0 prototype: daemon + controller for multiple live pi RPC children",
   "dependencies": {
     "@earendil-works/pi-coding-agent": "file:/var/home/ron/.nvm/versions/node/v26.12.0/lib/node_modules/@earendil-works/pi-coding-agent",
-    "@earendil-works/pi-tui": "file:/var/home/ron/.nvm/versions/node/v26.12.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui"
+    "@earendil-works/pi-tui": "file:/var/home/ron/.nvm/versions/node/v26.12.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui",
+    "commander": "^15.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.2",
-    "@types/node": "26.6.5",
-    "typescript": "7.0.2"
+    "@biomejs/biome": "^2.6.2",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
   },
   "scripts": {
     "lint": "biome lint .",

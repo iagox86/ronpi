@@ -3,11 +3,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
-import { dialogAnswer } from "./dialogs.ts";
+import { dialogAnswer, isTextDialog, takesReason } from "./dialogs.ts";
 import { isPlainLeft } from "./editor.ts";
 import { fmtAge } from "./format.ts";
 import { rewindTargets } from "./rewind.ts";
 import type { Host } from "./host.ts";
+import { SessionCommands } from "./session-commands.ts";
 import { itemsFromFile, newView, type SessionView } from "./transcript.ts";
 
 const DOUBLE_ESC_MS = 600;
@@ -17,10 +18,12 @@ export class SessionActions {
   armedFork: string | null = null;
 
   private readonly h: Host;
+  private readonly commands: SessionCommands;
   private lastEsc = 0;
 
   constructor(host: Host) {
     this.h = host;
+    this.commands = new SessionCommands(host);
   }
 
   resetArmed(): void {
@@ -34,17 +37,25 @@ export class SessionActions {
       // cancels an armed fork-confirm
       this.armedFork = null;
       const meta = this.h.viewing ? this.h.metaForPath(this.h.viewing) : undefined;
+      const view = this.h.viewing ? this.h.views.get(this.h.viewing) : undefined;
+      // A prompt just sent is working before the daemon reports streaming
+      const working = Boolean(meta?.streaming) || (view?.echoes.length ?? 0) > 0;
       const now = Date.now();
+      if (working) {
+        // esc while working only ever interrupts; it never arms the rewind double-tap
+        this.lastEsc = 0;
+        if (meta?.id !== undefined && meta.attachedToYou) {
+          void this.abortRestoringQueue(meta.id);
+        }
+        return true;
+      }
       // esc esc on an idle session with an empty editor = rewind
-      if (now - this.lastEsc < DOUBLE_ESC_MS && !meta?.streaming && this.h.editor.getText().length === 0) {
+      if (now - this.lastEsc < DOUBLE_ESC_MS && this.h.editor.getText().length === 0) {
         this.lastEsc = 0;
         this.openRewind();
         return true;
       }
       this.lastEsc = now;
-      if (meta?.id !== undefined && meta.attachedToYou && meta.streaming) {
-        void this.abortRestoringQueue(meta.id);
-      }
       return true;
     }
     if (isPlainLeft(data) && this.h.editor.getText().trim().length === 0) {
@@ -150,7 +161,39 @@ export class SessionActions {
     if (!meta?.attachedToYou) {
       return false;
     }
-    const fields = dialogAnswer(dialog, data);
+    if (isTextDialog(dialog)) {
+      const skip = matchesKey(data, Key.escape);
+      if (!skip && !matchesKey(data, Key.enter)) {
+        return false; // typing goes to the input box
+      }
+      const text = skip ? "" : this.h.editor.getText().trim();
+      this.h.editor.setText("");
+      this.h.send({
+        type: "ui_response",
+        session: meta.id,
+        response: { type: "extension_ui_response", id: dialog.id, ...(text ? { value: text } : { cancelled: true }) },
+      });
+      view.dialog = undefined;
+      this.h.renderChrome();
+      return true;
+    }
+    const panel = this.h.dialogPanel;
+    if (dialog.method === "select" && this.inlineReason(view, meta.id, data)) {
+      return true;
+    }
+    if (dialog.method === "select" && (matchesKey(data, Key.up) || matchesKey(data, Key.down))) {
+      panel.move(matchesKey(data, Key.up) ? -1 : 1);
+      this.h.renderChrome();
+      return true;
+    }
+    // normalize enter/esc across keyboard protocols to what dialogAnswer expects
+    let raw = data;
+    if (matchesKey(data, Key.enter)) {
+      raw = "\r";
+    } else if (matchesKey(data, Key.escape)) {
+      raw = "\x1b";
+    }
+    const fields = dialogAnswer(dialog, raw, panel.highlighted);
     if (!fields) {
       return false;
     }
@@ -164,29 +207,54 @@ export class SessionActions {
     return true;
   }
 
+  /**
+   * Tab on a "provide reason" option types the reason inline. The reason is
+   * held on the view and answers the input dialog the package chains after the
+   * select. Returns true when the key was consumed.
+   */
+  private inlineReason(view: SessionView, session: number, data: string): boolean {
+    const panel = this.h.dialogPanel;
+    const dialog = view.dialog!;
+    const text = panel.editing;
+    if (text === null) {
+      if (matchesKey(data, Key.tab) && takesReason(panel.highlightedOption)) {
+        panel.edit("");
+        this.h.renderChrome();
+        return true;
+      }
+      return false;
+    }
+    if (matchesKey(data, Key.tab) || matchesKey(data, Key.escape)) {
+      panel.edit(null);
+    } else if (matchesKey(data, Key.enter)) {
+      const value = panel.highlightedOption;
+      const reason = text.trim();
+      if (value === undefined) {
+        return true;
+      }
+      view.pendingReason = reason ? { text: reason, at: Date.now() } : undefined;
+      panel.edit(null);
+      this.h.send({
+        type: "ui_response",
+        session,
+        response: { type: "extension_ui_response", id: dialog.id, value },
+      });
+      view.dialog = undefined;
+    } else if (matchesKey(data, Key.backspace)) {
+      panel.edit(text.slice(0, -1));
+    } else if (data.length > 0 && !/[\x00-\x1f\x7f]/.test(data) && !data.startsWith("\x1b")) {
+      panel.edit(text + data);
+    }
+    this.h.renderChrome();
+    return true;
+  }
+
   submit(text: string): void {
     const trimmed = text.trim();
     if (trimmed.length === 0) {
       return;
     }
-    if (trimmed === "/exit") {
-      this.h.dispose();
-      return;
-    }
-    if (trimmed === "/quit") {
-      this.h.switching.open();
-      this.h.editor.setText("");
-      return;
-    }
-    if (trimmed === "/abort") {
-      const meta = this.h.viewing ? this.h.metaForPath(this.h.viewing) : undefined;
-      if (meta?.id !== undefined && meta.attachedToYou) {
-        this.h.send({ type: "abort", session: meta.id });
-        this.h.notify("abort sent");
-      } else {
-        this.h.notify("nothing to abort here");
-      }
-      this.h.editor.setText("");
+    if (trimmed.startsWith("/") && this.commands.run(trimmed)) {
       return;
     }
     void this.prompt(trimmed);
@@ -248,8 +316,15 @@ export class SessionActions {
       void this.adoptAndPrompt(key, cwd, text);
       return true;
     }
+    // Show the prompt now rather than when pi echoes it back. Slash lines may be
+    // handled by an extension without ever becoming a message, and a prompt sent
+    // mid-run is shown in the queue strip instead.
+    const echo = !text.startsWith("/") && !meta?.streaming;
     try {
       if (meta) {
+        if (echo) {
+          this.h.echoPrompt(key, text);
+        }
         await this.h.request({ type: "prompt", session: meta.id, message: text });
       } else {
         const info = this.h.local.get(key);
@@ -277,6 +352,9 @@ export class SessionActions {
           return false;
         }
         this.armedFork = null;
+        if (echo) {
+          this.h.echoPrompt(key, text);
+        }
         await this.h.request({
           type: "prompt",
           sessionFile: key,
@@ -288,6 +366,7 @@ export class SessionActions {
       this.h.editor.setText("");
       return true;
     } catch (err) {
+      this.h.dropEcho(key, text);
       this.h.notify(`prompt failed: ${err instanceof Error ? err.message : err}`);
       this.h.editor.setText(text);
       return false;

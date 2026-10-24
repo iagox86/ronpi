@@ -29,6 +29,9 @@ if (!sessionFile) {
   sessionFile = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
 }
 let sessionName = flag("--name");
+// let tests see how the daemon launched this child
+mkdirSync(dirname(sessionFile), { recursive: true });
+writeFileSync(`${sessionFile}.argv.json`, JSON.stringify(args));
 const messages = [];
 
 function loadMessages(file) {
@@ -52,6 +55,7 @@ const ok = (id, command, data) => out({ type: "response", id, command, success: 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let lastEntryId = null;
+let model = { provider: "fake", id: "fake-model" };
 
 function persist(message) {
   messages.push(message);
@@ -152,7 +156,7 @@ async function handle(cmd) {
   switch (cmd.type) {
     case "get_state":
       return ok(cmd.id, "get_state", {
-        model: { provider: "fake", id: "fake-model" },
+        model,
         isStreaming: streaming,
         sessionFile,
         sessionId,
@@ -164,6 +168,19 @@ async function handle(cmd) {
     case "set_session_name":
       sessionName = cmd.name;
       return ok(cmd.id, "set_session_name", null);
+    case "get_available_models":
+      return ok(cmd.id, "get_available_models", {
+        models: [
+          { provider: "fake", id: "fake-model", contextWindow: 1000, reasoning: false },
+          { provider: "fake", id: "fake-big", contextWindow: 9000, reasoning: true },
+          { provider: "other", id: "fake-big", contextWindow: 9000, reasoning: true },
+        ],
+      });
+    case "set_model":
+      model = { provider: cmd.provider, id: cmd.modelId };
+      return ok(cmd.id, "set_model", model);
+    case "compact":
+      return ok(cmd.id, "compact", { summary: "s", firstKeptEntryId: "x", tokensBefore: 5000, estimatedTokensAfter: 800 });
     case "abort":
       aborted = true;
       return ok(cmd.id, "abort", null);

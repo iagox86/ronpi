@@ -139,6 +139,12 @@ a requirement.
     session-groups.json is the persisted group order
   - selection follows the moved item
 - Claude adapter (deprioritized: "Claude already works like I want").
+- Multiple agents per session (DEFERRED 2026-10-23): CC-Task-style
+  lightweight subagents inside a ronpi-affiliated session - in-process,
+  not switcher rows by default, results streaming into the conversation -
+  with an optional tree-view under the parent's switcher row. Evaluation
+  done, two paths (pi-subagents vs own Task-style tool) in design.md M2+
+  roadmap item 9; not installed yet.
 - MCP server fronting the daemon (list/spawn/deactivate/query sessions) so
   any pi session can manage the fleet via mcp.json; explicitly not 1.0.
 - Optional web GUI for remote control: another client of the daemon socket

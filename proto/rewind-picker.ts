@@ -4,7 +4,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { oneLineFlat } from "./format.ts";
 import type { RewindTarget } from "./rewind.ts";
-import { dim, selected } from "./theme.ts";
+import { dim, panel, panelInnerWidth, selected } from "./theme.ts";
 
 const VISIBLE = 8;
 
@@ -49,7 +49,7 @@ export class RewindPicker implements Component {
   }
 
   render(width: number): string[] {
-    return this.isOpen ? pickerLines(this.targets, this.index, width) : [];
+    return this.isOpen ? panel(pickerLines(this.targets, this.index, panelInnerWidth(width)), width) : [];
   }
 
   invalidate(): void {}

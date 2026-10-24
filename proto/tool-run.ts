@@ -41,7 +41,8 @@ export class ToolRun implements Component {
         return c.component.render(width);
       });
     }
-    return [truncateToWidth(summaryLine(this.calls, this.showHint), width)];
+    // blank line above, so the summary doesn't hug the text before it
+    return ["", truncateToWidth(summaryLine(this.calls, this.showHint), width)];
   }
 
   invalidate(): void {

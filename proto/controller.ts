@@ -24,8 +24,11 @@ import {
   type EditorTheme,
 } from "@earendil-works/pi-tui";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { DIALOG_METHODS, HISTORY_FILE, SOCK } from "./config.ts";
-import type { DialogRequest, } from "./dialogs.ts";
+import { DIALOG_METHODS, HISTORY_FILE, KEY_LOG, SOCK } from "./config.ts";
+import { type DialogRequest, DialogPanel, isTextDialog } from "./dialogs.ts";
+
+// How long a reason typed on the select waits for the chained input dialog.
+const REASON_FRESH_MS = 10_000;
 import { configureEditorKeys, InputEditor, } from "./editor.ts";
 import { lastLine } from "./format.ts";
 import { RewindPicker } from "./rewind-picker.ts";
@@ -46,11 +49,14 @@ import {
 import { type ClientCommand, type DaemonMessage, type DistributiveOmit, encodeLine, LineSplitter, type SessionMeta } from "./shared.ts";
 import { buildStatusLine, fleetStats, settingsNotice } from "./status.ts";
 import { ActivityLine } from "./activity.ts";
+import { InfoPanel } from "./info-panel.ts";
 import type { ToolRun } from "./tool-run.ts";
 import { assertTruecolor, dim, OSC_RESET_BG, OSC_SET_BG } from "./theme.ts";
 import { Switcher, } from "./switcher.ts";
 import {
   applyEvent,
+  dropEcho,
+  echoUser,
   type Item,
   itemsFromMessages,
   newView,
@@ -81,6 +87,8 @@ class Controller {
   scroll: ScrollView;
   statusLine = new Text("", 0, 0);
   activityLine = new ActivityLine();
+  dialogPanel = new DialogPanel();
+  infoPanel = new InfoPanel();
   rewindPicker = new RewindPicker();
   historySearch = new HistorySearch();
   /** Show full tool blocks instead of one summary line per run. */
@@ -137,7 +145,7 @@ class Controller {
         cwd: (this.viewing && (this.metaForPath(this.viewing)?.cwd ?? this.local.get(this.viewing)?.cwd)) || process.cwd(),
       })),
     );
-    this.editor.debugLog = process.env.RONPI_KEYS ?? "";
+    this.editor.debugLog = KEY_LOG;
     this.editor.onSubmit = (text) => this.submit(text);
     this.editor.onKey = (data) => this.keys(data);
     const dock = new VStack([
@@ -150,18 +158,21 @@ class Controller {
       { component: this.scroll, basis: 0, grow: 1, shrink: 1, minSize: 1 },
       { component: this.activityLine, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       { component: this.rewindPicker, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
+      { component: this.dialogPanel, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
+      { component: this.infoPanel, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       // never compress the dock: a shrunken editor was the "cut off" bug
       { component: dock, basis: "auto", grow: 0, shrink: 0, minSize: 4 },
     ]);
     this.switcherLayout = new VStack([
       { component: this.switcher, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+      { component: this.infoPanel, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       { component: dock, basis: "auto", grow: 0, shrink: 0, minSize: 4 },
     ]);
     this.tui.setLayoutRoot(this.chatLayout);
     this.tui.setFocus(this.editor);
 
     this.switcher.heightProvider = () => this.tui.terminal.rows || 24;
-    this.switcher.debugLog = process.env.RONPI_KEYS ?? "";
+    this.switcher.debugLog = KEY_LOG;
     this.switcher.onShiftSession = (delta, s) => void this.switching.moveSession(delta, s);
     this.switcher.onShiftGroup = (delta, title) => void this.switching.moveGroup(delta, title);
   }
@@ -264,7 +275,7 @@ class Controller {
   }
 
   /** Send a command with response correlation. */
-  request(cmd: DistributiveOmit<ClientCommand, "id">): Promise<unknown> {
+  request(cmd: DistributiveOmit<ClientCommand, "id">, timeoutMs = 30_000): Promise<unknown> {
     const id = `req-${++this.reqSeq}`;
     return new Promise((resolve, reject) => {
       this.responses.set(id, { resolve, reject });
@@ -274,7 +285,7 @@ class Controller {
           this.responses.delete(id);
           reject(new Error("daemon request timed out"));
         }
-      }, 30_000).unref?.();
+      }, timeoutMs).unref?.();
     });
   }
 
@@ -327,6 +338,12 @@ class Controller {
             activity: old?.activity,
             queue: old?.queue ?? [],
           });
+          // prompts sent but not yet echoed by pi are not in the child's history
+          const fresh = this.views.get(key)!;
+          for (const echo of old?.echoes ?? []) {
+            fresh.echoes.push(echo);
+            fresh.items.push(echo.item);
+          }
           if (key === this.viewing) {
             this.rebuildChat();
           }
@@ -350,12 +367,13 @@ class Controller {
         const view = this.viewFor(key);
         const request = msg.request as unknown as DialogRequest;
         if (request && DIALOG_METHODS.has(request.method)) {
-          if (request.method === "input" || request.method === "editor") {
-            // No free-form dialog UI yet; deny is the safe default.
+          const reason = view.pendingReason;
+          view.pendingReason = undefined;
+          if (reason && isTextDialog(request) && Date.now() - reason.at < REASON_FRESH_MS) {
             this.send({
               type: "ui_response",
               session: msg.session,
-              response: { type: "extension_ui_response", id: request.id, cancelled: true },
+              response: { type: "extension_ui_response", id: request.id, value: reason.text },
             });
           } else {
             view.dialog = request;
@@ -442,6 +460,14 @@ class Controller {
     if (isKeyRelease(data)) {
       return true;
     }
+    if (this.infoPanel.isOpen) {
+      // any key dismisses command output; esc/enter are only for that
+      this.infoPanel.close();
+      this.tui.requestRender();
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.enter)) {
+        return true;
+      }
+    }
     const view = this.viewing ? this.views.get(this.viewing) : undefined;
     if (view?.dialog && this.session.dialogKeys(view, data)) {
       return true;
@@ -449,7 +475,7 @@ class Controller {
     if (this.historySearch.isOpen) {
       return this.searchKeys(data);
     }
-    if (matchesKey(data, Key.ctrl("r")) && !this.rewindPicker.isOpen) {
+    if (matchesKey(data, Key.ctrl("r")) && !this.rewindPicker.isOpen && !this.switching.isOpen) {
       this.searchDraft = this.editor.getText();
       this.historySearch.open(this.currentHistory());
       this.editor.setText(this.historySearch.promptText());
@@ -475,9 +501,9 @@ class Controller {
   }
 
   submit(text: string): void {
-    if (process.env.RONPI_KEYS) {
+    if (KEY_LOG) {
       try {
-        fs.appendFileSync(process.env.RONPI_KEYS, `SUBMIT ${JSON.stringify(text)} open=${this.switching.isOpen}\n`);
+        fs.appendFileSync(KEY_LOG, `SUBMIT ${JSON.stringify(text)} open=${this.switching.isOpen}\n`);
       } catch {
         // debug only
       }
@@ -537,6 +563,29 @@ class Controller {
     }
   }
 
+  echoPrompt(key: string, text: string): void {
+    const view = this.viewFor(key);
+    echoUser(view, text, { addItem: (item) => this.addItem(view, key, item) });
+    view.activity ??= { label: "working", since: Date.now() };
+    if (key === this.viewing) {
+      this.scroll.scrollToEnd();
+      this.syncActivity();
+      this.tui.requestRender();
+    }
+  }
+
+  dropEcho(key: string, text: string): void {
+    const view = this.views.get(key);
+    if (view && dropEcho(view, text)) {
+      if (view.echoes.length === 0) {
+        view.activity = undefined;
+      }
+      if (key === this.viewing) {
+        this.rebuildChat();
+      }
+    }
+  }
+
   /** Mount new items immediately on the viewed session; rebuildChat() mounts the rest. */
   addItem(view: SessionView, key: string, item: Item): void {
     this.applyDisplay(item);
@@ -554,6 +603,8 @@ class Controller {
     if (item.kind === "tools") {
       item.component.expanded = this.toolsExpanded;
     } else if (item.kind === "assistant") {
+      // Blank label: the working indicator already says "thinking", so a hidden block leaves no line behind.
+      item.component.setHiddenThinkingLabel("");
       item.component.setHideThinkingBlock(this.thinkingHidden);
     }
   }
@@ -676,6 +727,7 @@ class Controller {
 
   renderChrome(): void {
     this.syncActivity();
+    this.dialogPanel.sync(this.viewing ? this.views.get(this.viewing)?.dialog : undefined);
     const width = this.tui.terminal.columns || process.stdout.columns || 80;
     const key = this.viewing;
     const stats = fleetStats(this.sessions.values());

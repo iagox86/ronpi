@@ -82,8 +82,19 @@ type ClientCommandBody =
   /** Presence heartbeat from the ronpi-presence extension in an external
    * pi process (live=false deregisters on shutdown). */
   | { type: "external_register"; pid: number; sessionFile: string; cwd: string; live: boolean }
-  /** Fork an external session file into a new ronpi-owned session. */
-  | { type: "adopt"; id?: string; path: string; cwd: string }
+  /** Fork an external session file into a new ronpi-owned session.
+   * `fork` forks even a file a live ronpi session already owns (/fork).
+   * `name` names the new session; `parentName` is what the parent is called
+   * (recorded in the lineage the two sessions are told about). */
+  | { type: "adopt"; id?: string; path: string; cwd: string; fork?: boolean; name?: string; parentName?: string }
+  /** Without `query`: the current model and the available ones. With it: switch to the match. */
+  | { type: "model"; id?: string; session: number; query?: string }
+  /** Compact the session's context (refused mid-run); can take minutes. */
+  | { type: "compact"; id?: string; session: number; instructions?: string }
+  /** Wipe the conversation but keep the session (file, name, model); old contents go to the trash dir. Refused mid-run. */
+  | { type: "clear"; id?: string; session: number }
+  /** Restart the child on the same file so it re-reads extensions, skills and settings. */
+  | { type: "reload"; id?: string; session: number }
   /** Controller announce: classifies the connection as a controller (not a
    * presence heartbeat) and requests the current session list. */
   | { type: "list" };

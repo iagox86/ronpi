@@ -54,6 +54,29 @@ export function paintLine(line: string, width: number): string {
   return `${bg}${armed}${" ".repeat(Math.max(0, width - visibleWidth(line)))}\x1b[0m`;
 }
 
+/** Raised surface (the theme's selection background) for docked panels. */
+const panelBg = `\x1b[48;2;${rgb(token("selectedBg"))}m`;
+
+/**
+ * Lay `lines` out as a centered panel on a raised background: at most
+ * `maxWidth` wide, inset from the screen edges, with a padding row above and
+ * below. Content lines are truncated by the caller to `panelInnerWidth`.
+ */
+export function panel(lines: string[], width: number, maxWidth = 100): string[] {
+  const w = Math.min(maxWidth, Math.max(10, width - 4));
+  const margin = " ".repeat(Math.max(0, Math.floor((width - w) / 2)));
+  const paint = (line: string) => {
+    const armed = line.replace(/\x1b\[(?:0|49)?m/g, (m) => (m === "\x1b[49m" ? panelBg : `${m}${panelBg}`));
+    const pad = " ".repeat(Math.max(0, w - visibleWidth(line)));
+    return `${margin}${panelBg}${armed}${pad}\x1b[0m`;
+  };
+  return ["", ...["", ...lines, ""].map(paint)];
+}
+
+/** Content width available inside `panel()` at terminal `width`. */
+export const panelInnerWidth = (width: number, maxWidth = 100): number =>
+  Math.min(maxWidth, Math.max(10, width - 4)) - 2;
+
 // Chrome styles use scoped resets (22/39) so they compose with the switcher's
 // background padding.
 const fg = (name: string) => `\x1b[38;2;${rgb(token(name))}m`;
@@ -67,8 +90,11 @@ const brightFg = fg("toolTitle");
 export const dim = (s: string) => `${dimFg}${s}\x1b[39m`;
 /** accent - selection, interactive hints. */
 export const accent = (s: string) => `${accentFg}${s}\x1b[39m`;
+// Styled pieces inside (a spinner, a dim cell) end with a foreground reset;
+// re-arm the accent after each so the rest of the row keeps its color.
 /** bold accent - the selected switcher row. */
-export const selected = (s: string) => `\x1b[1m${accentFg}${s}\x1b[39m\x1b[22m`;
+export const selected = (s: string) =>
+  `\x1b[1m${accentFg}${s.replaceAll("\x1b[39m", `\x1b[39m${accentFg}`)}\x1b[39m\x1b[22m`;
 /** warning - streaming/working markers. */
 export const streaming = (s: string) => `${warningFg}${s}\x1b[39m`;
 /** error - attention (waiting on permission, errors). */

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { applyDelta, applyEvent, type AssistantItem, type Item, messagesFromFile, newView } from "../transcript.ts";
+import { applyDelta, applyEvent, type AssistantItem, dropEcho, echoUser, type Item, messagesFromFile, newView } from "../transcript.ts";
 
 function assistant(content: unknown[] = []): AssistantItem {
   return { kind: "assistant", component: undefined as never, partial: { content }, text: new Map(), thinking: new Map() };
@@ -52,6 +52,28 @@ describe("applyEvent", () => {
     assert.equal(items.length, 1);
     assert.equal(items[0].kind, "user");
     assert.deepEqual(effects, { messageEnded: true, summary: "hi there" });
+  });
+
+  it("shows a sent prompt at once and does not add it again when pi echoes it back", () => {
+    const items: Item[] = [];
+    const view = newView();
+    echoUser(view, "hello", env(items));
+    assert.equal(items.length, 1);
+    applyEvent(view, { type: "message_start", message: { role: "user", content: "hello" } }, env(items));
+    assert.equal(items.length, 1);
+    assert.equal(view.echoes.length, 0);
+    applyEvent(view, { type: "message_start", message: { role: "user", content: "hello" } }, env(items));
+    assert.equal(items.length, 2);
+  });
+
+  it("takes an echoed prompt back out when the send failed", () => {
+    const items: Item[] = [];
+    const view = newView();
+    echoUser(view, " oops ", env(items));
+    view.items.push(...items);
+    assert.equal(dropEcho(view, "oops"), true);
+    assert.equal(view.items.length, 0);
+    assert.equal(dropEcho(view, "oops"), false);
   });
 
   it("adds an assistant item that was never streamed when its message ends (attached mid-run)", () => {

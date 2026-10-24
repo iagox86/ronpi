@@ -518,6 +518,43 @@ Near-term (post-budget-reset), rough order = dependency + value:
 8. Rich output (SCOPED, same section): animated working/thinking indicator, show/hide thinking
    toggle, proper error rendering (message.error), better code-block
    colors (rides on 7).
+9. Multiple agents / subagents (ADDED 2026-10-23; deliberately DEFERRED,
+   not installed): goal is CC-Task-style lightweight subagents living
+   INSIDE a ronpi-affiliated session - in-process, not switcher rows,
+   results streaming into the conversation - plus an optional tree-view
+   under the parent's switcher row. Two paths, decide when picked up:
+   - pi-subagents (npm, nicopreme): foreground children run as in-process
+     sessions (exactly the CC-Task model, works under RPC children);
+     background children run in a DETACHED RUNNER process the daemon
+     cannot see - a blind spot for the activation cap and budget
+     tracking, and RONPI_CHILD=1 env inheritance currently keeps them out
+     of ronpi-presence (decide then whether runners must register with
+     the daemon instead). Ships the guards we would want anyway
+     (maxSubagentSpawnsPerSession/PerRun, concurrency, depth caps) and
+     writes machine-readable run artifacts + an extension API that an
+     external viewer could consume for the tree-view. Its TUI surfaces
+     (FleetView, /subagents-fleet) never render in RPC children - the
+     artifacts are the integration surface. Its researcher/
+     evidence-auditor agents want pi-web-access in the child (installed
+     2026-10-23, searxngBaseUrl -> search.shiverthorn.com).
+   - Own minimal Task-style tool (a ronpi extensions/ entry spawning
+     in-process child sessions via the pi SDK): we own the event stream,
+     so the switcher tree-view is direct and the daemon sees everything;
+     we lose pi-subagents' preset agent ecosystem (scout/reviewer/
+     oracle, workflows, missions).
+   Controller prerequisite either way: proper extension_ui_request
+   handling (fire-and-forget setStatus/notify per rpc-extension-ui.md) -
+   already forced by pi-usage status events and hermes-memory notifies.
+   PARENT/CHILD COMMUNICATION (parked 2026-10-23, goes with this item):
+   /fork sessions already know their parent (id, name, file) via an
+   appended system prompt, and the daemon records both directions in
+   lineage.json. The reverse - TELLING THE PARENT ABOUT ITS CHILD - is
+   not built: a running pi child's system prompt is fixed at start and
+   RPC only accepts user messages, and restarting the parent just to
+   update its prompt was rejected as too hacky. Do it when
+   parent/child messaging exists: likely a pi extension in the child
+   that can receive daemon-delivered messages (check for a first-class
+   delivery mechanism first). Until then parents are unaware of forks.
 
 ## Building blocks already shipped (audit 2026-10-22)
 

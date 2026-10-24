@@ -8,7 +8,8 @@ import {
   CombinedAutocompleteProvider,
   type SlashCommand,
 } from "@earendil-works/pi-tui";
-import { SESSION_COMMANDS, SWITCHER_COMMANDS, type CommandSpec } from "./commands.ts";
+import { usageHint } from "./cli.ts";
+import { type CommandSpec, SESSION_COMMANDS, SWITCHER_COMMANDS } from "./commands.ts";
 
 export interface AutocompleteContext {
   /** Switcher box: only ronpi's commands, no file completion. */
@@ -23,7 +24,7 @@ export function commandsFor(ctx: AutocompleteContext): SlashCommand[] {
   const own: readonly CommandSpec[] = ctx.switcher ? SWITCHER_COMMANDS : SESSION_COMMANDS;
   const taken = new Set(own.map((c) => c.name));
   return [
-    ...own.map((c) => ({ name: c.name, description: c.description, argumentHint: c.argumentHint })),
+    ...own.map((c) => ({ name: c.name, description: c.description, argumentHint: usageHint(c) || undefined })),
     ...(ctx.switcher ? [] : ctx.piCommands.filter((c) => !taken.has(c.name))),
   ];
 }

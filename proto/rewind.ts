@@ -79,3 +79,36 @@ export function rewindFile(file: string, entryId: string, trashDir: string, now:
   fs.renameSync(tmp, file);
   return { text: messageText(target.entry!.message as never), removed: tail.length, trashedTo };
 }
+
+/**
+ * Wipe a session's conversation but keep the session itself: the file keeps
+ * its header and its latest model, thinking-level and name entries (relinked
+ * into one chain), so a restarted pi resumes it empty, under the same name and
+ * model. The whole previous file is copied to `trashDir` first.
+ */
+export function clearFile(file: string, trashDir: string, now: Date = new Date()): { removed: number; trashedTo: string } {
+  const lines = parseLines(file);
+  const lastOf = (type: string): ParsedLine | undefined => lines.findLast((l) => l.entry?.type === type && typeof l.entry.id === "string");
+  const header = lines.find((l) => l.entry?.type === "session");
+  const keep = [lastOf("model_change"), lastOf("thinking_level_change"), lastOf("session_info")].filter((l): l is ParsedLine => l !== undefined);
+  keep.sort((a, b) => lines.indexOf(a) - lines.indexOf(b));
+  fs.mkdirSync(trashDir, { recursive: true });
+  const stamp = now.toISOString().replace(/[:.]/g, "-");
+  const trashedTo = path.join(trashDir, `${stamp}-clear-${path.basename(file)}`);
+  fs.copyFileSync(file, trashedTo);
+  fs.writeFileSync(
+    `${trashedTo}.json`,
+    `${JSON.stringify({ originalPath: file, cleared: true, entries: lines.length, trashedAt: now.toISOString() }, null, 2)}\n`,
+  );
+  let parent: string | null = null;
+  const out: string[] = header ? [header.raw] : [];
+  for (const l of keep) {
+    const entry = { ...l.entry, parentId: parent };
+    out.push(JSON.stringify(entry));
+    parent = l.entry!.id as string;
+  }
+  const tmp = `${file}.clear-${process.pid}`;
+  fs.writeFileSync(tmp, out.map((l) => `${l}\n`).join(""));
+  fs.renameSync(tmp, file);
+  return { removed: lines.length - out.length, trashedTo };
+}

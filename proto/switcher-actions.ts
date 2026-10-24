@@ -1,8 +1,10 @@
 // Switcher-side actions of the controller: opening/closing the list, row
 // actions (enter/new/kill/rename/group/move), the command line and its keys.
 import * as fs from "node:fs";
+import { KEY_LOG } from "./config.ts";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
-import { helpText, parseCommand, SWITCHER_COMMANDS } from "./commands.ts";
+import { type Invocation, listing, parseCommandLine } from "./cli.ts";
+import { SWITCHER_COMMANDS, type SwitcherCommandName } from "./commands.ts";
 import type { Host } from "./host.ts";
 import { loadGroups, resolveGroup, saveGroups, type GroupsFile } from "./groups.ts";
 import {
@@ -16,6 +18,21 @@ import {
 } from "./session-list.ts";
 import type { SwitcherSession } from "./switcher.ts";
 import { itemsFromFile, newView } from "./transcript.ts";
+
+const LOCK_BITS = 64 | 128; // kitty caps_lock / num_lock, reported in the modifier field
+
+/**
+ * pi-tui misses the kitty-protocol spelling of F2 (CSI 1;mods Q). Lock keys
+ * add to the modifier (num lock on = 129), so ignore them; no other modifier
+ * counts as plain F2.
+ */
+export function isF2(data: string): boolean {
+  if (matchesKey(data, "f2") || data === "\x1b[Q") {
+    return true;
+  }
+  const m = /^\x1b\[1;(\d+)(?::([12]))?Q$/.exec(data);
+  return m !== null && ((Number(m[1]) - 1) & ~LOCK_BITS) === 0;
+}
 
 export class SwitcherActions {
   groups: GroupsFile = { groups: [], assignments: {} };
@@ -49,7 +66,7 @@ export class SwitcherActions {
     this.h.switcher.selectedKey = this.h.viewing;
     this.refresh();
     this.h.switcher.height = this.h.tui.terminal.rows || 24;
-    this.h.switcher.hint = "type / for commands, or a message to start a session - enter open - ctrl-n new - ctrl-x kill - f2 rename - ctrl-g group - ctrl-r search";
+    this.h.switcher.hint = "type / for commands, or a message to start a session - enter open - ctrl-n new - ctrl-k stop - ctrl-x delete - ctrl-r rename - ctrl-g group";
     this.h.switcher.heightProvider = () => Math.max(6, (this.h.tui.terminal.rows || 24) - 4);
     this.isOpen = true;
     this.h.tui.setLayoutRoot(this.h.switcherLayout);
@@ -86,9 +103,9 @@ export class SwitcherActions {
       this.groups.order = order;
       saveGroups(this.groups);
     }
-    if (process.env.RONPI_KEYS) {
+    if (KEY_LOG) {
       try {
-        fs.appendFileSync(process.env.RONPI_KEYS, `REFRESH_SWITCHER paths=${list.length} local=${this.h.local.size} daemon=${this.h.sessions.size}: ${list.map((x) => x.key.split("/").pop()).join(",")}\n`);
+        fs.appendFileSync(KEY_LOG, `REFRESH_SWITCHER paths=${list.length} local=${this.h.local.size} daemon=${this.h.sessions.size}: ${list.map((x) => x.key.split("/").pop()).join(",")}\n`);
       } catch {
         // debug only
       }
@@ -147,34 +164,45 @@ export class SwitcherActions {
     }
   }
 
-  async kill(s: SwitcherSession): Promise<void> {
+  /** Stop a live session's child; the file stays and it respawns on the next prompt. */
+  async stop(s: SwitcherSession): Promise<void> {
     try {
-      if (s.state === "streaming" || s.state === "idle") {
-        if (s.daemonId === undefined) {
-          throw new Error("no daemon session");
-        }
-        await this.h.request({ type: "deactivate", session: s.daemonId });
-        this.h.switcher.hint = `deactivated ${s.name} (file kept; respawns on next prompt)`;
+      if (s.state !== "streaming" && s.state !== "idle") {
+        this.h.switcher.hint = `${s.name} is not running`;
+      } else if (s.daemonId === undefined) {
+        throw new Error("no daemon session");
       } else {
-        // inactive or dead: delete = trash, with a press-twice confirm
-        if (this.armedDelete !== s.key) {
-          this.armedDelete = s.key;
-          this.h.switcher.hint = `${s.name}: press ctrl-x again to move to trash`;
-          this.h.tui.requestRender();
-          return;
-        }
-        this.armedDelete = null;
-        // keep the cursor where it is: select the next entry (or the
-        // previous one at the end) before the row disappears
-        this.h.switcher.selectNextAfter(s.key);
-        await this.h.request({ type: "delete", path: s.key.startsWith("daemon:") ? undefined : s.key, session: s.daemonId });
-        this.h.views.delete(s.key);
-        await this.h.loadLocal();
-        this.h.switcher.hint = `${s.name} moved to trash (/restore not built yet)`;
+        await this.h.request({ type: "deactivate", session: s.daemonId });
+        this.h.switcher.hint = `stopped ${s.name} (file kept; respawns on next prompt)`;
+        this.refresh();
       }
+    } catch (err) {
+      this.h.switcher.hint = `stop failed: ${err instanceof Error ? err.message : err}`;
+    }
+    this.h.tui.requestRender();
+  }
+
+  /** Move to trash, with a press-twice confirm; a live child is stopped first (by the daemon). */
+  async remove(s: SwitcherSession): Promise<void> {
+    try {
+      if (this.armedDelete !== s.key) {
+        this.armedDelete = s.key;
+        const live = s.state === "streaming" || s.state === "idle";
+        this.h.switcher.hint = `${s.name}: press ctrl-x again to ${live ? "stop it and " : ""}move to trash`;
+        this.h.tui.requestRender();
+        return;
+      }
+      this.armedDelete = null;
+      // keep the cursor where it is: select the next entry (or the
+      // previous one at the end) before the row disappears
+      this.h.switcher.selectNextAfter(s.key);
+      await this.h.request({ type: "delete", path: s.key.startsWith("daemon:") ? undefined : s.key, session: s.daemonId });
+      this.h.views.delete(s.key);
+      await this.h.loadLocal();
+      this.h.switcher.hint = `${s.name} moved to trash (/restore not built yet)`;
       this.refresh();
     } catch (err) {
-      this.h.switcher.hint = `kill failed: ${err instanceof Error ? err.message : err}`;
+      this.h.switcher.hint = `delete failed: ${err instanceof Error ? err.message : err}`;
     }
     this.h.tui.requestRender();
   }
@@ -212,80 +240,91 @@ export class SwitcherActions {
   }
 
   async runCommand(cmd: string, target: SwitcherSession | undefined): Promise<void> {
-    const { name: typed, arg } = parseCommand(cmd);
-    const spec = SWITCHER_COMMANDS.find((c) => c.name === typed);
-    if (!spec) {
-      this.h.switcher.hint = `unknown command: /${typed} (/help)`;
-      this.h.tui.requestRender();
-      return;
+    const parsed = parseCommandLine(SWITCHER_COMMANDS, cmd);
+    switch (parsed.kind) {
+      case "unknown":
+        this.h.switcher.hint = `unknown command: /${parsed.name} (/help)`;
+        break;
+      case "help":
+        this.h.infoPanel.show(parsed.text);
+        this.h.editor.setText("");
+        break;
+      case "error":
+        this.h.switcher.hint = `/${parsed.spec.name}: ${parsed.message} (/${parsed.spec.name} --help)`;
+        break;
+      case "run":
+        await this.commandHandlers()[parsed.spec.name as SwitcherCommandName](parsed.call, target);
+        break;
+      default:
+        parsed satisfies never;
     }
-    // exhaustive: a command added to SWITCHER_COMMANDS needs a case here
-    switch (spec.name) {
-      case "new":
-        await this.newSession();
-        break;
-      case "kill":
+    this.h.tui.requestRender();
+  }
+
+  /** One handler per SWITCHER_COMMANDS entry (the Record type makes a missing one a compile error). */
+  private commandHandlers(): Record<SwitcherCommandName, (call: Invocation, target: SwitcherSession | undefined) => Promise<void>> {
+    const needsTarget = (verb: string, run: (t: SwitcherSession, arg: string) => Promise<void>) =>
+      async (call: Invocation, target: SwitcherSession | undefined) => {
         if (!target) {
-          this.h.switcher.hint = "kill: highlight a session first";
-        } else {
-          await this.kill(target);
+          this.h.switcher.hint = `${verb}: highlight a session first`;
+          return;
         }
-        break;
-      case "rename": {
-        if (!target) {
-          this.h.switcher.hint = "rename: highlight a session first";
-        } else if (!arg) {
+        await run(target, call.args.join(" "));
+      };
+    const leave = async () => {
+      this.h.dispose();
+    };
+    return {
+      new: async () => this.newSession(),
+      stop: needsTarget("stop", (t) => this.stop(t)),
+      delete: needsTarget("delete", (t) => this.remove(t)),
+      rename: needsTarget("rename", async (t, arg) => {
+        if (!arg) {
           this.h.editor.setText("/rename ");
-          this.h.switcher.hint = `rename: ${target.name} - type the new name and press enter`;
-        } else {
-          try {
-            await this.h.request({
-              type: "rename",
-              session: target.daemonId,
-              path: target.daemonId === undefined ? target.key : undefined,
-              name: arg,
-            });
-            await this.h.loadLocal();
-            this.refresh();
-            this.h.switcher.hint = `renamed to ${arg}`;
-          } catch (err) {
-            this.h.switcher.hint = `rename failed: ${err instanceof Error ? err.message : err}`;
-          }
+          this.h.switcher.hint = `rename: ${t.name} - type the new name and press enter`;
+          return;
         }
-        break;
-      }
-      case "group": {
-        if (!target) {
-          this.h.switcher.hint = "group: highlight a session first";
-        } else if (!arg) {
+        try {
+          await this.h.request({
+            type: "rename",
+            session: t.daemonId,
+            path: t.daemonId === undefined ? t.key : undefined,
+            name: arg,
+          });
+          await this.h.loadLocal();
+          this.refresh();
+          this.h.switcher.hint = `renamed to ${arg}`;
+        } catch (err) {
+          this.h.switcher.hint = `rename failed: ${err instanceof Error ? err.message : err}`;
+        }
+      }),
+      group: needsTarget("group", async (t, arg) => {
+        if (!arg) {
           this.h.editor.setText("/group ");
-          this.h.switcher.hint = `group: ${target.name} - type a group name and press enter`;
-        } else if (!target.sessionId) {
+          this.h.switcher.hint = `group: ${t.name} - type a group name and press enter`;
+        } else if (!t.sessionId) {
           this.h.switcher.hint = "group: session has no id yet";
         } else {
           try {
             const group = resolveGroup(this.groups, arg);
-            this.groups.assignments[target.sessionId] = group;
+            this.groups.assignments[t.sessionId] = group;
             saveGroups(this.groups);
             this.refresh();
-            this.h.switcher.hint = `${target.name} -> ${group}`;
+            this.h.switcher.hint = `${t.name} -> ${group}`;
           } catch (err) {
             this.h.switcher.hint = `group failed: ${err instanceof Error ? err.message : err}`;
           }
         }
-        break;
-      }
-      case "exit":
-      case "quit":
-        this.h.dispose();
-        break;
-      case "help":
-        this.h.switcher.hint = helpText(SWITCHER_COMMANDS);
-        break;
-      case "restore":
+      }),
+      exit: leave,
+      quit: leave,
+      help: async () => {
+        this.h.infoPanel.show(listing(SWITCHER_COMMANDS));
+      },
+      restore: async () => {
         this.h.switcher.hint = "/restore is not built yet (trash keeps everything)";
-        break;
-      case "adopt": {
+      },
+      adopt: async (_call, target) => {
         const t = target ?? this.h.switcher.current();
         if (!t) {
           this.h.switcher.hint = "adopt: highlight a session first";
@@ -310,18 +349,13 @@ export class SwitcherActions {
             this.h.switcher.hint = `adopt failed: ${err instanceof Error ? err.message : err}`;
           }
         }
-        break;
-      }
-      case "kill-daemon":
+      },
+      "kill-daemon": async () => {
         this.h.send({ type: "shutdown" });
         this.h.switcher.hint = "daemon shutting down (children stop too)";
-        break;
-      default:
-        spec satisfies never;
-    }
-    this.h.tui.requestRender();
+      },
+    };
   }
-
 
   keys(data: string): boolean {
     const editorEmpty = this.h.editor.getText().trim().length === 0;
@@ -372,11 +406,20 @@ export class SwitcherActions {
       }
       const target = this.h.switcher.current();
       if (target) {
-        void this.kill(target);
+        void this.remove(target);
       }
       return true;
     }
-    if (matchesKey(data, "f2")) {
+    if (matchesKey(data, Key.ctrl("k"))) {
+      const target = this.h.switcher.current();
+      if (this.h.switcher.currentIsHeader() || !target) {
+        this.h.switcher.hint = "stop works on sessions, not group headers";
+      } else {
+        void this.stop(target);
+      }
+      return true;
+    }
+    if (isF2(data) || matchesKey(data, Key.ctrl("r"))) {
       const target = this.h.switcher.current();
       if (this.h.switcher.currentIsHeader() || !target) {
         this.h.switcher.hint = "rename works on sessions, not group headers";

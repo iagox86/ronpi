@@ -78,6 +78,6 @@ describe("buildStatusLine", () => {
 
   it("lets a pending permission dialog take over the line, even over a notification", () => {
     const dialog = { id: "1", method: "confirm", title: "Run it?" };
-    assert.match(plain(buildStatusLine({ ...base, flash: "aborted", dialog })), /^PERMISSION: Run it\?/);
+    assert.match(plain(buildStatusLine({ ...base, flash: "aborted", dialog })), /^PERMISSION pending/);
   });
 });

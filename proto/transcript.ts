@@ -39,10 +39,32 @@ export interface SessionView extends ActivityState {
   /** Tool calls of this view by toolCallId, across all runs. */
   tools: Map<string, ToolCall>;
   dialog?: DialogRequest;
+  /** Deny reason typed inline on a select; answers the input dialog the package chains next. */
+  pendingReason?: { text: string; at: number };
+  /** Prompts shown on send, before pi echoed them back as user messages. */
+  echoes: Array<{ text: string; item: UserItem }>;
 }
 
 export function newView(): SessionView {
-  return { items: [], tools: new Map(), queue: [] };
+  return { items: [], tools: new Map(), queue: [], echoes: [] };
+}
+
+/** Show a just-sent prompt at once; pi's own user message later adopts it instead of adding a second. */
+export function echoUser(view: SessionView, text: string, env: Pick<EventEnv, "addItem">): void {
+  const item: UserItem = { kind: "user", component: new UserMessage(text, mdTheme, 1) };
+  view.echoes.push({ text: text.trim(), item });
+  env.addItem(item);
+}
+
+/** The prompt never went through: take its echo back out. Returns false if there was none. */
+export function dropEcho(view: SessionView, text: string): boolean {
+  const i = view.echoes.findIndex((e) => e.text === text.trim());
+  if (i === -1) {
+    return false;
+  }
+  const [echo] = view.echoes.splice(i, 1);
+  view.items = view.items.filter((it) => it !== echo.item);
+  return true;
 }
 
 export function lastAssistant(view: SessionView): AssistantItem | undefined {
@@ -138,7 +160,13 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
     case "message_start": {
       const m = ev.message as { role?: string; content?: unknown };
       if (m?.role === "user") {
-        env.addItem({ kind: "user", component: new UserMessage(messageText(m), mdTheme, 1) });
+        const text = messageText(m).trim();
+        const echoed = view.echoes.findIndex((e) => e.text === text);
+        if (echoed !== -1) {
+          view.echoes.splice(echoed, 1);
+        } else {
+          env.addItem({ kind: "user", component: new UserMessage(messageText(m), mdTheme, 1) });
+        }
       } else if (m?.role === "assistant") {
         env.addItem(assistantItem(m as Record<string, unknown>));
       }

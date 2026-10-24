@@ -1,5 +1,9 @@
-// Permission/extension dialogs forwarded from a child (confirm and select
-// are answerable from the status line; input/editor are auto-denied).
+// Permission/extension dialogs forwarded from a child. confirm and select are
+// answered from a docked panel; input/editor are answered by typing in the
+// input box (pi-permission-system uses one for the optional deny reason).
+import type { Component } from "@earendil-works/pi-tui";
+import { truncateToWidth } from "@earendil-works/pi-tui";
+import { attention, dim, panel, panelInnerWidth, selected } from "./theme.ts";
 
 export interface DialogRequest {
   id: string;
@@ -7,18 +11,31 @@ export interface DialogRequest {
   title?: string;
   message?: string;
   options?: string[];
+  placeholder?: string;
+}
+
+/** Free-text dialogs: answered by typing in the input box. */
+export const isTextDialog = (d: DialogRequest): boolean => d.method === "input" || d.method === "editor";
+
+/**
+ * The option that means "deny": the first starting with "No", else the last.
+ * A presentation heuristic - dismissal always means deny, and the option list
+ * comes from the permission package, not the model.
+ */
+export function denyOption(options: string[]): string | undefined {
+  return options.find((o) => o.startsWith("No")) ?? options[options.length - 1];
 }
 
 /**
  * Map a keypress to the extension_ui_response fields that answer `dialog`,
- * or null when the key is not an answer.
+ * or null when the key is not an answer. `index` is the highlighted option.
  */
-export function dialogAnswer(dialog: DialogRequest, data: string): Record<string, unknown> | null {
+export function dialogAnswer(dialog: DialogRequest, data: string, index = 0): Record<string, unknown> | null {
   if (dialog.method === "confirm") {
     if (data === "y") {
       return { confirmed: true };
     }
-    if (data === "n") {
+    if (data === "n" || data === "\x1b") {
       return { confirmed: false };
     }
     return null;
@@ -26,21 +43,107 @@ export function dialogAnswer(dialog: DialogRequest, data: string): Record<string
   if (dialog.method === "select") {
     const options = dialog.options ?? [];
     const idx = Number.parseInt(data, 10);
-    if (!Number.isNaN(idx) && idx >= 1 && idx <= options.length) {
+    if (data.length === 1 && !Number.isNaN(idx) && idx >= 1 && idx <= options.length) {
       return { value: options[idx - 1] };
     }
+    if (data === "\r" || data === "\n") {
+      return options[index] === undefined ? null : { value: options[index] };
+    }
     if (data === "\x1b") {
-      return { cancelled: true };
+      const deny = denyOption(options);
+      return deny === undefined ? { cancelled: true } : { value: deny };
     }
   }
   return null;
 }
 
-/** Status-line prompt for a pending dialog (unstyled). */
+/** Status-line hint while a dialog is pending (unstyled). */
 export function dialogPrompt(d: DialogRequest): string {
   if (d.method === "confirm") {
-    return `PERMISSION: ${d.title ?? "confirm"}${d.message ? ` - ${d.message}` : ""}  [y]es [n]o`;
+    return "PERMISSION pending - y yes, n or esc no";
   }
-  const opts = (d.options ?? []).map((o, i) => `${i + 1}:${o}`).join("  ");
-  return `PERMISSION: ${d.title ?? "select"}  ${opts}`;
+  if (isTextDialog(d)) {
+    return "PERMISSION pending - type a reply, enter send, esc skip";
+  }
+  return "PERMISSION pending - up/down choose, enter or 1-9 answer, tab reason, esc deny";
+}
+
+/** Options that chain a free-text dialog afterwards ("No, provide reason"). */
+export const takesReason = (option: string | undefined): boolean => /reason/i.test(option ?? "");
+
+/** `reason` non-null = the highlighted option is being edited inline. */
+export function dialogLines(d: DialogRequest, index: number, width: number, reason: string | null = null): string[] {
+  const out: string[] = [];
+  const title = (d.title ?? d.method).split("\n");
+  out.push(attention(truncateToWidth(` ${title[0]}`, width)));
+  for (const line of title.slice(1)) {
+    out.push(truncateToWidth(` ${line}`, width));
+  }
+  if (d.message) {
+    out.push(truncateToWidth(` ${d.message}`, width));
+  }
+  if (d.method === "confirm") {
+    out.push(dim(" [y]es  [n]o"));
+    return out;
+  }
+  if (isTextDialog(d)) {
+    out.push(dim(truncateToWidth(` ${d.placeholder ?? "type a reply in the box below"}`, width)));
+    out.push(dim(" enter send - empty enter or esc skips"));
+    return out;
+  }
+  (d.options ?? []).forEach((o, i) => {
+    if (i === index && reason !== null) {
+      out.push(selected(truncateToWidth(` > ${i + 1}. ${o}: ${reason}\u2588`, width)));
+      return;
+    }
+    const hint = i === index && takesReason(o) ? "  (tab: type a reason)" : "";
+    const text = truncateToWidth(` ${i + 1}. ${o}${hint}`, width - 2);
+    out.push(i === index ? selected(` >${text}`) : dim(`  ${text}`));
+  });
+  return out;
+}
+
+/** Docked above the input box while the viewed session has a pending dialog. */
+export class DialogPanel implements Component {
+  private dialog: DialogRequest | undefined;
+  private index = 0;
+  private reason: string | null = null;
+
+  /** Inline reason text while editing, else null. */
+  get editing(): string | null {
+    return this.reason;
+  }
+
+  edit(text: string | null): void {
+    this.reason = text;
+  }
+
+  /** Show `dialog` (undefined hides); the highlight restarts for a new dialog. */
+  sync(dialog: DialogRequest | undefined): void {
+    if (dialog?.id !== this.dialog?.id) {
+      this.index = 0;
+      this.reason = null;
+    }
+    this.dialog = dialog;
+  }
+
+  get highlightedOption(): string | undefined {
+    return this.dialog?.options?.[this.index];
+  }
+
+  get highlighted(): number {
+    return this.index;
+  }
+
+  move(delta: number): void {
+    this.reason = null;
+    const n = this.dialog?.options?.length ?? 0;
+    this.index = Math.max(0, Math.min(Math.max(0, n - 1), this.index + delta));
+  }
+
+  render(width: number): string[] {
+    return this.dialog ? panel(dialogLines(this.dialog, this.index, panelInnerWidth(width), this.reason), width) : [];
+  }
+
+  invalidate(): void {}
 }

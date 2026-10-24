@@ -76,9 +76,13 @@ Session view (chat):
 - mouse wheel scrolls (speed from pi's `fullscreenWheelScrollLines`); the
   view stays where you scrolled while output arrives
 - `left` on empty editor - open the switcher
-- `/abort` - abort the current run (intercepted here, never sent to the child)
-- `/quit` - back to the switcher (intercepted here too)
-- `/exit` - quit the controller (also intercepted; child exit is ctrl-x's job)
+- ronpi's own commands (declared in `commands.ts`, intercepted here, never sent to pi):
+  `/abort`, `/quit` (back to the switcher), `/exit` (quit the controller; child exit
+  is ctrl-x's job), `/name <name>` or `/rename <name>`, `/model [words]` (no
+  argument: current model and a few options; otherwise switches to the one model
+  whose `provider/id` contains all the words), `/compact [focus]`, `/clear` (wipe the conversation in place - same session, name and model; old contents go to trash), `/reload`
+  (restarts pi on the same file so new extensions, skills and settings load) and
+  `/fork [-n name] [prompt]` (continue in a copy, entered immediately; the original is untouched. The copy is named `⑂ <original name>`, listed right below it in its group, and optionally gets `prompt` as its first message. The copy is told its parent - id, name, file - via an appended system prompt; lineage is recorded both ways in `lineage.json` next to the groups file, but the parent is not told about its forks yet: see design.md, parent/child communication)
 - typing while the agent streams sends the message as steering (never fails
   with "already processing")
 - everything else goes to the child, slash commands included
@@ -93,24 +97,26 @@ request/response):
   (no-op otherwise), `left` no-op
 - `shift+up`/`shift+down` move the highlighted session or group (crossing a
   header moves the session between groups; persisted to groups.json)
-- `ctrl-n` new session (controller's cwd), `ctrl-x` kill highlighted
-  (sessions: deactivate; empty groups: delete), `f2` rename (prefilled
-  with the current name), `ctrl-g` group, `ctrl-r` search the command history
+- `ctrl-n` new session (controller's cwd), `ctrl-k` stop the highlighted
+  session's process (file kept), `ctrl-x` delete it (press twice; moves to
+  trash, stopping it first if running; on an empty group header: delete the
+  group), `ctrl-r` or `f2` rename (prefilled with the current name),
+  `ctrl-g` group
 - typing plain text (not starting with `/`) and pressing enter starts a new
   session with that as its first message
 - `/` completes commands (popup, tab); the list comes from `commands.ts`, so
   new commands appear automatically
-- the bottom chat box doubles as the switcher command line: `/new` `/kill`
+- the bottom chat box doubles as the switcher command line: `/new` `/stop` `/delete`
   `/rename <name>` `/group <name>` `/adopt` `/kill-daemon` `/quit` `/exit`
   `/help` (`/restore` later)
 - display order freezes while the switcher is open, so background file
   activity never reshuffles the list under the cursor; manual positions
   (order array) always win
-- kill is context-sensitive: active session -> deactivate (child stops, file
-  stays, respawns on first prompt); inactive/dead -> move to trash, press
-  ctrl-x twice to confirm (the cursor stays put: it lands on the entry after
-  the deleted one); a never-prompted session has no file - deleting one just
-  drops it
+- stop (`ctrl-k`, `/stop`) deactivates a live session: the child stops, the file
+  stays, and it respawns on the first prompt. delete (`ctrl-x`, `/delete`) is
+  always arm-then-confirm: press twice to move the session to trash (a running
+  one is stopped first); the cursor stays put on the entry after the deleted
+  one; a never-prompted session has no file, so deleting one just drops it
 - empty groups render as headers and are deletable (ctrl-x on the header);
   stale assignments from trashed sessions are purged so saveGroups cannot
   resurrect the group
@@ -213,3 +219,22 @@ npm run lint        # biome (lint only; see ../.editorconfig for style: 2-space 
   isolated `RONPI_SOCK` (keep the path short: unix sockets cap at 107 bytes), `RONPI_LOG`,
   `RONPI_PI_CLI=test/fixtures/fake-pi.mjs`, `XDG_DATA_HOME`, `PI_CODING_AGENT_DIR`, then drive it
   with `tmux send-keys` / `capture-pane`.
+
+## Command syntax
+
+ronpi's own /commands (the switcher box and in-session) parse like a Linux CLI,
+using [commander](https://github.com/tj/commander.js): `/fork --name "my fork"
+focus on file B`. Every command has `-h` / `--help` (shown in a dismissable
+panel). Multi-word values are quoted (`"two words"`, `'two words'`) or have
+their spaces escaped (`two\ words`); put `--` before text that starts with a
+dash (`/fork -- "-10 is the temperature today"`). Chat-friendly leniencies: a
+quote only opens a group at the start of a word (so `You're` is fine), and a
+backslash before an ordinary character stays as typed. Lines starting with `/`
+whose name is not ronpi's go to pi untouched.
+
+Adding a command: add an entry to `SESSION_COMMANDS` or `SWITCHER_COMMANDS` in
+`commands.ts` (name, description, and a `build` that declares options and
+arguments on the commander `Command`), then add its handler to the handler
+table in `session-commands.ts` / `switcher-actions.ts` - the compiler rejects a
+table with a missing entry. Parsing, help text, error messages and the
+autocomplete hint all come from the declaration.

@@ -95,7 +95,9 @@ export class ActivityLine implements Component {
   state: ActivityState = { queue: [] };
 
   render(width: number): string[] {
-    return activityLines(this.state, width, Date.now());
+    // One blank line always separates the transcript from what follows: the
+    // strip when something is running, the input box's rule when idle.
+    return ["", ...activityLines(this.state, width, Date.now())];
   }
 
   invalidate(): void {}

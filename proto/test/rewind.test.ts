@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { rewindFile, rewindTargets } from "../rewind.ts";
+import { clearFile, rewindFile, rewindTargets } from "../rewind.ts";
 
 function session(): { file: string; trash: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-rewind-"));
@@ -60,5 +60,42 @@ describe("rewind", () => {
     assert.throws(() => rewindFile(file, "a1", trash), /no user message/);
     assert.throws(() => rewindFile(file, "nope", trash), /no user message/);
     assert.equal(fs.readFileSync(file, "utf8"), before);
+  });
+});
+
+describe("clearFile", () => {
+  function named(): { file: string; trash: string } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-clear-"));
+    const file = path.join(dir, "s.jsonl");
+    const entries = [
+      { type: "session", id: "sid", version: 3 },
+      { type: "model_change", id: "m1", parentId: null, modelId: "old" },
+      { type: "message", id: "u1", parentId: "m1", message: { role: "user", content: "first" } },
+      { type: "model_change", id: "m2", parentId: "u1", modelId: "new" },
+      { type: "message", id: "a1", parentId: "m2", message: { role: "assistant", content: [] } },
+      { type: "session_info", id: "n1", parentId: "a1", name: "my session" },
+    ];
+    fs.writeFileSync(file, `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`);
+    return { file, trash: path.join(dir, "trash") };
+  }
+
+  it("drops every message but keeps the header, latest model and name in one chain", () => {
+    const { file, trash } = named();
+    clearFile(file, trash);
+    const entries = fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    assert.deepEqual(entries.map((e) => e.type), ["session", "model_change", "session_info"]);
+    assert.equal(entries[1].modelId, "new");
+    assert.equal(entries[1].parentId, null);
+    assert.equal(entries[2].parentId, "m2");
+    assert.equal(entries[2].name, "my session");
+    assert.deepEqual(rewindTargets(file), []);
+  });
+
+  it("copies the whole previous file to the trash first", () => {
+    const { file, trash } = named();
+    const before = fs.readFileSync(file, "utf8");
+    const r = clearFile(file, trash);
+    assert.equal(fs.readFileSync(r.trashedTo, "utf8"), before);
+    assert.ok(fs.existsSync(`${r.trashedTo}.json`));
   });
 });

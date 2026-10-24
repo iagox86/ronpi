@@ -6,6 +6,8 @@ import type { SessionMeta, ClientCommand, DistributiveOmit } from "./shared.ts";
 import type { LocalSession } from "./session-list.ts";
 import type { Switcher } from "./switcher.ts";
 import type { RewindPicker } from "./rewind-picker.ts";
+import type { DialogPanel } from "./dialogs.ts";
+import type { InfoPanel } from "./info-panel.ts";
 import type { SessionView } from "./transcript.ts";
 import type { SessionActions } from "./session-actions.ts";
 import type { SwitcherActions } from "./switcher-actions.ts";
@@ -30,15 +32,21 @@ export interface Host {
   /** Text to send once pendingEnterId resolves (adopt-then-prompt flow). */
   pendingPrompt: string | null;
   rewindPicker: RewindPicker;
+  dialogPanel: DialogPanel;
+  infoPanel: InfoPanel;
   switching: SwitcherActions;
   session: SessionActions;
-  request(cmd: DistributiveOmit<ClientCommand, "id">): Promise<unknown>;
+  request(cmd: DistributiveOmit<ClientCommand, "id">, timeoutMs?: number): Promise<unknown>;
   send(msg: Record<string, unknown>): void;
   keyFor(meta: SessionMeta): string;
   metaForPath(key: string): SessionMeta | undefined;
   loadLocal(): Promise<void>;
   rebuildChat(): void;
   syncHistory(force?: boolean): void;
+  /** Show a sent prompt immediately in the session's transcript (and start the spinner). */
+  echoPrompt(key: string, text: string): void;
+  /** Undo echoPrompt when the send failed. */
+  dropEcho(key: string, text: string): void;
   notify(message: string): void;
   renderChrome(): void;
   dispose(): void;

@@ -191,6 +191,109 @@ describe("daemon: lifecycle", () => {
     assert.equal(cached.length, 2);
   });
 
+  it("lists models, switches to a unique match, and refuses an ambiguous or unknown one", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const info = await c.request({ type: "model", session: sessionId });
+    assert.equal(info.current, "fake/fake-model");
+    assert.deepEqual(info.models, ["fake/fake-model", "fake/fake-big", "other/fake-big"]);
+    await assert.rejects(c.request({ type: "model", session: sessionId, query: "fake-big" }), /matches 2 models/);
+    await assert.rejects(c.request({ type: "model", session: sessionId, query: "nope" }), /no model matches/);
+    const done = await c.request({ type: "model", session: sessionId, query: "other" });
+    assert.equal(done.model, "other/fake-big");
+    assert.equal(c.sessions().find((s) => s.id === sessionId)?.model, "other/fake-big");
+  });
+
+  it("compacts an idle session and reports the sizes", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const r = await c.request({ type: "compact", session: sessionId });
+    assert.deepEqual(r, { tokensBefore: 5000, tokensAfter: 800 });
+  });
+
+  it("reloads a session onto a fresh child with the same file and history", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "before" });
+    await c.waitFor(isSettled);
+    const file = c.sessions().find((s) => s.id === sessionId)?.sessionFile;
+    const seen = c.messages.length;
+    await c.request({ type: "reload", session: sessionId });
+    const history = await c.waitFor((m) => m.type === "history" && c.messages.indexOf(m) >= seen);
+    assert.equal(history.messages[0].content, "before");
+    const meta = c.sessions().find((s) => s.id === sessionId);
+    assert.equal(meta?.sessionFile, file);
+    assert.equal(meta?.active, true);
+  });
+
+  it("clears a session in place: same file and session, empty history", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "old context" });
+    await c.waitFor(isSettled);
+    const before = c.sessions().find((s) => s.id === sessionId)?.sessionFile;
+    const seen = c.messages.length;
+    await c.request({ type: "clear", session: sessionId });
+    const history = await c.waitFor((m) => m.type === "history" && c.messages.indexOf(m) >= seen);
+    assert.deepEqual(history.messages, []);
+    const meta = c.sessions().find((s) => s.id === sessionId);
+    assert.equal(meta?.sessionFile, before);
+    assert.equal(meta?.messageCount, 0);
+    assert.equal(meta?.active, true);
+  });
+
+  it("forks a live session into a new one and leaves the original running", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "base" });
+    await c.waitFor(isSettled);
+    const file = c.sessions().find((s) => s.id === sessionId)?.sessionFile as string;
+    const forked = await c.request({ type: "adopt", path: file, cwd: harness.dir, fork: true });
+    assert.notEqual(forked.sessionId, sessionId);
+    const all = c.sessions();
+    assert.equal(all.find((s) => s.id === sessionId)?.active, true);
+    assert.equal(all.find((s) => s.id === forked.sessionId)?.active, true);
+  });
+
+  it("names a fork and tells it about its parent, leaving the parent alone", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "base" });
+    await c.waitFor(isSettled);
+    const parent = c.sessions().find((s) => s.id === sessionId);
+    const file = parent?.sessionFile as string;
+    const forked = await c.request({
+      type: "adopt",
+      path: file,
+      cwd: harness.dir,
+      fork: true,
+      name: "FORK Parent",
+      parentName: "Parent",
+    });
+    const fork = c.sessions().find((s) => s.id === forked.sessionId);
+    assert.equal(fork?.sessionName, "FORK Parent");
+    const notes = (f: string | undefined): string =>
+      (JSON.parse(fs.readFileSync(`${f}.argv.json`, "utf8")) as string[]).join("\n");
+    assert.match(notes(fork?.sessionFile), /fork of the session "Parent" \(session id [^,]+, file /);
+    // the parent is left alone: same child, no restart, no note about the fork
+    const after = c.sessions().find((s) => s.id === sessionId);
+    assert.equal(after?.sessionFile, file);
+    assert.equal(after?.active, true);
+    assert.doesNotMatch(notes(file), /has been forked|--append-system-prompt/);
+  });
+
   it("records the settings file's mtime per child and re-reads it on respawn", async () => {
     const settings = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-settings-")), "settings.json");
     fs.writeFileSync(settings, '{"model":"a"}');

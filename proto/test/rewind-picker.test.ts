@@ -23,16 +23,16 @@ describe("rewind picker", () => {
   it("marks the selection and warns that files are not restored", () => {
     const p = new RewindPicker();
     p.open(targets(3));
-    const out = p.render(100).map(strip);
-    assert.match(out[0] as string, /file changes are not undone/);
-    assert.ok(out.some((l) => l.startsWith(" > message 2")));
+    const out = p.render(100).map((l) => strip(l).trim());
+    assert.ok(out.some((l) => /file changes are not undone/.test(l)));
+    assert.ok(out.some((l) => l.startsWith("> message 2")));
   });
 
   it("windows long histories and says how many are scrolled off", () => {
     const p = new RewindPicker();
     p.open(targets(30));
     const out = p.render(100).map(strip);
-    assert.ok(out.length <= 12);
+    assert.ok(out.length <= 15);
     assert.ok(out.some((l) => /\.\.\. \d+ earlier/.test(l)));
     assert.ok(out.some((l) => l.includes("message 29")));
   });
