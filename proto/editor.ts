@@ -1,7 +1,7 @@
 // The chat box: pi-tui's Editor plus a key interceptor, and the keybinding
 // setup it needs.
 import { appendFileSync } from "node:fs";
-import { Editor, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
+import { Editor, Key, KeybindingsManager, matchesKey, setKeybindings, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 
 /**
  * Left-arrow that carries no modifiers beyond caps/numlock lock bits: legacy
@@ -23,17 +23,11 @@ export function isPlainLeft(data: string): boolean {
 }
 
 /**
- * The Editor's history navigation has no default bindings - bind up/down.
- * navigateHistory falls through to cursor movement unless the editor is
- * empty or the cursor is on its first/last visual line.
+ * Key setup for the editor. Up/down are handled in InputEditor.handleInput, so
+ * pi-tui's always-browse historyPrevious/Next actions stay unbound.
  */
 export function configureEditorKeys(): void {
-  setKeybindings(
-    new KeybindingsManager(TUI_KEYBINDINGS, {
-      "tui.editor.historyPrevious": ["up"],
-      "tui.editor.historyNext": ["down"],
-    }),
-  );
+  setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, {}));
 }
 
 export class InputEditor extends Editor {
@@ -52,6 +46,24 @@ export class InputEditor extends Editor {
     }
   }
 
+  /**
+   * Up moves through the text, and from the top line goes to the previous
+   * history entry (a typed draft is kept and comes back on down). Down is the
+   * stock behavior: through the text, and from the bottom line to the next
+   * entry while browsing history.
+   */
+  private historyOnUp(data: string): boolean {
+    if (!matchesKey(data, Key.up) || this.isShowingAutocomplete()) {
+      return false;
+    }
+    const inner = this as unknown as { isOnFirstVisualLine(): boolean; navigateHistory(direction: number): void };
+    if (!inner.isOnFirstVisualLine()) {
+      return false;
+    }
+    inner.navigateHistory(-1);
+    return true;
+  }
+
   handleInput(data: string): void {
     if (this.debugLog) {
       try {
@@ -61,6 +73,9 @@ export class InputEditor extends Editor {
       }
     }
     if (this.onKey?.(data)) {
+      return;
+    }
+    if (this.historyOnUp(data)) {
       return;
     }
     super.handleInput(data);

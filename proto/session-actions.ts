@@ -58,6 +58,15 @@ export class SessionActions {
       this.lastEsc = now;
       return true;
     }
+    if (matchesKey(data, Key.up) && this.h.editor.getText().length === 0) {
+      const meta = this.h.viewing ? this.h.metaForPath(this.h.viewing) : undefined;
+      const view = this.h.viewing ? this.h.views.get(this.h.viewing) : undefined;
+      if (meta?.id !== undefined && meta.attachedToYou && (view?.queue.length ?? 0) > 0) {
+        void this.unqueue(meta.id);
+        return true;
+      }
+      return false; // history
+    }
     if (isPlainLeft(data) && this.h.editor.getText().trim().length === 0) {
       this.h.switching.open();
       return true;
@@ -71,23 +80,39 @@ export class SessionActions {
    * first (pi's own Esc behavior) - an abort alone would go on to deliver them.
    */
   private async abortRestoringQueue(session: number): Promise<void> {
-    let queued: string[] = [];
+    const queued = await this.takeQueue(session);
+    this.h.send({ type: "abort", session });
+    this.restoreQueued(queued, "aborted", "\n\n");
+  }
+
+  /** Up in an empty box with messages queued: pull them back into the editor. */
+  private async unqueue(session: number): Promise<void> {
+    const queued = await this.takeQueue(session);
+    if (queued.length > 0) {
+      this.restoreQueued(queued, "unqueued", "\n");
+    }
+  }
+
+  /** Drop pi's queued steering/follow-up messages and return their text. */
+  private async takeQueue(session: number): Promise<string[]> {
     try {
       const q = (await this.h.request({ type: "clear_queue", session })) as { steering?: string[]; followUp?: string[] };
-      queued = [...(q.steering ?? []), ...(q.followUp ?? [])];
+      return [...(q.steering ?? []), ...(q.followUp ?? [])];
     } catch {
-      // queue state unknown; still abort
+      return []; // queue state unknown
     }
-    this.h.send({ type: "abort", session });
+  }
+
+  private restoreQueued(queued: string[], verb: string, separator: string): void {
     const view = this.h.viewing ? this.h.views.get(this.h.viewing) : undefined;
     if (view) {
       view.queue = [];
     }
     if (queued.length > 0) {
-      this.h.editor.setText([...queued, this.h.editor.getText()].filter((t) => t.trim()).join("\n\n"));
-      this.h.notify(`aborted - ${queued.length} queued message${queued.length === 1 ? "" : "s"} back in the editor`);
+      this.h.editor.setText([...queued, this.h.editor.getText()].filter((t) => t.trim()).join(separator));
+      this.h.notify(`${verb} - ${queued.length} queued message${queued.length === 1 ? "" : "s"} back in the editor`);
     } else {
-      this.h.notify("aborted");
+      this.h.notify(verb);
     }
     this.h.tui.requestRender();
   }
