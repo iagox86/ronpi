@@ -18,6 +18,12 @@ export interface RonpiSettings {
   thinking?: string;
   /** Path of pi's cli.js. */
   piCli?: string;
+  /** Model /summarize uses (provider/id); default ollama/gemma4:12b. */
+  summaryModel?: string;
+  /** Re-summarize changed sessions this often while ronpi is open (default 60; 0 = never). */
+  summaryIntervalMinutes?: number;
+  /** A summary is refreshed once its session has this many new messages (default 6). */
+  summaryMinNewMessages?: number;
 }
 
 export interface LoadedSettings {
@@ -43,7 +49,8 @@ export function settingsMtime(file: string = settingsFile()): number | null {
   }
 }
 
-const STRING_KEYS = ["provider", "model", "thinking", "piCli"] as const;
+const NUMBER_KEYS = ["summaryIntervalMinutes", "summaryMinNewMessages"] as const;
+const STRING_KEYS = ["provider", "model", "thinking", "piCli", "summaryModel"] as const;
 
 export function loadSettings(file: string = settingsFile()): LoadedSettings {
   let raw: string;
@@ -76,6 +83,14 @@ export function loadSettings(file: string = settingsFile()): LoadedSettings {
         settings[key as (typeof STRING_KEYS)[number]] = value;
       } else {
         problems.push(`${key} must be a non-empty string`);
+      }
+    } else if ((NUMBER_KEYS as readonly string[]).includes(key)) {
+      // the interval may be 0 (off); the other counts must be positive
+      const min = key === "summaryIntervalMinutes" ? 0 : 1;
+      if (typeof value === "number" && Number.isFinite(value) && value >= min) {
+        settings[key as (typeof NUMBER_KEYS)[number]] = value;
+      } else {
+        problems.push(`${key} must be a number${min === 0 ? " (0 turns it off)" : " of at least 1"}`);
       }
     } else {
       problems.push(`unknown setting "${key}"`);

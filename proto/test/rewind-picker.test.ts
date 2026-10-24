@@ -44,3 +44,19 @@ describe("rewind picker", () => {
     assert.equal(p.isOpen, false);
   });
 });
+
+describe("rewind picker and compaction", () => {
+  it("labels messages from before a compaction and warns when one is selected", () => {
+    const p = new RewindPicker();
+    p.open([
+      { entryId: "e0", text: "old", ts: 0, compacted: true },
+      { entryId: "e1", text: "new", ts: 1 },
+    ]);
+    p.move(-1);
+    const text = p.render(120).map(strip).join("\n");
+    assert.match(text, /old \[before a compaction\]/);
+    assert.match(text, /also undoes the compaction/);
+    p.move(1);
+    assert.doesNotMatch(p.render(120).map(strip).join("\n"), /also undoes the compaction/);
+  });
+});

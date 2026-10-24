@@ -7,6 +7,33 @@
 // every connected controller still sees the full event stream (viewing is
 // never exclusive).
 
+/** One quota window of a provider account, e.g. z.ai's rolling 5h. */
+export interface UsageWindow {
+  label: string;
+  /** Percent of the window used, 0-100. */
+  pct: number;
+  /** When the window resets (ms since epoch). */
+  resetsAt?: number;
+}
+
+/**
+ * An account's usage as reported by whatever can see it (a pi extension for pi
+ * providers; a Claude Code adapter later). Backend-neutral on purpose: the
+ * daemon keeps the newest report per provider, and the status bar only needs
+ * windows and/or a spend figure.
+ */
+export interface UsageReport {
+  v: 1;
+  provider: string;
+  /** Which adapter produced it ("zai", "litellm", later "claude-code"). */
+  source: string;
+  plan?: string;
+  windows: UsageWindow[];
+  spend?: { used: number; max?: number; resetsAt?: number };
+  /** When it was fetched (ms since epoch). */
+  at: number;
+}
+
 export interface SessionMeta {
   /** Daemon-assigned short id, stable for the daemon's lifetime. */
   id: number;
@@ -31,6 +58,14 @@ export interface SessionMeta {
   settingsProblem?: string;
   /** The session file is open in an external pi process (presence ext). */
   externallyLive?: boolean;
+  /** Upstream provider id of the current model (e.g. "zai-coding-cn", "litellm"). */
+  provider?: string;
+  thinkingLevel?: string;
+  /** Tokens in the model's context now; null right after a compaction until its next reply. */
+  ctxTokens?: number | null;
+  ctxMax?: number;
+  /** The provider account's latest usage report, shared by every session on that provider. */
+  usage?: UsageReport;
   /** Lifetime token/cost rollup tracked by the daemon. */
   tokens?: number;
   cost?: number;
@@ -65,7 +100,8 @@ type ClientCommandBody =
   /** pi's slash commands (extensions, skills, prompt templates). Without a
    * live session the daemon answers from the last list any child reported. */
   | { type: "commands"; id?: string; session?: number }
-  | { type: "spawn"; id?: string; cwd: string; sessionFile?: string; name?: string }
+  /** `ready`: answer only once the child is up (for callers about to command it). */
+  | { type: "spawn"; id?: string; cwd: string; sessionFile?: string; name?: string; ready?: boolean }
   | { type: "deactivate"; id?: string; session: number }
   /** Deactivate if live, then move the session file to the trash dir. */
   | { type: "delete"; id?: string; session?: number; path?: string }
@@ -93,6 +129,10 @@ type ClientCommandBody =
   | { type: "compact"; id?: string; session: number; instructions?: string }
   /** Wipe the conversation but keep the session (file, name, model); old contents go to the trash dir. Refused mid-run. */
   | { type: "clear"; id?: string; session: number }
+  /** Move a deleted session back out of the trash (`trashedTo` is the file in the trash dir). */
+  | { type: "restore"; id?: string; trashedTo: string }
+  /** Undo the last /clear: put the old contents back (refused mid-run). */
+  | { type: "restore_clear"; id?: string; session?: number; path?: string }
   /** Restart the child on the same file so it re-reads extensions, skills and settings. */
   | { type: "reload"; id?: string; session: number }
   /** Controller announce: classifies the connection as a controller (not a

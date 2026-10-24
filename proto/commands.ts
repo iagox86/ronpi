@@ -7,6 +7,7 @@
 // a handler, so adding one is: an entry here, plus a function there.
 import type { Command } from "commander";
 import type { CommandSpec } from "./cli.ts";
+import { matching } from "./completion.ts";
 
 export type { CommandSpec };
 
@@ -16,19 +17,70 @@ const nameArgument = (verb: string) => (cmd: Command) => {
 
 /** Switcher command box. SwitcherActions must handle every name listed here. */
 export const SWITCHER_COMMANDS = [
-  { name: "new", description: "start a new session" },
+  {
+    name: "new",
+    description: "start a new session",
+    build: (cmd) => {
+      cmd
+        .option("-n, --name <name>", "name for the new session")
+        .option("-C, --cwd <dir>", "working directory for the new session (default: where ronpi was started)");
+    },
+  },
   { name: "stop", description: "stop the highlighted session's process (file kept; respawns on next prompt)" },
-  { name: "delete", description: "move the highlighted session to trash (asks twice; stops it if running)" },
+  {
+    name: "delete",
+    description: "move the highlighted session to trash (asks twice; stops it if running)",
+    build: (cmd) => {
+      cmd.option("-y, --yes", "skip the confirmation");
+    },
+  },
   { name: "rename", description: "rename the highlighted session", build: nameArgument("edit the current name") },
   {
     name: "group",
     description: "move the highlighted session to a group",
+    complete: (typed, src) => matching(src.groups(), typed),
     build: (cmd) => {
       cmd.argument("[group...]", "group name, created if new (leave out to edit)");
     },
   },
+  { name: "ungroup", description: "take the highlighted session out of its group" },
+  {
+    name: "summarize",
+    description: "write a one-line summary of the highlighted session into the Summary column",
+    build: (cmd) => {
+      cmd
+        .option("-m, --model <model>", "model to summarize with, provider/id (default: summaryModel in settings, else ollama/gemma4:12b)")
+        .option("-c, --chars <n>", "most transcript characters to send (default 2500; smaller suits small models)", Number)
+        .option("--all", "summarize every session that has no summary or a stale one, one after another");
+    },
+  },
+  {
+    name: "filter",
+    description: "show only matching sessions until cleared (no text clears; ctrl-f filters as you type)",
+    build: (cmd) => {
+      cmd
+        .option("-r, --regex", "treat the text as one case-insensitive regular expression")
+        .argument("[text...]", "every word must appear in the name, summary, group, model or directory");
+    },
+  },
+  {
+    name: "feedback",
+    description: "record a note about a harness or extension problem, with this session and turn attached, for later investigation",
+    build: (cmd) => {
+      cmd
+        .option("-c, --category <name>", "short tag, e.g. tool-quirk, ui, extension")
+        .option("-l, --list", "show the recent notes instead of adding one")
+        .argument("[text...]", "what went wrong");
+    },
+  },
   { name: "adopt", description: "fork an external session into ronpi" },
-  { name: "restore", description: "restore from trash (not built yet)" },
+  {
+    name: "restore",
+    description: "bring back a deleted session from the trash (pick from a list)",
+    build: (cmd) => {
+      cmd.argument("[query...]", "words that narrow the list; a single match is restored straight away");
+    },
+  },
   { name: "kill-daemon", description: "stop the daemon and every session it owns" },
   { name: "help", description: "list commands" },
   { name: "exit", description: "leave ronpi (sessions keep running)" },
@@ -47,9 +99,10 @@ export const SESSION_COMMANDS = [
   { name: "reload", description: "restart pi on this session to pick up new extensions and settings" },
   {
     name: "model",
-    description: "show or switch the model",
+    description: "pick a model from a list, or switch to the one matching the words given",
+    complete: async (typed, src) => matching(await src.models(), typed),
     build: (cmd) => {
-      cmd.argument("[query...]", "words that must all appear in provider/model (leave out to list)");
+      cmd.option("-l, --list", "just show every available model, without the picker").argument("[query...]", "words that must all appear in provider/model (leave out to pick from a list)");
     },
   },
   {
@@ -60,6 +113,23 @@ export const SESSION_COMMANDS = [
         .option("-n, --name <name>", "name for the copy (default: a fork mark plus this session's name)")
         .option("--no-switch", "stay in this session instead of entering the copy")
         .argument("[prompt...]", "first message for the copy; put -- before one that starts with -");
+    },
+  },
+  {
+    name: "feedback",
+    description: "record a note about a harness or extension problem, with this session and turn attached, for later investigation",
+    build: (cmd) => {
+      cmd
+        .option("-c, --category <name>", "short tag, e.g. tool-quirk, ui, extension")
+        .option("-l, --list", "show the recent notes instead of adding one")
+        .argument("[text...]", "what went wrong");
+    },
+  },
+  {
+    name: "why",
+    description: "explain the last thinking block in a sentence or two, using the cheap summary model (the session's model is not involved)",
+    build: (cmd) => {
+      cmd.option("-m, --model <model>", "model to explain with (default: the summary model)");
     },
   },
   { name: "clear", description: "wipe this session's conversation and start over (same name and model; old contents go to trash)" },

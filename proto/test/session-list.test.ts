@@ -132,6 +132,12 @@ describe("buildSessionList", () => {
     assert.equal(build({ files, summaries: new Map([["/a", "live"]]) })[0].description, "live");
   });
 
+  it("prefers a saved summary over the live last message", () => {
+    const files = [local("/a", { id: "u-a", lastActivity: "from file" })];
+    const groups = { groups: [], assignments: {}, summaries: { "u-a": { text: "saved", messages: 2, at: "t", model: "m" } } };
+    assert.equal(build({ files, groups, summaries: new Map([["/a", "live"]]) })[0].description, "saved");
+  });
+
   it("falls back to the project directory for unnamed sessions", () => {
     assert.equal(build({ files: [local("/a")] })[0].description, "proj");
   });

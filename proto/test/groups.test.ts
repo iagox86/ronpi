@@ -74,3 +74,15 @@ describe("resolveGroup", () => {
     assert.throws(() => resolveGroup({ groups: [], assignments: {} }, "  "), /empty/);
   });
 });
+
+describe("groups file round trip", () => {
+  it("keeps fields it does not know about, such as saved summaries", () => {
+    const summaries = { abc: { text: "one line", messages: 3, at: "t", model: "m" } };
+    fs.mkdirSync(path.dirname(groupsFile()), { recursive: true });
+    fs.writeFileSync(groupsFile(), JSON.stringify({ groups: ["a"], assignments: {}, order: [], summaries, other: 1 }));
+    saveGroups(loadGroups());
+    const after = JSON.parse(fs.readFileSync(groupsFile(), "utf8"));
+    assert.deepEqual(after.summaries, summaries);
+    assert.equal(after.other, 1);
+  });
+});

@@ -4,12 +4,16 @@ import type { Component } from "@earendil-works/pi-tui";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { oneLineFlat } from "./format.ts";
 import type { RewindTarget } from "./rewind.ts";
-import { dim, panel, panelInnerWidth, selected } from "./theme.ts";
+import { attention, dim, panel, panelInnerWidth, selected } from "./theme.ts";
 
 const VISIBLE = 8;
 
 export function pickerLines(targets: RewindTarget[], index: number, width: number): string[] {
-  const lines = [dim(truncateToWidth(" Rewind to before which message? Conversation only - file changes are not undone.", width))];
+  const restoring = targets.length > 0 && targets.every((t) => t.restore);
+  const title = restoring
+    ? " This session was cleared. Restore the conversation?"
+    : " Rewind to before which message? Conversation only - file changes are not undone.";
+  const lines = [dim(truncateToWidth(title, width))];
   const start = Math.max(0, Math.min(index - Math.floor(VISIBLE / 2), targets.length - VISIBLE));
   const shown = targets.slice(start, start + VISIBLE);
   if (start > 0) {
@@ -17,9 +21,13 @@ export function pickerLines(targets: RewindTarget[], index: number, width: numbe
   }
   shown.forEach((t, i) => {
     const text = oneLineFlat(t.text, Math.max(10, width - 6)) || "(empty message)";
-    lines.push(truncateToWidth(start + i === index ? selected(` > ${text}`) : dim(`   ${text}`), width));
+    const mark = t.compacted ? " [before a compaction]" : "";
+    lines.push(truncateToWidth(start + i === index ? selected(` > ${text}${mark}`) : dim(`   ${text}${mark}`), width));
   });
-  lines.push(dim(" up/down choose - enter rewind - esc cancel"));
+  if (targets[index]?.compacted) {
+    lines.push(attention(" rewinding here also undoes the compaction: the model gets the full earlier conversation back"));
+  }
+  lines.push(dim(restoring ? " enter restore - esc cancel" : " up/down choose - enter rewind - esc cancel"));
   return lines;
 }
 

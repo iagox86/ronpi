@@ -49,6 +49,8 @@ import {
 import { type ClientCommand, type DaemonMessage, type DistributiveOmit, encodeLine, LineSplitter, type SessionMeta } from "./shared.ts";
 import { buildStatusLine, fleetStats, settingsNotice } from "./status.ts";
 import { ActivityLine } from "./activity.ts";
+import { Dimmed } from "./components.ts";
+import { ChoicePanel } from "./choice-panel.ts";
 import { InfoPanel } from "./info-panel.ts";
 import type { ToolRun } from "./tool-run.ts";
 import { assertTruecolor, dim, OSC_RESET_BG, OSC_SET_BG } from "./theme.ts";
@@ -89,6 +91,7 @@ class Controller {
   activityLine = new ActivityLine();
   dialogPanel = new DialogPanel();
   infoPanel = new InfoPanel();
+  choicePanel = new ChoicePanel();
   rewindPicker = new RewindPicker();
   historySearch = new HistorySearch();
   /** Show full tool blocks instead of one summary line per run. */
@@ -143,6 +146,10 @@ class Controller {
         switcher: this.switching.isOpen,
         piCommands: this.piCommands,
         cwd: (this.viewing && (this.metaForPath(this.viewing)?.cwd ?? this.local.get(this.viewing)?.cwd)) || process.cwd(),
+        sources: {
+          models: () => this.modelNames(),
+          groups: () => this.switching.groups.groups,
+        },
       })),
     );
     this.editor.debugLog = KEY_LOG;
@@ -160,12 +167,14 @@ class Controller {
       { component: this.rewindPicker, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       { component: this.dialogPanel, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       { component: this.infoPanel, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
+      { component: this.choicePanel, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       // never compress the dock: a shrunken editor was the "cut off" bug
       { component: dock, basis: "auto", grow: 0, shrink: 0, minSize: 4 },
     ]);
     this.switcherLayout = new VStack([
       { component: this.switcher, basis: 0, grow: 1, shrink: 1, minSize: 1 },
       { component: this.infoPanel, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
+      { component: this.choicePanel, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       { component: dock, basis: "auto", grow: 0, shrink: 0, minSize: 4 },
     ]);
     this.tui.setLayoutRoot(this.chatLayout);
@@ -203,6 +212,7 @@ class Controller {
         });
       }, 10_000);
       this.listTimer.unref?.();
+      this.switching.startAutoSummary();
       // park the process; the TUI owns the loop from here
       await new Promise<never>(() => {});
     } finally {
@@ -408,6 +418,27 @@ class Controller {
     }
   }
 
+  /** Models the viewed live session can switch to; cached briefly since completion asks per keystroke. */
+  private modelCache?: { session: number; at: number; names: string[] };
+
+  async modelNames(): Promise<string[]> {
+    const meta = this.switching.isOpen || !this.viewing ? undefined : this.metaForPath(this.viewing);
+    if (!meta?.active) {
+      return [];
+    }
+    const cached = this.modelCache;
+    if (cached && cached.session === meta.id && Date.now() - cached.at < 60_000) {
+      return cached.names;
+    }
+    try {
+      const r = (await this.request({ type: "model", session: meta.id })) as { models: string[] };
+      this.modelCache = { session: meta.id, at: Date.now(), names: r.models };
+      return r.models;
+    } catch {
+      return [];
+    }
+  }
+
   keyById(sessionId: number): string | null {
     const meta = this.sessions.get(sessionId);
     return meta ? this.keyFor(meta) : null;
@@ -459,6 +490,11 @@ class Controller {
   keys(data: string): boolean {
     if (isKeyRelease(data)) {
       return true;
+    }
+    if (this.choicePanel.isOpen) {
+      const handled = this.choicePanel.keys(data);
+      this.tui.requestRender();
+      return handled;
     }
     if (this.infoPanel.isOpen) {
       // any key dismisses command output; esc/enter are only for that
@@ -566,7 +602,6 @@ class Controller {
   echoPrompt(key: string, text: string): void {
     const view = this.viewFor(key);
     echoUser(view, text, { addItem: (item) => this.addItem(view, key, item) });
-    view.activity ??= { label: "working", since: Date.now() };
     if (key === this.viewing) {
       this.scroll.scrollToEnd();
       this.syncActivity();
@@ -577,9 +612,6 @@ class Controller {
   dropEcho(key: string, text: string): void {
     const view = this.views.get(key);
     if (view && dropEcho(view, text)) {
-      if (view.echoes.length === 0) {
-        view.activity = undefined;
-      }
       if (key === this.viewing) {
         this.rebuildChat();
       }
@@ -602,6 +634,8 @@ class Controller {
   private applyDisplay(item: Item): void {
     if (item.kind === "tools") {
       item.component.expanded = this.toolsExpanded;
+    } else if (item.kind === "compaction") {
+      item.component.setExpanded(this.toolsExpanded);
     } else if (item.kind === "assistant") {
       // Blank label: the working indicator already says "thinking", so a hidden block leaves no line behind.
       item.component.setHiddenThinkingLabel("");
@@ -705,7 +739,7 @@ class Controller {
       markLatestRun(view);
       for (const item of view.items) {
         this.applyDisplay(item);
-        this.chatRoot.addChild(item.component);
+        this.chatRoot.addChild(item.dimmed ? new Dimmed(item.component) : item.component);
       }
     }
     this.scroll.scrollToEnd();
@@ -743,6 +777,8 @@ class Controller {
       stats,
       flash: this.flash,
       dialog: key ? this.views.get(key)?.dialog : undefined,
+      activity: key ? this.views.get(key)?.activity?.label : undefined,
+      width,
       notice: settingsNotice(this.sessions.values(), settingsMtime()),
     });
     this.statusLine.setText(truncateToWidth(status, width));

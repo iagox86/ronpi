@@ -77,6 +77,35 @@ export function panel(lines: string[], width: number, maxWidth = 100): string[] 
 export const panelInnerWidth = (width: number, maxWidth = 100): number =>
   Math.min(maxWidth, Math.max(10, width - 4)) - 2;
 
+// "Badness" ramp for gauges (context fill, usage, effort): green at 0, yellow
+// at 50, orange at 75, red at 100, interpolated smoothly in 24-bit color from
+// the theme's own palette.
+const RAMP: Array<[number, [number, number, number]]> = [
+  [0, hex("green")],
+  [50, hex("yellow")],
+  [75, hex("orange")],
+  [100, hex("red")],
+];
+
+export function rampColor(pct: number): [number, number, number] {
+  const p = Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
+  for (let i = 1; i < RAMP.length; i++) {
+    const [hiAt, hi] = RAMP[i] as [number, [number, number, number]];
+    const [loAt, lo] = RAMP[i - 1] as [number, [number, number, number]];
+    if (p <= hiAt) {
+      const t = (p - loAt) / (hiAt - loAt);
+      return [0, 1, 2].map((k) => Math.round((lo[k] as number) + ((hi[k] as number) - (lo[k] as number)) * t)) as [number, number, number];
+    }
+  }
+  return RAMP[RAMP.length - 1]![1];
+}
+
+/** Colour `text` by how bad `pct` (0-100) is: 0 green, 100 red. */
+export const gauge = (pct: number, text: string): string => {
+  const [r, g, b] = rampColor(pct);
+  return `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`;
+};
+
 // Chrome styles use scoped resets (22/39) so they compose with the switcher's
 // background padding.
 const fg = (name: string) => `\x1b[38;2;${rgb(token(name))}m`;

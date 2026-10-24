@@ -7,6 +7,7 @@ import type { LocalSession } from "./session-list.ts";
 import type { Switcher } from "./switcher.ts";
 import type { RewindPicker } from "./rewind-picker.ts";
 import type { DialogPanel } from "./dialogs.ts";
+import type { ChoicePanel } from "./choice-panel.ts";
 import type { InfoPanel } from "./info-panel.ts";
 import type { SessionView } from "./transcript.ts";
 import type { SessionActions } from "./session-actions.ts";
@@ -34,6 +35,7 @@ export interface Host {
   rewindPicker: RewindPicker;
   dialogPanel: DialogPanel;
   infoPanel: InfoPanel;
+  choicePanel: ChoicePanel;
   switching: SwitcherActions;
   session: SessionActions;
   request(cmd: DistributiveOmit<ClientCommand, "id">, timeoutMs?: number): Promise<unknown>;

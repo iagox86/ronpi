@@ -4,11 +4,25 @@
 // works from that, so adding a command needs no parsing code.
 import { Command, CommanderError } from "commander";
 
+/** Live data an argument completer may draw on. */
+export interface CompletionSources {
+  /** Names (provider/id) of the models the viewed session can use. */
+  models(): Promise<string[]>;
+  /** Existing group names. */
+  groups(): string[];
+}
+
 export interface CommandSpec {
   name: string;
   description: string;
   /** Declare options and arguments on the commander Command. */
   build?: (cmd: Command) => void;
+  /**
+   * Values to offer for the text typed after the command name (the whole rest
+   * of the line). Only for arguments with a known set of choices; flags are
+   * not completed.
+   */
+  complete?: (typed: string, sources: CompletionSources) => string[] | Promise<string[]>;
 }
 
 export interface Invocation {

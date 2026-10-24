@@ -28,6 +28,17 @@ describe("activity", () => {
     assert.equal(s.activity?.label, "compacting context");
   });
 
+  it("stops showing activity when a manual compaction ends, but not an automatic one", () => {
+    const manual = fresh();
+    reduceActivity(manual, { type: "compaction_start" }, 0);
+    reduceActivity(manual, { type: "compaction_end", reason: "manual" }, 5);
+    assert.equal(manual.activity, undefined);
+    const auto = fresh();
+    reduceActivity(auto, { type: "compaction_start" }, 0);
+    reduceActivity(auto, { type: "compaction_end", reason: "threshold" }, 5);
+    assert.equal(auto.activity?.label, "working");
+  });
+
   it("replaces the queue wholesale on each queue_update", () => {
     const s = fresh();
     reduceActivity(s, { type: "queue_update", steering: ["a", "b"], followUp: [] }, 0);

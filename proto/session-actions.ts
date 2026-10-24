@@ -6,7 +6,8 @@ import { Key, matchesKey } from "@earendil-works/pi-tui";
 import { dialogAnswer, isTextDialog, takesReason } from "./dialogs.ts";
 import { isPlainLeft } from "./editor.ts";
 import { fmtAge } from "./format.ts";
-import { rewindTargets } from "./rewind.ts";
+import { TRASH_DIR } from "./config.ts";
+import { latestClearBackup, rewindTargets } from "./rewind.ts";
 import type { Host } from "./host.ts";
 import { SessionCommands } from "./session-commands.ts";
 import { itemsFromFile, newView, type SessionView } from "./transcript.ts";
@@ -124,10 +125,22 @@ export class SessionActions {
       this.h.notify("nothing to rewind yet");
       return;
     }
-    const targets = rewindTargets(key);
+    let targets = rewindTargets(key);
     if (targets.length === 0) {
-      this.h.notify("nothing to rewind yet");
-      return;
+      // an emptied session offers to undo its /clear instead
+      const backup = latestClearBackup(TRASH_DIR, key);
+      if (!backup) {
+        this.h.notify("nothing to rewind yet");
+        return;
+      }
+      targets = [
+        {
+          entryId: "",
+          text: `Restore the ${backup.entries} entries cleared from this session`,
+          ts: 0,
+          restore: { entries: backup.entries, trashedAt: backup.trashedAt },
+        },
+      ];
     }
     this.h.rewindPicker.open(targets);
     this.h.tui.requestRender();
@@ -145,12 +158,34 @@ export class SessionActions {
     } else if (matchesKey(data, Key.enter)) {
       const target = picker.current();
       picker.close();
-      if (target) {
+      if (target?.restore) {
+        void this.restoreCleared();
+      } else if (target) {
         void this.rewindTo(target.entryId);
       }
     }
     this.h.tui.requestRender();
     return true;
+  }
+
+  private async restoreCleared(): Promise<void> {
+    const key = this.h.viewing;
+    if (!key) {
+      return;
+    }
+    const meta = this.h.metaForPath(key);
+    try {
+      await this.h.request(meta ? { type: "restore_clear", session: meta.id } : { type: "restore_clear", path: key });
+      const cwd = meta?.cwd ?? this.h.local.get(key)?.cwd ?? process.cwd();
+      this.h.views.set(key, { ...newView(), items: itemsFromFile(key, this.h.tui, cwd) });
+      this.h.summaries.delete(key);
+      this.h.rebuildChat();
+      this.h.syncHistory(true);
+      this.h.notify("restored the cleared conversation");
+      void this.h.loadLocal();
+    } catch (err) {
+      this.h.notify(`restore failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   private async rewindTo(entryId: string): Promise<void> {

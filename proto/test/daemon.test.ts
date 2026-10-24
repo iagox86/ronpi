@@ -215,6 +215,26 @@ describe("daemon: lifecycle", () => {
     assert.deepEqual(r, { tokensBefore: 5000, tokensAfter: 800 });
   });
 
+  it("holds messages sent during a compaction and delivers them in order afterwards", async () => {
+    harness = await startDaemon({ FAKE_PI_COMPACT_MS: "600" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const compact = c.request({ type: "compact", session: sessionId });
+    await new Promise((r) => setTimeout(r, 150));
+    const first = await c.request({ type: "prompt", session: sessionId, message: "one" });
+    assert.equal(first.disposition, "queued");
+    await c.request({ type: "prompt", session: sessionId, message: "two" });
+    const queued = c.messages.filter((m) => m.type === "event" && m.event?.type === "queue_update");
+    assert.deepEqual(queued.at(-1)?.event.steering, ["one", "two"]);
+    await compact;
+    await c.waitFor((m) => m.type === "event" && m.event?.type === "message_end" && m.event.message?.content?.[0]?.text === "echo: two");
+    const replies = c.messages
+      .filter((m) => m.type === "event" && m.event?.type === "message_end" && m.event.message?.role === "assistant")
+      .map((m) => m.event.message.content[0].text);
+    assert.deepEqual(replies, ["echo: one", "echo: two"]);
+  });
+
   it("reloads a session onto a fresh child with the same file and history", async () => {
     harness = await startDaemon();
     const c = await harness.connect();
@@ -230,6 +250,43 @@ describe("daemon: lifecycle", () => {
     const meta = c.sessions().find((s) => s.id === sessionId);
     assert.equal(meta?.sessionFile, file);
     assert.equal(meta?.active, true);
+  });
+
+  it("resumes a stopped session from its file and answers only once the child can take commands", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "first" });
+    await c.waitFor(isSettled);
+    const file = c.sessions().find((s) => s.id === sessionId)?.sessionFile as string;
+    await c.request({ type: "deactivate", session: sessionId });
+    assert.equal(c.sessions().find((s) => s.id === sessionId)?.active, false);
+    const r = await c.request({ type: "spawn", sessionFile: file, cwd: harness.dir, ready: true });
+    assert.equal(c.sessions().find((s) => s.id === r.sessionId)?.active, true);
+    const info = await c.request({ type: "model", session: r.sessionId });
+    assert.equal(info.current, "fake/fake-model");
+  });
+
+  it("keeps a usage report from a child and shows it on every session of that provider", async () => {
+    const report = { v: 1, provider: "fake", source: "zai", windows: [{ label: "5h", pct: 16 }], at: Date.now() };
+    harness = await startDaemon({ FAKE_PI_USAGE: JSON.stringify(report) });
+    const c = await harness.connect();
+    const first = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.waitFor((m) => m.type === "sessions" && m.sessions.some((s: Msg) => s.id === first.sessionId && s.usage?.windows?.[0]?.pct === 16));
+    const second = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "sessions" && m.sessions.some((s: Msg) => s.id === second.sessionId && s.usage?.source === "zai"));
+    // the record is the daemon's: controllers never see it as a UI request
+    assert.ok(!c.messages.some((m: Msg) => m.type === "ui_request" && m.request?.statusKey === "ronpi-usage"));
+  });
+
+  it("names a new session when spawned with a name", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir, name: "my new session" });
+    await c.waitFor((m) => m.type === "history");
+    assert.equal(c.sessions().find((s) => s.id === sessionId)?.sessionName, "my new session");
   });
 
   it("clears a session in place: same file and session, empty history", async () => {
@@ -248,6 +305,24 @@ describe("daemon: lifecycle", () => {
     assert.equal(meta?.sessionFile, before);
     assert.equal(meta?.messageCount, 0);
     assert.equal(meta?.active, true);
+  });
+
+  it("restores a cleared session's conversation and keeps the model in use", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "precious context" });
+    await c.waitFor(isSettled);
+    await c.request({ type: "clear", session: sessionId });
+    await c.request({ type: "model", session: sessionId, query: "other/fake-big" });
+    const seen = c.messages.length;
+    const r = await c.request({ type: "restore_clear", session: sessionId });
+    assert.ok(r.entries > 0);
+    const history = await c.waitFor((m) => m.type === "history" && c.messages.indexOf(m) >= seen);
+    assert.equal(history.messages[0].content, "precious context");
+    assert.equal((await c.request({ type: "model", session: sessionId })).current, "other/fake-big");
+    await assert.rejects(c.request({ type: "restore_clear", session: sessionId }), /nothing to restore/);
   });
 
   it("forks a live session into a new one and leaves the original running", async () => {
@@ -292,6 +367,29 @@ describe("daemon: lifecycle", () => {
     assert.equal(after?.sessionFile, file);
     assert.equal(after?.active, true);
     assert.doesNotMatch(notes(file), /has been forked|--append-system-prompt/);
+  });
+
+  it("uses the settings' model for a new session but lets a resumed one keep its own", async () => {
+    const settings = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-settings-")), "settings.json");
+    fs.writeFileSync(settings, '{"model":"default-model"}');
+    harness = await startDaemon({ RONPI_SETTINGS: settings });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const argv = (): string[] => {
+      const f = c.sessions().find((s) => s.id === sessionId)?.sessionFile;
+      return JSON.parse(fs.readFileSync(`${f}.argv.json`, "utf8")) as string[];
+    };
+    assert.ok(argv().includes("default-model"), "a new session starts on the default model");
+    await c.request({ type: "prompt", session: sessionId, message: "hi" });
+    await c.waitFor(isSettled);
+    await c.request({ type: "reload", session: sessionId });
+    assert.ok(!argv().includes("--model"), "a restart on an existing file does not reset its model");
+    await c.request({ type: "model", session: sessionId, query: "other/fake-big" });
+    await c.request({ type: "clear", session: sessionId });
+    assert.ok(!argv().includes("--model"), "/clear does not pass the default model");
+    const after = await c.request({ type: "model", session: sessionId });
+    assert.equal(after.current, "other/fake-big", "/clear keeps the model the session was on");
   });
 
   it("records the settings file's mtime per child and re-reads it on respawn", async () => {

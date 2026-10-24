@@ -78,8 +78,8 @@ Session view (chat):
 - `left` on empty editor - open the switcher
 - ronpi's own commands (declared in `commands.ts`, intercepted here, never sent to pi):
   `/abort`, `/quit` (back to the switcher), `/exit` (quit the controller; child exit
-  is ctrl-x's job), `/name <name>` or `/rename <name>`, `/model [words]` (no
-  argument: current model and a few options; otherwise switches to the one model
+  is ctrl-x's job), `/name <name>` or `/rename <name>`, `/model [-l] [words]` (no
+  argument: an interactive picker - up/down, type to filter, enter; `-l` just lists them; otherwise switches to the one model
   whose `provider/id` contains all the words), `/compact [focus]`, `/clear` (wipe the conversation in place - same session, name and model; old contents go to trash), `/reload`
   (restarts pi on the same file so new extensions, skills and settings load) and
   `/fork [-n name] [prompt]` (continue in a copy, entered immediately; the original is untouched. The copy is named `⑂ <original name>`, listed right below it in its group, and optionally gets `prompt` as its first message. The copy is told its parent - id, name, file - via an appended system prompt; lineage is recorded both ways in `lineage.json` next to the groups file, but the parent is not told about its forks yet: see design.md, parent/child communication)
@@ -101,14 +101,15 @@ request/response):
   session's process (file kept), `ctrl-x` delete it (press twice; moves to
   trash, stopping it first if running; on an empty group header: delete the
   group), `ctrl-r` or `f2` rename (prefilled with the current name),
-  `ctrl-g` group
+  `ctrl-g` group, `ctrl-f` filter the list as you type (up/down move, enter keeps the filter; esc clears it, here or later)
 - typing plain text (not starting with `/`) and pressing enter starts a new
   session with that as its first message
 - `/` completes commands (popup, tab); the list comes from `commands.ts`, so
   new commands appear automatically
-- the bottom chat box doubles as the switcher command line: `/new` `/stop` `/delete`
+- the bottom chat box doubles as the switcher command line: `/new [-n name] [-C dir]` `/stop` `/delete [-y]` `/ungroup` `/filter [-r] [words]` (show only matching sessions - name, summary, group, model or directory, all words must match; `-r` takes one regex; no text clears)
   `/rename <name>` `/group <name>` `/adopt` `/kill-daemon` `/quit` `/exit`
-  `/help` (`/restore` later)
+  `/help` `/summarize` `/restore [words]` (pick a deleted session from the trash to bring back,
+  with its group and summary; a single match is restored directly)
 - display order freezes while the switcher is open, so background file
   activity never reshuffles the list under the cursor; manual positions
   (order array) always win
@@ -237,4 +238,70 @@ Adding a command: add an entry to `SESSION_COMMANDS` or `SWITCHER_COMMANDS` in
 arguments on the commander `Command`), then add its handler to the handler
 table in `session-commands.ts` / `switcher-actions.ts` - the compiler rejects a
 table with a missing entry. Parsing, help text, error messages and the
-autocomplete hint all come from the declaration.
+autocomplete hint all come from the declaration. A command whose argument has a
+fixed set of choices (`/model`, `/group`) can also give a `complete` function
+(see `CommandSpec` in `cli.ts`): typing the command and a space then pops up the
+choices, narrowed by what is typed. Flags are not completed.
+
+## Summaries
+
+`/summarize` (switcher) writes a one-line summary of the highlighted session
+into the Summary column, using a model run through pi's print mode:
+`-m provider/id` (default: `summaryModel` in `~/.config/ronpi/settings.json`,
+else `ollama/gemma4:12b`), `-c <chars>` (transcript size, default 2500), `--all`
+(every session with no summary or a stale one). Summaries live in
+`session-groups.json`. They are kept up automatically: every
+`summaryIntervalMinutes` (default 60, `0` turns it off) while ronpi is open, it
+summarizes sessions that have no summary yet or have gained at least
+`summaryMinNewMessages` (default 6) messages since theirs, skipping any that
+are running or were written to in the last 3 minutes. Most recently touched
+sessions go first, at most 10 per pass, so a backlog of old sessions fills in
+over several passes. Failures are logged and retried next pass.
+
+## Feedback
+
+`/feedback [-c category] <text>` (in a session or the switcher) records a note
+about a harness or extension problem; `/feedback -l` lists the recent ones. Notes
+go to `$XDG_DATA_HOME/ronpi/feedback.jsonl` (`RONPI_FEEDBACK` overrides), one JSON
+object per line, so they can be investigated later by a person or an agent. Each
+carries `source` (`user`, or `agent` for a future agent-facing tool), the session
+file, pi's session uuid, model and provider, and the newest entry at that moment:
+`session.entryLine` is its 1-based line in `session.file` and `session.entryId`
+its `id`, so `sed -n '<entryLine>p' <file>` shows the turn. `at` (UTC) lines up
+with `env.daemonLog`, and `env` has the ronpi revision and pi version.
+
+## Status bar and compaction
+
+The bar under the chat box shows, for the session on screen: name | model
+(upstream provider) | state (idle, or what it is doing) | ctx used/max and
+percent | thinking level | cost. Gauges (model tier, context fill, effort) run
+smoothly from green at 0% to red at 100% in the theme's palette; when the
+terminal is narrow the least important segments drop first (thinking level,
+model, cost, context), never the name or state. Context and cost come from pi's
+own session stats, so they survive a daemon restart; context is unknown (`?`)
+right after a compaction until the model's next reply.
+
+Messages sent while a `/compact` is running are held by the daemon (pi itself
+refuses prompts then), shown as queued, and delivered in order when it finishes.
+
+A compaction shows as pi's own summary row ("Compacted from N tokens", ctrl-o
+expands it). Pi keeps the whole file, so when a session is replayed from its
+file the messages the model no longer has (before the first kept entry) are
+shown faint above that row. The rewind list marks messages from before a
+compaction and warns that rewinding there also undoes the compaction.
+
+## Usage in the status bar
+
+Quota windows (z.ai's 5h / weekly) and LiteLLM budget spend show after the
+context figure, e.g. `5h 16% 7d 4%`, colored green to red. They come from a pi
+extension, so ronpi never handles your API keys: link it once with
+`node install.ts` (it also links `ronpi-presence`; it refuses to replace a plain file, so remove an older copy of `~/.pi/agent/extensions/ronpi-presence.ts` first), then restart ronpi. It runs
+only in children ronpi starts, asks pi's own model registry for the key, makes
+one request per minute at most, and reports percentages only. To check what
+z.ai returns for your key by hand (this sends the key to z.ai's own host):
+
+    curl -s -H "Authorization: Bearer $(jq -r '."zai-coding-cn".key' ~/.pi/agent/auth.json)" \
+      https://open.bigmodel.cn/api/monitor/usage/quota/limit | jq .
+
+Providers without an adapter (ollama, plain OpenAI-compatible hosts) show
+nothing. See design.md for the adapters, their sources and what is unverified.

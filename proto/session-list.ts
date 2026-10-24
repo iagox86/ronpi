@@ -94,6 +94,7 @@ export function buildSessionList(inp: ListInputs): SwitcherSession[] {
       model: meta?.model ? meta.model.split("/").pop() : info?.model,
       description:
         note ||
+        (sessionId ? inp.groups.summaries?.[sessionId]?.text : undefined) ||
         inp.summaries.get(key) ||
         info?.lastActivity ||
         (explicitName ? (first ?? path.basename(cwd)) : path.basename(cwd)),

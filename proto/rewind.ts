@@ -12,6 +12,10 @@ export interface RewindTarget {
   text: string;
   /** Entry time (ms since epoch); 0 when the entry has none. */
   ts: number;
+  /** A compaction came after this message, so rewinding here also undoes it. */
+  compacted?: boolean;
+  /** Set on the one pseudo-entry that undoes a /clear instead of rewinding. */
+  restore?: { entries: number; trashedAt: string };
 }
 
 export interface RewindResult {
@@ -47,13 +51,20 @@ const isUserMessage = (l: ParsedLine): boolean =>
 
 /** The user messages of a session, oldest first. */
 export function rewindTargets(file: string): RewindTarget[] {
-  return parseLines(file)
-    .filter(isUserMessage)
-    .map((l) => ({
-      entryId: l.entry!.id as string,
-      text: messageText(l.entry!.message as never),
-      ts: Date.parse(l.entry!.timestamp ?? "") || 0,
-    }));
+  const lines = parseLines(file);
+  const lastCompaction = lines.findLastIndex((l) => l.entry?.type === "compaction");
+  return lines.flatMap((l, i) =>
+    isUserMessage(l)
+      ? [
+          {
+            entryId: l.entry!.id as string,
+            text: messageText(l.entry!.message as never),
+            ts: Date.parse(l.entry!.timestamp ?? "") || 0,
+            ...(i < lastCompaction ? { compacted: true } : {}),
+          },
+        ]
+      : [],
+  );
 }
 
 /** Truncate `file` to the entries before `entryId`; the tail goes to `trashDir`. */
@@ -111,4 +122,55 @@ export function clearFile(file: string, trashDir: string, now: Date = new Date()
   fs.writeFileSync(tmp, out.map((l) => `${l}\n`).join(""));
   fs.renameSync(tmp, file);
   return { removed: lines.length - out.length, trashedTo };
+}
+
+export interface ClearBackup {
+  /** The copy of the session file taken by clearFile. */
+  trashedTo: string;
+  entries: number;
+  trashedAt: string;
+}
+
+/**
+ * The newest clear backup of `file` that has not been restored, if any (clearFile
+ * writes a manifest next to each copy).
+ */
+export function latestClearBackup(trashDir: string, file: string): ClearBackup | undefined {
+  let names: string[];
+  try {
+    names = fs.readdirSync(trashDir).filter((n) => n.endsWith(".jsonl.json"));
+  } catch {
+    return undefined;
+  }
+  let best: ClearBackup | undefined;
+  for (const name of names) {
+    try {
+      const m = JSON.parse(fs.readFileSync(path.join(trashDir, name), "utf8")) as {
+        originalPath?: string;
+        cleared?: boolean;
+        restoredAt?: string;
+        entries?: number;
+        trashedAt?: string;
+      };
+      const trashedTo = path.join(trashDir, name.slice(0, -".json".length));
+      if (m.cleared && !m.restoredAt && m.originalPath === file && fs.existsSync(trashedTo)) {
+        if (!best || (m.trashedAt ?? "") > best.trashedAt) {
+          best = { trashedTo, entries: m.entries ?? 0, trashedAt: m.trashedAt ?? "" };
+        }
+      }
+    } catch {
+      // an unreadable manifest is just not offered
+    }
+  }
+  return best;
+}
+
+/** Put a cleared session's old contents back; the backup is marked used so it is offered once. */
+export function restoreClear(file: string, backup: ClearBackup, now: Date = new Date()): void {
+  const tmp = `${file}.restore-${process.pid}`;
+  fs.copyFileSync(backup.trashedTo, tmp);
+  fs.renameSync(tmp, file);
+  const manifest = `${backup.trashedTo}.json`;
+  const data = JSON.parse(fs.readFileSync(manifest, "utf8")) as Record<string, unknown>;
+  fs.writeFileSync(manifest, `${JSON.stringify({ ...data, restoredAt: now.toISOString() }, null, 2)}\n`);
 }

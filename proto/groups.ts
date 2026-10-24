@@ -16,6 +16,8 @@ export interface GroupsFile {
    * extension and the controller never wipe each other's data.
    */
   order?: string[];
+  /** One-line summaries by session UUID (written by /summarize). */
+  summaries?: Record<string, { text: string; messages: number; at: string; model: string }>;
 }
 
 export function groupsFile(): string {
@@ -53,7 +55,8 @@ export function loadGroups(): GroupsFile {
       for (const [id, g] of Object.entries(parsed.assignments ?? {})) {
         normalized[id] = g === null ? null : canonicalize(g);
       }
-      return { groups: merged, assignments: normalized, order: parsed.order };
+      // keep fields this code does not know about, so a save never drops another writer's data
+      return { ...parsed, groups: merged, assignments: normalized, order: parsed.order };
     } catch {
       // try the next location
     }

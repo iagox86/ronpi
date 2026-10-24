@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { clearFile, rewindFile, rewindTargets } from "../rewind.ts";
+import { clearFile, latestClearBackup, restoreClear, rewindFile, rewindTargets } from "../rewind.ts";
 
 function session(): { file: string; trash: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-rewind-"));
@@ -97,5 +97,52 @@ describe("clearFile", () => {
     const r = clearFile(file, trash);
     assert.equal(fs.readFileSync(r.trashedTo, "utf8"), before);
     assert.ok(fs.existsSync(`${r.trashedTo}.json`));
+  });
+});
+
+describe("undoing a clear", () => {
+  function cleared(): { file: string; trash: string; before: string } {
+    const { file, trash } = session();
+    const before = fs.readFileSync(file, "utf8");
+    clearFile(file, trash);
+    return { file, trash, before };
+  }
+
+  it("finds the backup of a cleared file and puts the old contents back", () => {
+    const { file, trash, before } = cleared();
+    assert.deepEqual(rewindTargets(file), []);
+    const backup = latestClearBackup(trash, file);
+    assert.ok(backup);
+    restoreClear(file, backup);
+    assert.equal(fs.readFileSync(file, "utf8"), before);
+  });
+
+  it("offers a backup only once", () => {
+    const { file, trash } = cleared();
+    restoreClear(file, latestClearBackup(trash, file)!);
+    assert.equal(latestClearBackup(trash, file), undefined);
+  });
+
+  it("offers the newest of several clears, and nothing for another file", () => {
+    const { file, trash } = cleared();
+    fs.appendFileSync(file, `${JSON.stringify({ type: "message", id: "u9", parentId: null, message: { role: "user", content: "later" } })}\n`);
+    clearFile(file, trash, new Date(Date.now() + 60_000));
+    const newest = latestClearBackup(trash, file);
+    assert.match(fs.readFileSync(newest!.trashedTo, "utf8"), /later/);
+    assert.equal(latestClearBackup(trash, "/elsewhere.jsonl"), undefined);
+  });
+});
+
+describe("rewind targets around a compaction", () => {
+  it("flags the messages that a compaction came after, so rewinding there is known to undo it", () => {
+    const { file } = session();
+    fs.appendFileSync(file, `${JSON.stringify({ type: "compaction", id: "k", summary: "s", firstKeptEntryId: "u2", tokensBefore: 1 })}\n`);
+    fs.appendFileSync(file, `${JSON.stringify({ type: "message", id: "u3", parentId: "k", message: { role: "user", content: "after" } })}\n`);
+    const flags = rewindTargets(file).map((t) => Boolean(t.compacted));
+    assert.deepEqual(flags, [true, true, false]);
+  });
+
+  it("flags nothing in a session that was never compacted", () => {
+    assert.ok(rewindTargets(session().file).every((t) => !t.compacted));
   });
 });

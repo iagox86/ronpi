@@ -1,5 +1,6 @@
 // The /commands ronpi handles itself inside a session (SESSION_COMMANDS);
 // anything else typed with a leading slash goes to pi.
+import * as path from "node:path";
 import { type Invocation, parseCommandLine } from "./cli.ts";
 import { SESSION_COMMANDS, type SessionCommandName } from "./commands.ts";
 import { fmtTokens } from "./format.ts";
@@ -7,11 +8,12 @@ import { forkName, placeFork } from "./fork-placement.ts";
 import { loadGroups, saveGroups } from "./groups.ts";
 import type { Host } from "./host.ts";
 import { displayName } from "./session-list.ts";
+import { runFeedback } from "./feedback-command.ts";
+import { explainLastThinking } from "./why.ts";
 import { newView } from "./transcript.ts";
 import type { SessionMeta } from "./shared.ts";
 
 const COMPACT_TIMEOUT_MS = 10 * 60_000;
-const MODELS_SHOWN = 6;
 
 export class SessionCommands {
   private readonly h: Host;
@@ -57,8 +59,10 @@ export class SessionCommands {
       name: rename,
       rename,
       reload: () => this.reload(),
-      model: (c) => this.model(c.args.join(" ")),
+      model: (c) => this.model(c.args.join(" "), c.opts.list === true),
       fork: (c) => this.fork(c.opts.name as string | undefined, c.opts.switch !== false, c.args.join(" ")),
+      feedback: (c) => runFeedback(this.h, c, this.h.viewing ?? undefined),
+      why: (c) => this.why(c.opts.model as string | undefined),
       clear: () => this.clear(),
       compact: (c) => this.compact(c.args.join(" ")),
     };
@@ -68,18 +72,48 @@ export class SessionCommands {
     return this.h.viewing ? this.h.metaForPath(this.h.viewing) : undefined;
   }
 
-  /** The viewed session when it has a child we may drive; otherwise says why not. */
-  private liveMeta(): SessionMeta | undefined {
-    const meta = this.viewedMeta();
-    if (!meta?.active) {
-      this.h.notify("this session is not running yet - send a message first");
-      return undefined;
-    }
-    if (meta.attachedElsewhere) {
+  /**
+   * The viewed session with a child we may drive. A session that is only a file
+   * (after a controller or daemon restart, or stopped) is started first, so
+   * commands work without sending a throwaway message; says why when it cannot.
+   */
+  private async liveMeta(): Promise<SessionMeta | undefined> {
+    let meta = this.viewedMeta();
+    if (meta?.attachedElsewhere) {
       this.h.notify("view-only: this session is attached in another controller");
       return undefined;
     }
+    if (!meta?.active) {
+      meta = await this.startViewed();
+    }
     return meta;
+  }
+
+  /** Resume the viewed session's file in a fresh child, without prompting it. */
+  private async startViewed(): Promise<SessionMeta | undefined> {
+    const key = this.h.viewing;
+    const known = this.viewedMeta() ?? (key ? this.h.local.get(key) : undefined);
+    if (!key?.startsWith("/") || !known) {
+      this.h.notify("nothing to start yet - send a message first");
+      return undefined;
+    }
+    try {
+      this.h.notify("starting session...");
+      const r = (await this.h.request({
+        type: "spawn",
+        sessionFile: key,
+        cwd: known.cwd || path.dirname(key),
+        ready: true,
+      })) as { sessionId?: number };
+      const meta = typeof r?.sessionId === "number" ? this.h.sessions.get(r.sessionId) : undefined;
+      if (!meta?.active) {
+        throw new Error("the session did not start");
+      }
+      return meta;
+    } catch (err) {
+      this.fail("start", err);
+      return undefined;
+    }
   }
 
   private fail(what: string, err: unknown): void {
@@ -116,7 +150,14 @@ export class SessionCommands {
   }
 
   private async reload(): Promise<void> {
-    const meta = this.liveMeta();
+    if (!this.viewedMeta()?.active) {
+      // starting it loads everything fresh already
+      if (await this.startViewed()) {
+        this.h.notify("started - extensions, skills and settings loaded");
+      }
+      return;
+    }
+    const meta = await this.liveMeta();
     if (!meta) {
       return;
     }
@@ -129,17 +170,21 @@ export class SessionCommands {
     }
   }
 
-  private async model(query: string): Promise<void> {
-    const meta = this.liveMeta();
+  private async model(query: string, list: boolean): Promise<void> {
+    const meta = await this.liveMeta();
     if (!meta) {
       return;
     }
     try {
-      if (!query) {
+      if (list || !query) {
         const r = (await this.h.request({ type: "model", session: meta.id })) as { current: string; models: string[] };
-        const shown = r.models.slice(0, MODELS_SHOWN).join(", ");
-        const more = r.models.length > MODELS_SHOWN ? `, +${r.models.length - MODELS_SHOWN} more` : "";
-        this.h.notify(`model: ${r.current} - /model <words> to switch: ${shown}${more}`);
+        if (list) {
+          const rows = r.models.map((m) => `${m === r.current ? "*" : " "} ${m}`);
+          this.h.infoPanel.show(`Models (* = current)\n\n${rows.join("\n")}\n\n/model <words> switches to the one that matches`);
+        } else {
+          this.h.choicePanel.open("Switch model", r.models, r.current, (choice) => void this.model(choice, false));
+        }
+        this.h.tui.requestRender();
         return;
       }
       const r = (await this.h.request({ type: "model", session: meta.id, query })) as { model: string };
@@ -211,7 +256,7 @@ export class SessionCommands {
   }
 
   private async clear(): Promise<void> {
-    const meta = this.liveMeta();
+    const meta = await this.liveMeta();
     const key = this.h.viewing;
     if (!meta || !key) {
       return;
@@ -233,8 +278,25 @@ export class SessionCommands {
     }
   }
 
+  /** Explain the last thinking block with the summary model; nothing is sent to the session. */
+  private async why(model: string | undefined): Promise<void> {
+    const key = this.h.viewing;
+    if (!key?.startsWith("/")) {
+      this.h.notify("nothing to explain yet - send a message first");
+      return;
+    }
+    try {
+      this.h.notify("reading the last thinking block...");
+      this.h.infoPanel.show(await explainLastThinking(key, model));
+      this.h.notify("");
+      this.h.tui.requestRender();
+    } catch (err) {
+      this.fail("why", err);
+    }
+  }
+
   private async compact(instructions: string): Promise<void> {
-    const meta = this.liveMeta();
+    const meta = await this.liveMeta();
     if (!meta) {
       return;
     }

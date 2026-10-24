@@ -10,6 +10,7 @@ export const DATA_DIR = process.env.XDG_DATA_HOME ?? path.join(process.env.HOME 
 export const TRASH_DIR = process.env.RONPI_TRASH ?? path.join(DATA_DIR, "ronpi", "trash");
 export const HISTORY_FILE = process.env.RONPI_HISTORY ?? path.join(DATA_DIR, "ronpi", "history.jsonl");
 export const LINEAGE_FILE = process.env.RONPI_LINEAGE ?? path.join(DATA_DIR, "ronpi", "lineage.json");
+export const FEEDBACK_FILE = process.env.RONPI_FEEDBACK ?? path.join(DATA_DIR, "ronpi", "feedback.jsonl");
 export const LOG = process.env.RONPI_LOG ?? path.join(import.meta.dirname, "daemon.log");
 
 /**

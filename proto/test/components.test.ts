@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { AssistantMessage, UserMessage } from "../components.ts";
+import { AssistantMessage, CompactionRow, Dimmed, UserMessage } from "../components.ts";
 import { mdTheme } from "../pi-theme.ts";
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -18,5 +18,42 @@ describe("message components", () => {
     const out = new UserMessage("hello", mdTheme, 1).render(40);
     assert.equal(strip(out[0] as string).trim(), "");
     assert.ok(out.some((l) => strip(l).includes("hello")));
+  });
+});
+
+describe("Dimmed", () => {
+  it("renders the inner lines faint and keeps them faint across resets", () => {
+    const lines = new Dimmed({ render: () => ["a\x1b[0mb"], invalidate() {} }).render(10);
+    assert.equal(lines[0], "\x1b[2ma\x1b[0m\x1b[2mb\x1b[22m");
+  });
+});
+
+describe("CompactionRow", () => {
+  it("tells you which key expands the summary", () => {
+    const row = new CompactionRow({ role: "compactionSummary", summary: "s", tokensBefore: 50110, timestamp: 0 }, mdTheme, 1);
+    const text = row.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(text, /Compacted from 50,110 tokens \(ctrl-o to expand\)/);
+  });
+});
+
+describe("render caching", () => {
+  it("renders a dimmed component once per width until invalidated", () => {
+    let renders = 0;
+    const inner = {
+      render: () => {
+        renders++;
+        return ["x"];
+      },
+      invalidate() {},
+    };
+    const d = new Dimmed(inner);
+    d.render(80);
+    d.render(80);
+    assert.equal(renders, 1);
+    d.render(60);
+    assert.equal(renders, 2);
+    d.invalidate();
+    d.render(60);
+    assert.equal(renders, 3);
   });
 });

@@ -55,7 +55,8 @@ const ok = (id, command, data) => out({ type: "response", id, command, success: 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let lastEntryId = null;
-let model = { provider: "fake", id: "fake-model" };
+let model = { provider: "fake", id: "fake-model", contextWindow: 100000 };
+let thinkingLevel = "medium";
 
 function persist(message) {
   messages.push(message);
@@ -71,6 +72,7 @@ function persist(message) {
 let streaming = false;
 let started = false;
 let aborted = false;
+let compacting = false;
 const slow = process.env.FAKE_PI_SLOW === "1";
 const stepMs = Number(process.env.FAKE_PI_STEP_MS ?? 400);
 const queue = [];
@@ -152,11 +154,16 @@ async function handle(cmd) {
   if (!started) {
     started = true;
     await sleep(Number(process.env.FAKE_PI_STARTUP_MS ?? 0));
+    if (process.env.FAKE_PI_USAGE) {
+      // what the ronpi-usage extension does: a status record the daemon should consume
+      out({ type: "extension_ui_request", id: "usage-1", method: "setStatus", statusKey: "ronpi-usage", statusText: process.env.FAKE_PI_USAGE });
+    }
   }
   switch (cmd.type) {
     case "get_state":
       return ok(cmd.id, "get_state", {
         model,
+        thinkingLevel,
         isStreaming: streaming,
         sessionFile,
         sessionId,
@@ -177,9 +184,24 @@ async function handle(cmd) {
         ],
       });
     case "set_model":
-      model = { provider: cmd.provider, id: cmd.modelId };
+      model = { provider: cmd.provider, id: cmd.modelId, contextWindow: 100000 };
       return ok(cmd.id, "set_model", model);
+    case "get_session_stats":
+      return ok(cmd.id, "get_session_stats", {
+        sessionFile,
+        sessionId,
+        totalMessages: messages.length,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: messages.filter((m) => m.role === "assistant").length * 10 },
+        cost: messages.filter((m) => m.role === "assistant").length * 0.001,
+        contextUsage: { tokens: messages.length === 0 ? null : messages.length * 100, contextWindow: 100000, percent: messages.length * 0.1 },
+      });
+    case "set_thinking_level":
+      thinkingLevel = cmd.level;
+      return ok(cmd.id, "set_thinking_level", null);
     case "compact":
+      compacting = true;
+      await sleep(Number(process.env.FAKE_PI_COMPACT_MS ?? 0));
+      compacting = false;
       return ok(cmd.id, "compact", { summary: "s", firstKeptEntryId: "x", tokensBefore: 5000, estimatedTokensAfter: 800 });
     case "abort":
       aborted = true;
@@ -197,6 +219,9 @@ async function handle(cmd) {
       return ok(cmd.id, "clear_queue", { steering, followUp: [] });
     }
     case "prompt": {
+      if (compacting) {
+        return out({ type: "response", id: cmd.id, command: "prompt", success: false, error: "Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry." });
+      }
       if (slow) {
         if (streaming) {
           queue.push(cmd.message);

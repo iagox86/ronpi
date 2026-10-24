@@ -26,6 +26,19 @@ describe("loadSettings", () => {
     assert.deepEqual(problems, []);
   });
 
+  it("lets the summary interval be 0 to turn it off, but not the message threshold", () => {
+    assert.deepEqual(loadSettings(tmp('{"summaryIntervalMinutes":0}')).settings, { summaryIntervalMinutes: 0 });
+    assert.match(loadSettings(tmp('{"summaryMinNewMessages":0}')).problems[0] as string, /at least 1/);
+  });
+
+  it("reads the summary settings, and rejects bad numbers", () => {
+    const ok = loadSettings(tmp('{"summaryModel":"a/b","summaryIntervalMinutes":30,"summaryMinNewMessages":4}'));
+    assert.deepEqual(ok.settings, { summaryModel: "a/b", summaryIntervalMinutes: 30, summaryMinNewMessages: 4 });
+    const bad = loadSettings(tmp('{"summaryIntervalMinutes":-5}'));
+    assert.deepEqual(bad.settings, {});
+    assert.match(bad.problems[0] as string, /summaryIntervalMinutes must be a number/);
+  });
+
   it("keeps the valid keys and reports bad values and unknown keys", () => {
     const { settings, problems } = loadSettings(tmp('{"model":"m","steeringMode":"sideways","nope":1}'));
     assert.deepEqual(settings, { model: "m" });

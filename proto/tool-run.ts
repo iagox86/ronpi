@@ -8,8 +8,15 @@ import { attention, dim } from "./theme.ts";
 
 export interface ToolCall {
   name: string;
+  /** The call's arguments as last seen, for displaying its result. */
+  args?: unknown;
   component: ToolExecutionComponent;
   failed: boolean;
+  /** Finished: its output no longer changes, so rendered lines can be reused. */
+  done?: boolean;
+  /** Rendered lines of a finished call, valid for `cachedWidth` until invalidate(). */
+  cachedLines?: string[];
+  cachedWidth?: number;
 }
 
 /** "bash x2, read" - names in first-seen order with counts. */
@@ -36,9 +43,18 @@ export class ToolRun implements Component {
 
   render(width: number): string[] {
     if (this.expanded) {
+      // pi's tool components do not cache, and the scroll view renders the whole chat every frame
       return this.calls.flatMap((c) => {
+        if (c.done && c.cachedWidth === width && c.cachedLines) {
+          return c.cachedLines;
+        }
         c.component.setExpanded(true); // pi truncates long output until expanded
-        return c.component.render(width);
+        const lines = c.component.render(width);
+        if (c.done) {
+          c.cachedLines = lines;
+          c.cachedWidth = width;
+        }
+        return lines;
       });
     }
     // blank line above, so the summary doesn't hug the text before it
@@ -47,6 +63,7 @@ export class ToolRun implements Component {
 
   invalidate(): void {
     for (const c of this.calls) {
+      c.cachedLines = undefined;
       c.component.invalidate();
     }
   }

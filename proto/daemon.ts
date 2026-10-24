@@ -17,6 +17,7 @@
 import * as fs from "node:fs";
 import * as net from "node:net";
 import { RpcClient, SessionManager } from "@earendil-works/pi-coding-agent";
+import { compactAndWait } from "./compact-wait.ts";
 import { DIALOG_METHODS, PID_FILE, SOCK, TRASH_DIR } from "./config.ts";
 import { log } from "./log.ts";
 import { matchModel, modelName } from "./model-match.ts";
@@ -28,10 +29,12 @@ import {
   type ClientCommand,
   type DaemonMessage,
   type SessionMeta,
+  type UsageReport,
 } from "./shared.ts";
-import { clearFile, rewindFile } from "./rewind.ts";
+import { clearFile, latestClearBackup, restoreClear, rewindFile } from "./rewind.ts";
 import { type ChildConfig, loadSettings, resolveChildConfig, settingsMtime } from "./settings.ts";
-import { trashSessionFile } from "./trash.ts";
+import { messagesFromFile } from "./transcript.ts";
+import { restoreTrashedSession, trashSessionFile } from "./trash.ts";
 
 function makeSession(cwd: string, sessionFile?: string): DaemonSession {
   return {
@@ -63,6 +66,10 @@ interface DaemonSession {
   sessionId?: string;
   sessionName?: string;
   model: string;
+  provider?: string;
+  thinkingLevel?: string;
+  ctxTokens?: number | null;
+  ctxMax?: number;
   messageCount: number;
   totalTokens: number;
   totalCost: number;
@@ -74,6 +81,8 @@ interface DaemonSession {
   starting?: Promise<void>;
   /** Last unanswered dialog request, re-sent to newly attached controllers. */
   lastDialog?: Record<string, unknown>;
+  /** Set while a manual compaction runs (pi refuses prompts then): messages wait here, in order. */
+  held?: string[];
 }
 
 const sessions = new Map<number, DaemonSession>();
@@ -89,12 +98,37 @@ function send(socket: net.Socket, msg: DaemonMessage): void {
   }
 }
 
+/** Newest usage report per provider (all sessions on a provider share one account). */
+const usageByProvider = new Map<string, UsageReport>();
+
+/** Keep a "ronpi-usage" status record from a child's usage extension; true if it was one. */
+function takeUsageReport(event: Record<string, unknown>): boolean {
+  if (event.method !== "setStatus" || event.statusKey !== "ronpi-usage") {
+    return false;
+  }
+  try {
+    const report = JSON.parse(String(event.statusText)) as UsageReport;
+    if (report?.v === 1 && typeof report.provider === "string" && Array.isArray(report.windows)) {
+      usageByProvider.set(report.provider, report);
+      broadcastSessions();
+    }
+  } catch {
+    log("ignored a malformed ronpi-usage record");
+  }
+  return true;
+}
+
 function metaFor(s: DaemonSession, socket: net.Socket): SessionMeta {
   return {
     id: s.id,
     cwd: s.cwd,
     sessionName: s.sessionName,
     model: s.model,
+    provider: s.provider,
+    usage: s.provider ? usageByProvider.get(s.provider) : undefined,
+    thinkingLevel: s.thinkingLevel,
+    ctxTokens: s.ctxTokens,
+    ctxMax: s.ctxMax,
     sessionId: s.sessionId,
     sessionFile: s.sessionFile,
     messageCount: s.messageCount,
@@ -136,7 +170,20 @@ async function refreshMeta(s: DaemonSession): Promise<void> {
     s.messageCount = state.messageCount;
     s.streaming = state.isStreaming;
     s.sessionName = state.sessionName;
+    s.provider = state.model?.provider;
+    s.thinkingLevel = state.thinkingLevel;
+    s.ctxMax = state.model?.contextWindow;
     s.dead = false;
+    try {
+      // whole-session figures from pi, so they survive a daemon restart (our own running sums would not)
+      const stats = await s.child.getSessionStats();
+      s.totalTokens = stats.tokens.total;
+      s.totalCost = stats.cost;
+      s.ctxTokens = stats.contextUsage?.tokens;
+      s.ctxMax = stats.contextUsage?.contextWindow ?? s.ctxMax;
+    } catch (err) {
+      log(`session ${s.id} stats failed: ${err}`);
+    }
   } catch (err) {
     s.dead = true;
     s.streaming = false;
@@ -147,6 +194,9 @@ async function refreshMeta(s: DaemonSession): Promise<void> {
 function onChildEvent(s: DaemonSession, event: Record<string, unknown>): void {
   const type = event.type as string;
   if (type === "extension_ui_request") {
+    if (takeUsageReport(event)) {
+      return; // for the daemon, not for controllers
+    }
     if (DIALOG_METHODS.has(event.method as string)) {
       s.pendingDialog = true;
       s.lastDialog = event;
@@ -237,13 +287,17 @@ async function startChild(
     }
     args.push(...lineageArgs(useFile ? sessionIdOfFile(useFile) : undefined));
     const cfg = childConfigFor(s);
-    if (cfg.thinking) {
+    // The ronpi settings' provider/model/thinking are defaults for NEW sessions.
+    // A session that already has a file resumes with its own (pi restores them
+    // from the file), so a restart, /reload or /clear must not reset them.
+    const isNew = !opts.forkPath && !(useFile && fs.existsSync(useFile));
+    if (isNew && cfg.thinking) {
       args.push("--thinking", cfg.thinking);
     }
-    if (cfg.model) {
+    if (isNew && cfg.model) {
       args.push("--model", cfg.model);
     }
-    if (cfg.provider) {
+    if (isNew && cfg.provider) {
       args.push("--provider", cfg.provider);
     }
     const client = makeChildClient(s, args, cfg);
@@ -341,6 +395,12 @@ async function handlePrompt(
   if (s.starting) {
     await s.starting;
   }
+  if (s.held) {
+    s.held.push(cmd.message);
+    announceQueue(s, s.held);
+    res(true, undefined, { disposition: "queued" });
+    return;
+  }
   if (s.child && !s.attachedTo) {
     // Free live session: the prompter implicitly takes the input attach.
     s.attachedTo = socket;
@@ -357,7 +417,7 @@ async function handlePrompt(
     s.attachedTo = socket;
     await startChild(s, { sessionFile: cmd.sessionFile, name: cmd.name });
     broadcastSessions();
-    const messages = await s.child!.getMessages();
+    const messages = await historyOf(s);
     send(socket, { type: "history", session: s.id, messages });
   }
   // "steer" covers both cases: executes immediately when idle, and is
@@ -393,8 +453,12 @@ async function handleSpawn(
     // broadcast it as spawning) so the controller can open it immediately;
     // prompts arriving before the child is up wait on s.starting.
     const starting = startChild(s, { sessionFile: cmd.sessionFile, name: cmd.name }).then(async () => {
+      if (cmd.name && !s.sessionName) {
+        await s.child!.setSessionName(cmd.name);
+        await refreshMeta(s);
+      }
       broadcastSessions();
-      const messages = await s.child!.getMessages();
+      const messages = await historyOf(s);
       send(socket, { type: "history", session: s.id, messages });
     });
     s.starting = starting.finally(() => {
@@ -405,8 +469,14 @@ async function handleSpawn(
       s.attachedTo = undefined;
       broadcastSessions();
     });
+    if (cmd.ready) {
+      await starting;
+    }
     res(true, undefined, { sessionId: s.id });
     return;
+  }
+  if (cmd.ready) {
+    await s.starting;
   }
   res(true, undefined, { sessionId: s.id });
 }
@@ -512,6 +582,48 @@ async function handleModel(cmd: Extract<ClientCommand, { type: "model" }>, res: 
   res(true, undefined, { model: modelName(match.model) });
 }
 
+/**
+ * What a controller should show for a session: pi's in-context messages, except
+ * that once the session has been compacted the file is used - it keeps the whole
+ * conversation, with a marker where the compaction happened (pi's own list
+ * starts at the summary and has lost everything before it). Not while a run is
+ * in flight: the file lacks the message being written.
+ */
+async function historyOf(s: DaemonSession): Promise<unknown[]> {
+  const live = await (s.child as RpcClient).getMessages();
+  if (s.streaming || !s.sessionFile) {
+    return live;
+  }
+  try {
+    const fromFile = messagesFromFile(s.sessionFile);
+    return fromFile.some((m) => (m as { role?: string }).role === "compactionSummary") ? fromFile : live;
+  } catch {
+    return live;
+  }
+}
+
+/** Tell controllers which messages are waiting, in the shape of pi's own queue_update. */
+function announceQueue(s: DaemonSession, texts: string[]): void {
+  for (const socket of sockets) {
+    send(socket, { type: "event", session: s.id, event: { type: "queue_update", steering: texts, followUp: [] } });
+  }
+}
+
+/** Send what was typed during a compaction, now that pi accepts prompts again. */
+async function releaseHeld(s: DaemonSession, texts: string[]): Promise<void> {
+  announceQueue(s, []);
+  for (const text of texts) {
+    try {
+      if (!s.child) {
+        throw new Error("the session stopped before the message could be sent");
+      }
+      await s.child.prompt(text, undefined, "steer");
+    } catch (err) {
+      log(`session ${s.id}: message held during compaction was not delivered: ${err}`);
+    }
+  }
+}
+
 async function handleCompact(
   cmd: Extract<ClientCommand, { type: "compact" }>,
   socket: net.Socket,
@@ -521,12 +633,21 @@ async function handleCompact(
   if (s.streaming) {
     throw new Error("session is working; abort it first");
   }
-  const result = await s.child.compact(cmd.instructions?.trim() || undefined);
-  await refreshMeta(s);
-  broadcastSessions();
-  // the transcript now starts from the summary: replace the controller's view
-  send(socket, { type: "history", session: s.id, messages: await s.child.getMessages() });
-  res(true, undefined, { tokensBefore: result?.tokensBefore, tokensAfter: result?.estimatedTokensAfter });
+  s.held = [];
+  try {
+    const result = await compactAndWait(s.child, cmd.instructions?.trim() || undefined);
+    await refreshMeta(s);
+    broadcastSessions();
+    // the transcript now starts from the summary: replace the controller's view
+    send(socket, { type: "history", session: s.id, messages: await historyOf(s) });
+    res(true, undefined, { tokensBefore: result?.tokensBefore, tokensAfter: result?.estimatedTokensAfter });
+  } finally {
+    const held = s.held;
+    s.held = undefined;
+    if (held.length > 0) {
+      await releaseHeld(s, held);
+    }
+  }
 }
 
 async function handleReload(
@@ -543,7 +664,7 @@ async function handleReload(
   }
   await restartChild(s);
   broadcastSessions();
-  const messages = await s.child!.getMessages();
+  const messages = await historyOf(s);
   send(socket, { type: "history", session: s.id, messages });
   res(true);
 }
@@ -554,6 +675,50 @@ async function restartChild(s: DaemonSession): Promise<void> {
   await deactivate(s);
   s.attachedTo = attached;
   await startChild(s, { sessionFile: s.sessionFile });
+}
+
+/** Undo the last /clear of a session: its old contents come back from the trash. */
+async function handleRestoreClear(
+  cmd: Extract<ClientCommand, { type: "restore_clear" }>,
+  socket: net.Socket,
+  res: Responder,
+): Promise<void> {
+  const s = findSession(cmd);
+  const file = s?.sessionFile ?? cmd.path;
+  if (!file) {
+    throw new Error("restore requires a session or path");
+  }
+  if (presence.has(file)) {
+    throw new Error("session is open in another pi process; close it first");
+  }
+  if (s?.streaming) {
+    throw new Error("session is working; abort it first");
+  }
+  const backup = latestClearBackup(TRASH_DIR, file);
+  if (!backup) {
+    throw new Error("nothing to restore");
+  }
+  const wasLive = Boolean(s?.child);
+  const attached = s?.attachedTo;
+  const before = wasLive ? await s!.child!.getState() : undefined;
+  if (s?.child) {
+    await deactivate(s);
+  }
+  restoreClear(file, backup);
+  log(`restored ${file} from ${backup.trashedTo}`);
+  if (s && wasLive) {
+    s.attachedTo = attached;
+    await startChild(s, { sessionFile: file });
+    // the restored file has messages again, so pi resumes its own model; keep the one in use now
+    if (before?.model) {
+      await s.child!.setModel(before.model.provider, before.model.id);
+      await s.child!.setThinkingLevel(before.thinkingLevel);
+      await refreshMeta(s);
+    }
+    send(socket, { type: "history", session: s.id, messages: await historyOf(s) });
+  }
+  broadcastSessions();
+  res(true, undefined, { entries: backup.entries });
 }
 
 async function handleClear(
@@ -572,14 +737,22 @@ async function handleClear(
   if (presence.has(file)) {
     throw new Error("session is open in another pi process; close it first");
   }
+  // pi restores a session's model and thinking level only when the file has
+  // messages, so an emptied one would start on the defaults: carry them over.
+  const before = await s.child!.getState();
   const attached = s.attachedTo;
   await deactivate(s);
   const result = clearFile(file, TRASH_DIR);
   log(`cleared ${file}: ${result.removed} entries -> ${result.trashedTo}`);
   s.attachedTo = attached;
   await startChild(s, { sessionFile: file });
+  if (before.model) {
+    await s.child!.setModel(before.model.provider, before.model.id);
+  }
+  await s.child!.setThinkingLevel(before.thinkingLevel);
+  await refreshMeta(s);
   broadcastSessions();
-  send(socket, { type: "history", session: s.id, messages: await s.child!.getMessages() });
+  send(socket, { type: "history", session: s.id, messages: await historyOf(s) });
   res(true, undefined, { removed: result.removed });
 }
 
@@ -607,7 +780,7 @@ async function handleAttach(
   if (s.pendingDialog && s.lastDialog) {
     send(socket, { type: "ui_request", session: s.id, request: s.lastDialog });
   }
-  const messages = await s.child.getMessages();
+  const messages = await historyOf(s);
   send(socket, { type: "history", session: s.id, messages });
   res(true);
 }
@@ -660,6 +833,15 @@ async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder):
       break;
     case "clear":
       await handleClear(cmd, socket, res);
+      break;
+    case "restore": {
+      const restored = restoreTrashedSession(cmd.trashedTo, TRASH_DIR);
+      log(`restored deleted session ${restored}`);
+      res(true, undefined, { path: restored });
+      break;
+    }
+    case "restore_clear":
+      await handleRestoreClear(cmd, socket, res);
       break;
     case "deactivate": {
       const s = sessions.get(cmd.session);
@@ -776,7 +958,7 @@ async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder):
           { id: s.sessionId, name: cmd.name ?? s.sessionName ?? "(unnamed)", file: s.sessionFile },
         );
       }
-      const messages = await s.child!.getMessages();
+      const messages = await historyOf(s);
       send(socket, { type: "history", session: s.id, messages });
       res(true, undefined, { sessionId: s.id, sessionUuid: s.sessionId });
       break;
@@ -821,8 +1003,7 @@ function addController(socket: net.Socket): void {
       if (s.pendingDialog && s.lastDialog) {
         send(socket, { type: "ui_request", session: s.id, request: s.lastDialog });
       }
-      void s.child
-        .getMessages()
+      void historyOf(s)
         .then((messages) => send(socket, { type: "history", session: s.id, messages }))
         .catch((err: unknown) => log(`history session ${s.id} failed: ${err}`));
     }

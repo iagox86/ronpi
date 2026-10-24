@@ -42,3 +42,31 @@ describe("command autocomplete", () => {
     assert.deepEqual(await suggest({ ...base, switcher: true }, "hello"), []);
   });
 });
+
+describe("argument completion", () => {
+  const sources = {
+    models: async () => ["zai/glm-5.3-flash", "zai/glm-5.3", "anthropic/claude-opus"],
+    groups: () => ["Work", "Home"],
+  };
+
+  it("offers the viewed session's models after /model, narrowed by the words typed", async () => {
+    assert.deepEqual(await suggest({ ...base, sources }, "/model "), [
+      "zai/glm-5.3-flash",
+      "zai/glm-5.3",
+      "anthropic/claude-opus",
+    ]);
+    assert.deepEqual(await suggest({ ...base, sources }, "/model zai flash"), ["zai/glm-5.3-flash"]);
+  });
+
+  it("offers group names after /group in the switcher", async () => {
+    assert.deepEqual(await suggest({ ...base, switcher: true, sources }, "/group ho"), ["Home"]);
+  });
+
+  it("does not try to complete flags", async () => {
+    assert.deepEqual(await suggest({ ...base, sources }, "/model --li"), []);
+  });
+
+  it("offers nothing for commands without a fixed set of choices", async () => {
+    assert.deepEqual(await suggest({ ...base, sources }, "/compact "), []);
+  });
+});

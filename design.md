@@ -556,6 +556,134 @@ Near-term (post-budget-reset), rough order = dependency + value:
    that can receive daemon-delivered messages (check for a first-class
    delivery mechanism first). Until then parents are unaware of forks.
 
+10. Time-based commands (ADDED 2026-10-23, Ron's idea; deliberately NOT started):
+   pi has no scheduling, so ronpi adds a suite that fires prompts into
+   sessions on a timer, e.g. "check a process hourly until it exists".
+   Sketch to refine when picked up:
+   - Commands (same registry/parser as the rest): `/in <when> <prompt>`
+     (once), `/at <time> <prompt>`, `/every <interval> [--until <cond>]
+     [--max N] <prompt>`, `/loop` (re-run on a fixed gap after each run
+     finishes, so runs never overlap), plus `/schedules` (list, with next
+     fire time) and `/cancel <id>`. Flags per the CLI-style parser; "when"
+     accepts durations (90m, 2h), clock times and cron expressions.
+   - The DAEMON owns the clock, not the controller, so schedules survive
+     controller restarts and fire with nobody watching. Persisted in a
+     ronpi-owned `schedules.json` (keyed by session UUID, like lineage.json).
+     Firing = a `prompt` to the session, lazily respawning it if it is
+     inactive (the existing resume path).
+   - Cheap conditions: `--until` / `--while` take a SHELL command checked by
+     the daemon with no model involved ("pgrep foo", "test -f x"); the
+     prompt only goes to the model when the condition is met (or each tick
+     if none is given). This is what makes "poll hourly" affordable.
+   - Open design questions: a fire while the session is mid-run (skip,
+     queue as follow-up, or delay - leaning skip-and-log for /every, queue
+     for /in); missed fires while the daemon was down (run once on
+     startup vs skip; leaning once, flagged as late); unattended runs hit
+     permission dialogs and would block with the badge showing (maybe a
+     per-schedule policy: wait / deny); a cost guard (--max, a global
+     per-day cap, visible in the budget readout); timezone and DST for
+     clock times; time parsing - use a library (chrono-node for natural
+     language, cron-parser for cron) rather than hand-rolling.
+   - Visibility: the switcher row shows a next-fire marker/time, the
+     Summary or status line says "every 1h, next 14:00", fired prompts are
+     marked in the transcript as scheduled so they are not mistaken for
+     typed ones.
+   - Model-initiated scheduling ("check this again in an hour") needs a
+     tool the model can call: a pi extension tool talking to the daemon.
+     Same extension channel as parent/child messaging (item 9) - build
+     them together, or at least share the daemon-side mechanism.
+
+## Usage and quota in the status bar (built 2026-10-24)
+
+Goal: show how much of the account's quota is used (z.ai 5h / weekly, LiteLLM
+budget, later Bifrost and Claude Code) next to context and cost, colored 0%
+green to 100% red.
+
+Decisions:
+
+- **The key never leaves pi (trust boundary).** ronpi does not read
+  `~/.pi/agent/auth.json` or `models.json`. A small pi extension
+  (`pi/extensions/ronpi-usage.ts`, linked by `node proto/install.ts`) runs in
+  ronpi-spawned children only (`RONPI_CHILD`), fetches the quota through pi's
+  own model registry (`ctx.modelRegistry.getApiKeyForProvider`), and reports
+  only percentages back as a `setStatus` record under the key `ronpi-usage`.
+  The daemon consumes that record itself (controllers never see it).
+- **Normalized, producer-neutral report** (`UsageReport` in `proto/shared.ts`):
+  provider, source, plan, `windows[{label, pct, resetsAt}]`, optional `spend`,
+  fetch time. The daemon keeps the newest report per PROVIDER (every session on
+  that account shares it) and attaches it to each session's meta; the status bar
+  only renders windows/spend and hides a report older than 30 minutes.
+- **Adapters live in the extension, chosen by the model's provider/base URL.**
+  Adding a provider = one adapter + one parse function (both unit-tested).
+- **Cost of the approach:** each live child polls on its own (session start,
+  model change, after each turn, at most once a minute per child), so N live
+  sessions on one provider make N small requests. Accepted; revisit by letting
+  the daemon say "someone just fetched" if it ever matters.
+
+Adapters and their sources (verified from docs/community code on 2026-10-24,
+NOT yet run against a live account - first run is the real test):
+
+- **z.ai** (hosts `api.z.ai` and `open.bigmodel.cn`; pi's `zai-coding-cn` uses
+  the latter): `GET <origin>/api/monitor/usage/quota/limit`. Undocumented by
+  z.ai; taken from its own glm-plan-usage plugin and community tools (opencode-
+  glm-quota, pi-glm-usage). Response `{code:200, data:{level, limits:[{type,
+  unit, percentage, nextResetTime}]}}`; `unit` 3 = rolling 5h, 6 = weekly,
+  5 = monthly (ignored). Pick windows by `unit`, never by position. Auth: docs
+  disagree on a `Bearer ` prefix, so the adapter tries Bearer, then the bare key
+  on a 401. May change without notice.
+- **LiteLLM**: `GET <origin>/key/info` with the key as Bearer; reads
+  `info.spend`, `info.max_budget`, `info.budget_reset_at`. UNVERIFIED: the docs
+  only show this endpoint called with the master key and a `key=` parameter;
+  whether a key may read its own info this way depends on the proxy version and
+  settings. The adapter hides itself on any non-200. Fallbacks if it does not
+  work: a user-supplied URL/headers setting, or reading spend from the daemon's
+  own message_end usage totals.
+- **Bifrost**: NO documented read endpoint for a virtual key's usage (the UI's
+  key info sheet shows it; create/update endpoints return `current_usage`
+  fields under `/api/governance/virtual-keys`). Not implemented. Candidates to
+  try: `GET /api/governance/virtual-keys` (probably admin-scoped), or reading
+  the `current_usage` from a key lookup once we have a real instance to test
+  against.
+- **Providers with nothing to report** (ollama, plain OpenAI-compatible hosts)
+  show no usage segment.
+
+### Claude Code as a session type: what this must stay compatible with
+
+Recorded so the usage and status-bar work does not close the door (see also
+"Bigger goals" below):
+
+- The status bar and daemon speak `UsageReport`, not z.ai/pi concepts. A Claude
+  Code backend produces the same report itself: its subscription limits are
+  the 5h / 7d windows (`rate_limits.five_hour.used_percentage` /
+  `seven_day.used_percentage` in the status-line JSON Claude Code feeds
+  its `statusLine` command - see the `statusline-command.sh` Ron already has);
+  whether headless/stream-json mode exposes them is UNCHECKED. If it does not,
+  a tiny statusLine command can write them to a file the daemon reads.
+- `SessionMeta` fields added for the bar (provider, thinkingLevel, ctxTokens,
+  ctxMax, usage, cost) must be producible by any backend: a backend fills what
+  it can and the bar omits the rest (it already hides absent segments).
+- Context/cost come from the backend's own stats call (pi:
+  `get_session_stats`; Claude Code: the `result` messages' usage and total cost
+  in stream-json). The daemon should not sum events itself except as a bridge.
+- Backend candidates seen for pi/Claude interplay (all third-party, review
+  before use): `pi-claude-cli` (a pi provider that shells out to `claude -p`),
+  `pi-claude-bridge` (pi provider over the Agent SDK, with session resume),
+  `claude-code-tmux` (drives the interactive CLI in tmux), `pi-claude-code-auth`
+  (reuses the Claude Code OAuth login - its README warns it imitates
+  subscription traffic; avoid). These make Claude models usable INSIDE a pi
+  session. A native "Claude Code session type" instead means a second backend
+  next to the pi RPC child (see below); the two are different goals, and the
+  provider extensions are the cheaper first step if all that is wanted is
+  Claude models in ronpi.
+- Sessions-as-files: Claude Code stores transcripts under `~/.claude/projects/`
+  (JSONL, different schema from pi's). `itemsFromFile` / compaction display /
+  rewind / clear all assume pi's entry format today; a Claude backend needs its
+  own reader behind the same functions, and rewind/clear/fork would need
+  backend-specific semantics (or be disabled for it).
+- Slash commands: the CLI-style parser and registries are ronpi-side and
+  backend-neutral; a backend can contribute its own commands the way pi's
+  `get_commands` does.
+
 ## Building blocks already shipped (audit 2026-10-22)
 
 Things pi/pi-tui give us for essentially free (* = wire-up only), found
@@ -611,7 +739,8 @@ version-pin + smoke-test on pi upgrades. Decide at first use, not before.
 
 Bigger goals - design-arounds, not scheduled:
 
-- Claude Code as a session type: keep the daemon protocol agent-neutral
+- Claude Code as a session type (compatibility constraints for current work
+  are collected under "Usage and quota in the status bar" above): keep the daemon protocol agent-neutral
   (prompt/abort/history/session-meta are already generic); the session
   abstraction needs to grow a backend interface (spawn args, event
   mapping) with pi as the first implementation. Claude's headless
@@ -659,9 +788,19 @@ Bigger goals - design-arounds, not scheduled:
   (LineSplitter over unix socket today); a web UI is a WebSocket bridge
   plus a re-implementation of the controller's rendering. Keep daemon
   state terminal-free so this stays possible.
-- Image paste into sessions: needs the RPC prompt path to carry image
-  content parts - verify pi's rpc protocol supports them before
-  designing the wl-paste -> daemon -> child path.
+- Image paste into sessions (NOT scheduled; Ron 2026-10-24): wl-paste ->
+  controller -> daemon -> child. Verified 2026-10-24: pi's RpcClient
+  `prompt(message, images?: ImageContent[])` (and steer/followUp) carry image
+  parts, so the protocol supports it; ronpi's `prompt` command is text-only
+  today and would grow an `images` field. Gate on the model: pi drops images
+  for a model whose entry lacks `input: ["text","image"]` (the read tool says
+  "Current model does not support images"; hit 2026-10-24 on a LiteLLM model
+  in models.json), so paste must check the session's model (`get_available_models`
+  does not return modalities - read it from pi's registry or the child's
+  state) and say so instead of silently sending nothing. Show what was
+  pasted in the transcript (pi-tui Image component, see the clipboard notes
+  above). Size matters for small local models (a 1.5 MB PNG overran a 16K-
+  context Gemma): consider downscaling before sending.
 - Tool manager (FUTURE GOAL, Ron 2026-10-23; supersedes "Extension manager"):
   one place to see and control what a session can use: pi extensions, MCP
   servers and individual tools, per session or per agent profile, instead of

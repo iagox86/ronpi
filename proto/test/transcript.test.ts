@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { applyDelta, applyEvent, type AssistantItem, dropEcho, echoUser, type Item, messagesFromFile, newView } from "../transcript.ts";
+import { applyDelta, applyEvent, type AssistantItem, dropEcho, echoUser, type Item, itemsFromFile, messagesFromFile, newView } from "../transcript.ts";
 
 function assistant(content: unknown[] = []): AssistantItem {
   return { kind: "assistant", component: undefined as never, partial: { content }, text: new Map(), thinking: new Map() };
@@ -76,6 +76,22 @@ describe("applyEvent", () => {
     assert.equal(dropEcho(view, "oops"), false);
   });
 
+  it("keeps the spinner of a compaction or run already going when a queued prompt is refused", () => {
+    const view = newView();
+    applyEvent(view, { type: "compaction_start" }, { addItem() {} } as never);
+    echoUser(view, "queued?", env([]));
+    dropEcho(view, "queued?");
+    assert.equal(view.activity?.label, "compacting context");
+  });
+
+  it("stops the spinner a refused prompt started on an idle session", () => {
+    const view = newView();
+    echoUser(view, "oops", env([]));
+    assert.equal(view.activity?.label, "working");
+    dropEcho(view, "oops");
+    assert.equal(view.activity, undefined);
+  });
+
   it("adds an assistant item that was never streamed when its message ends (attached mid-run)", () => {
     const items: Item[] = [];
     const view = newView();
@@ -104,6 +120,21 @@ describe("applyEvent", () => {
     assert.equal(items[items.length - 1].kind, "other");
   });
 
+  it("renders a failed tool's expanded block differently from a successful one", () => {
+    const rendered = (isError: boolean) => {
+      const items: Item[] = [];
+      const view = newView();
+      const tui = { requestRender() {} } as never;
+      const e = { tui, cwd: "/w", addItem: (i: Item) => items.push(i) };
+      applyEvent(view, { type: "tool_execution_start", toolCallId: "t", toolName: "bash", args: { command: "x" } }, e);
+      applyEvent(view, { type: "tool_execution_end", toolCallId: "t", isError, result: { content: [{ type: "text", text: "boom" }] } }, e);
+      const run = items[0]?.component as { expanded: boolean; render(w: number): string[] };
+      run.expanded = true;
+      return run.render(60).join("\n");
+    };
+    assert.notEqual(rendered(true), rendered(false));
+  });
+
   it("ignores tool updates for tools it never saw start", () => {
     const view = newView();
     const effects = applyEvent(view, { type: "tool_execution_end", toolCallId: "nope", result: {} }, env([]));
@@ -128,5 +159,45 @@ describe("messagesFromFile", () => {
     const messages = messagesFromFile(file) as Array<{ role: string }>;
     assert.deepEqual(messages.map((m) => m.role), ["user", "assistant"]);
     fs.rmSync(dir, { recursive: true });
+  });
+});
+
+describe("compaction in a session file", () => {
+  function file(entries: unknown[]): string {
+    const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-compact-")), "s.jsonl");
+    fs.writeFileSync(f, `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`);
+    return f;
+  }
+  const msg = (id: string, role: string, text: string) => ({ type: "message", id, message: { role, content: text } });
+
+  it("puts a summary marker where the compaction happened and flags what the summary replaced", () => {
+    const f = file([
+      { type: "session", id: "s" },
+      msg("a", "user", "old question"),
+      msg("b", "assistant", "old answer"),
+      msg("c", "user", "recent question"),
+      { type: "compaction", id: "k", summary: "they discussed X", firstKeptEntryId: "c", tokensBefore: 5000, timestamp: "2026-10-20T00:00:00Z" },
+      msg("d", "assistant", "after"),
+    ]);
+    const ms = messagesFromFile(f) as Array<{ role: string; outOfContext?: boolean; summary?: string }>;
+    assert.deepEqual(ms.map((m) => m.role), ["user", "assistant", "user", "compactionSummary", "assistant"]);
+    assert.deepEqual(ms.map((m) => Boolean(m.outOfContext)), [true, true, false, false, false]);
+    assert.equal(ms[3]?.summary, "they discussed X");
+  });
+
+  it("replays the marker as its own row, after the kept rows, dimming only what it replaced", () => {
+    const f = file([
+      msg("a", "user", "old"),
+      msg("c", "user", "kept"),
+      { type: "compaction", id: "k", summary: "s", firstKeptEntryId: "c", tokensBefore: 1 },
+    ]);
+    const items = itemsFromFile(f, {} as never, "/");
+    assert.deepEqual(items.map((i) => i.kind), ["user", "user", "compaction"]);
+    assert.deepEqual(items.map((i) => Boolean(i.dimmed)), [true, false, false]);
+  });
+
+  it("shows everything undimmed for a session that was never compacted", () => {
+    const items = itemsFromFile(file([msg("a", "user", "hi"), msg("b", "assistant", "yo")]), {} as never, "/");
+    assert.ok(items.every((i) => !i.dimmed));
   });
 });

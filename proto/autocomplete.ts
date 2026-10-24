@@ -8,7 +8,7 @@ import {
   CombinedAutocompleteProvider,
   type SlashCommand,
 } from "@earendil-works/pi-tui";
-import { usageHint } from "./cli.ts";
+import { type CompletionSources, usageHint } from "./cli.ts";
 import { type CommandSpec, SESSION_COMMANDS, SWITCHER_COMMANDS } from "./commands.ts";
 
 export interface AutocompleteContext {
@@ -17,6 +17,8 @@ export interface AutocompleteContext {
   /** Commands pi reported for the viewed session. */
   piCommands: ReadonlyArray<{ name: string; description?: string }>;
   cwd: string;
+  /** Live data for argument completion; without it commands complete by name only. */
+  sources?: CompletionSources;
 }
 
 /** The slash commands that apply in `ctx`; ronpi's own win a name clash with pi's. */
@@ -24,7 +26,15 @@ export function commandsFor(ctx: AutocompleteContext): SlashCommand[] {
   const own: readonly CommandSpec[] = ctx.switcher ? SWITCHER_COMMANDS : SESSION_COMMANDS;
   const taken = new Set(own.map((c) => c.name));
   return [
-    ...own.map((c) => ({ name: c.name, description: c.description, argumentHint: usageHint(c) || undefined })),
+    ...own.map((c) => ({
+      name: c.name,
+      description: c.description,
+      argumentHint: usageHint(c) || undefined,
+      getArgumentCompletions: async (typed: string) => {
+        const choices = c.complete && ctx.sources ? await c.complete(typed, ctx.sources) : [];
+        return choices.map((value) => ({ value, label: value }));
+      },
+    })),
     ...(ctx.switcher ? [] : ctx.piCommands.filter((c) => !taken.has(c.name))),
   ];
 }

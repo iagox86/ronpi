@@ -67,6 +67,10 @@ export class Switcher extends Container implements Focusable {
   /** Aggregate token/cost rollup across all sessions (daemon-tracked). */
   budget = { cost: 0, tokens: 0 };
   hint = "";
+  /** Shown in the title line while a filter is on; the filter also hides groups with no matching sessions. */
+  filterNote = "";
+  /** With a filter on: whether an empty group's name matches it (such a group still shows). */
+  groupMatches?: (title: string) => boolean;
   /** Terminal rows; the controller injects a live provider (resize-safe). */
   height = 24;
   heightProvider?: () => number;
@@ -92,14 +96,17 @@ export class Switcher extends Container implements Focusable {
     const ordered: SwitcherSession[] = [];
     const rows: Row[] = [];
     // Empty groups stay visible (deletable, usable as move targets).
-    const pushGroup = (title: string, list: SwitcherSession[] | undefined) => {
+    const pushGroup = (title: string, list: SwitcherSession[] | undefined, isGroup = true) => {
+      if (this.filterNote && !list?.length && !(isGroup && this.groupMatches?.(title))) {
+        return;
+      }
       rows.push({ kind: "header", title, count: list?.length ?? 0 });
       for (const s of list ?? []) {
         rows.push({ kind: "session", s });
         ordered.push(s);
       }
     };
-    pushGroup("(ungrouped)", byGroup.get(""));
+    pushGroup("(ungrouped)", byGroup.get(""), false);
     for (const g of this.groups) {
       pushGroup(g, byGroup.get(g));
     }
@@ -220,7 +227,7 @@ export class Switcher extends Container implements Focusable {
 
   render(width: number): string[] {
     const height = Math.max(6, this.heightProvider?.() ?? this.height);
-    const budget = Math.max(4, height - 6);
+    const budget = Math.max(4, height - 6 - (this.filterNote ? 1 : 0));
 
     // The session column is fixed at the longest name's width - names are
     // never cut. When the window is too narrow, columns drop in order:
@@ -250,6 +257,9 @@ export class Switcher extends Container implements Focusable {
     const budgetText =
       this.budget.cost > 0 ? ` \u00b7 $${this.budget.cost.toFixed(2)} \u00b7 ${fmtTokens(this.budget.tokens)} tok` : "";
     lines.push(dim(`ronpi  ${this.counts.running} running, ${this.counts.waiting} waiting on permission${budgetText}`));
+    if (this.filterNote) {
+      lines.push(attention(truncateToWidth(this.filterNote, width)));
+    }
 
     const labelCells: string[] = ["Session".padEnd(nameWidth), "Age".padEnd(ageW)];
     if (showModel) {

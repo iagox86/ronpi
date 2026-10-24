@@ -1,7 +1,7 @@
 // A docked, dismissable text panel for multi-line command output (--help,
 // /help). Shares the popup look of the dialog and rewind panels.
 import type { Component } from "@earendil-works/pi-tui";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { dim, panel, panelInnerWidth } from "./theme.ts";
 
 export class InfoPanel implements Component {
@@ -24,7 +24,7 @@ export class InfoPanel implements Component {
       return [];
     }
     const inner = panelInnerWidth(width);
-    const body = this.lines.map((l) => truncateToWidth(` ${l}`, inner));
+    const body = this.lines.flatMap((l) => wrapTextWithAnsi(` ${l}`, inner));
     return panel([...body, "", dim(" esc or enter closes")], width);
   }
 

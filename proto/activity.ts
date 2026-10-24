@@ -45,9 +45,16 @@ export function reduceActivity(state: ActivityState, ev: Record<string, unknown>
       set(`running ${String(ev.toolName ?? "tool")}`);
       break;
     case "tool_execution_end":
-    case "compaction_end":
     case "auto_retry_end":
       set("working");
+      break;
+    case "compaction_end":
+      // a manual compaction runs outside any agent run, so no agent_settled follows to clear it
+      if (ev.reason === "manual") {
+        state.activity = undefined;
+      } else {
+        set("working");
+      }
       break;
     case "compaction_start":
       set("compacting context");

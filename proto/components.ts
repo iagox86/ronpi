@@ -1,6 +1,8 @@
 // Small adjustments to pi's message components that pi's own options don't
 // offer: no ``` fences around code blocks, and air above user messages.
-import { AssistantMessageComponent, UserMessageComponent } from "@earendil-works/pi-coding-agent";
+import { AssistantMessageComponent, CompactionSummaryMessageComponent, UserMessageComponent } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
+import { prettyError } from "./error-format.ts";
 
 /** What pi-tui's markdown draws for a fence line; such lines are dropped. */
 export const FENCE_MARK = "⁣ronpi-fence⁣";
@@ -15,6 +17,12 @@ const isBlank = (line: string): boolean => line.replace(ESCAPES, "").trim() === 
  * nothing visible takes no space, and leading blanks collapse to one.
  */
 export class AssistantMessage extends AssistantMessageComponent {
+  override updateContent(message: Parameters<AssistantMessageComponent["updateContent"]>[0], ...rest: unknown[]): void {
+    const failed = message.stopReason === "error" && message.errorMessage;
+    const shown = failed ? { ...message, errorMessage: prettyError(message.errorMessage as string) } : message;
+    (super.updateContent as (...a: unknown[]) => void)(shown, ...rest);
+  }
+
   override render(width: number): string[] {
     const lines = super.render(width).filter((line) => !line.includes(FENCE_MARK));
     const firstText = lines.findIndex((line) => !isBlank(line));
@@ -29,5 +37,43 @@ export class AssistantMessage extends AssistantMessageComponent {
 export class UserMessage extends UserMessageComponent {
   override render(width: number): string[] {
     return ["", ...super.render(width)];
+  }
+}
+
+/** Renders `inner` faint, for conversation the model no longer has. */
+export class Dimmed implements Component {
+  private readonly inner: Component;
+  private cached?: { width: number; lines: string[] };
+
+  constructor(inner: Component) {
+    this.inner = inner;
+  }
+
+  render(width: number): string[] {
+    if (this.cached?.width === width) {
+      return this.cached.lines;
+    }
+    // resets inside the content would end the faint attribute; re-arm after each
+    const lines = this.inner
+      .render(width)
+      .map((l) => `\x1b[2m${l.replaceAll("\x1b[0m", "\x1b[0m\x1b[2m").replaceAll("\x1b[22m", "\x1b[22m\x1b[2m")}\x1b[22m`);
+    this.cached = { width, lines };
+    return lines;
+  }
+
+  invalidate(): void {
+    this.cached = undefined;
+    this.inner.invalidate();
+  }
+}
+
+/**
+ * pi's compaction row, with its expand hint filled in: pi looks the key up in
+ * its own app keybindings, which ronpi does not load, so the hint comes out as
+ * "( to expand)". Our toggle for it is ctrl-o.
+ */
+export class CompactionRow extends CompactionSummaryMessageComponent {
+  override render(width: number): string[] {
+    return super.render(width).map((l) => l.replace(/\(((?:\x1b\[[0-9;]*m)*) to expand\)/, "($1ctrl-o to expand)"));
   }
 }
