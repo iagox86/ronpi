@@ -18,8 +18,8 @@ export interface GroupsFile {
   order?: string[];
   /** Group titles collapsed in the switcher ("(ungrouped)" included). */
   collapsed?: string[];
-  /** Sessions parked with /park (stored as "done"): session UUID -> when (ms). They show in the oldest colour until used again. */
-  done?: Record<string, number>;
+  /** Sessions parked with /park: session UUID -> when (ms). They show in the oldest colour until used again. */
+  parked?: Record<string, number>;
   /** One-line summaries by session UUID (written by /summarize). */
   summaries?: Record<string, { text: string; messages: number; at: string; model: string }>;
 }
@@ -60,7 +60,10 @@ export function loadGroups(): GroupsFile {
         normalized[id] = g === null ? null : canonicalize(g);
       }
       // keep fields this code does not know about, so a save never drops another writer's data
-      return { ...parsed, groups: merged, assignments: normalized, order: parsed.order };
+      // park marks used to be stored as `done`; read them under the new name (the next save drops the old key)
+      const { done: legacyParked, ...rest } = parsed as Partial<GroupsFile> & { done?: Record<string, number> };
+      const parked = parsed.parked ?? legacyParked;
+      return { ...rest, groups: merged, assignments: normalized, order: parsed.order, ...(parked ? { parked } : {}) };
     } catch {
       // try the next location
     }
@@ -98,19 +101,47 @@ export function resolveGroup(data: GroupsFile, name: string): string {
   return trimmed;
 }
 
-/** A session is done from the moment it was marked until its file changes again. */
-export function isDone(data: GroupsFile, sessionId: string | undefined, modifiedMs: number): boolean {
-  const at = sessionId ? data.done?.[sessionId] : undefined;
+/** A session is parked from the moment it was marked until its file changes again. */
+export function isParked(data: GroupsFile, sessionId: string | undefined, modifiedMs: number): boolean {
+  const at = sessionId ? data.parked?.[sessionId] : undefined;
   return at !== undefined && modifiedMs <= at;
 }
 
-/** Park or unpark a session (see isDone); returns a new map, leaving `data.done` untouched. */
-export function withParked(data: GroupsFile, sessionId: string, parked: boolean, now = Date.now()): Record<string, number> {
-  const done = { ...data.done };
-  if (parked) {
-    done[sessionId] = now;
+/** Park or unpark a session (see isParked); returns a new map, leaving `data.parked` untouched. */
+export function withParked(data: GroupsFile, sessionId: string, park: boolean, now = Date.now()): Record<string, number> {
+  const marks = { ...data.parked };
+  if (park) {
+    marks[sessionId] = now;
   } else {
-    delete done[sessionId];
+    delete marks[sessionId];
   }
-  return done;
+  return marks;
+}
+
+/** How long a park mark for a session that no longer exists is kept (a trash restore brings the session back). */
+export const PARK_KEEP_MS = 30 * 24 * 3600_000;
+
+/**
+ * Drop saved state that points at nothing: fold entries for groups that no
+ * longer exist, and park marks for sessions that are gone and were marked long
+ * ago. Mutates `data`; returns whether anything was removed.
+ */
+export function pruneStale(data: GroupsFile, knownSessionIds: ReadonlySet<string>, now = Date.now()): boolean {
+  let changed = false;
+  if (data.collapsed) {
+    const keep = data.collapsed.filter((title) => title === "(ungrouped)" || data.groups.includes(title));
+    if (keep.length !== data.collapsed.length) {
+      data.collapsed = keep;
+      changed = true;
+    }
+  }
+  if (data.parked) {
+    for (const [id, at] of Object.entries(data.parked)) {
+      if (!knownSessionIds.has(id) && now - at > PARK_KEEP_MS) {
+        delete data.parked[id];
+        changed = true;
+      }
+    }
+  }
+  return changed;
 }

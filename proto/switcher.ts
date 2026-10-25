@@ -39,7 +39,7 @@ export interface SwitcherSession {
   /** The same age in ms, for colouring; undefined when never used. */
   ageMs?: number;
   /** Parked with /park: shown in the oldest colour until used again. */
-  done?: boolean;
+  parked?: boolean;
   /** Short model id, e.g. "glm-5.3-flash". */
   model?: string;
   /** Live in an external pi process: [pi] prefix + dimmed until selected. */
@@ -185,6 +185,12 @@ export class Switcher extends Container implements Focusable {
   currentHeaderFolded(): boolean | undefined {
     const row = this.rows[this.selRow];
     return row?.kind === "header" ? row.collapsed : undefined;
+  }
+
+  /** True when the highlighted group header has no sessions (nothing to fold). */
+  currentHeaderEmpty(): boolean {
+    const row = this.rows[this.selRow];
+    return row?.kind === "header" && row.count === 0;
   }
 
   currentHeaderTitle(): string {

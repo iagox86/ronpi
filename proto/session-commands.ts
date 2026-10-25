@@ -79,7 +79,7 @@ export class SessionCommands {
       return;
     }
     const groups = loadGroups();
-    groups.done = withParked(groups, sessionId, true);
+    groups.parked = withParked(groups, sessionId, true);
     saveGroups(groups);
     let note = "parked";
     if (meta?.active) {

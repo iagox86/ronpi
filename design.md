@@ -133,11 +133,15 @@ Risk: Loader/diff components are interactive-mode internals, not all exported
 
 ## Switcher backlog
 
-- Group headers: enter/right on a header is a no-op (2026-10-22; it used to
-  open the group's first session). Planned: enter/right on a header toggles
-  collapse (hide that group's rows, show a count, persist per group in
-  groups.json or alongside). Keyboard-only, in line with the session UX
-  project's no-mouse decision.
+- Group folding: BUILT 2026-10-25 (left/right/enter on a header; persisted as
+  `collapsed` in session-groups.json; a folded group shows a one-line summary;
+  dragging a session into a folded group unfolds it).
+- Known issue, no repro yet (tracked 2026-10-25): `right` on a normal session
+  row sometimes does not open it. Ruled out: terminal key timeouts (kitty
+  protocol sends whole sequences) and key-release events. Fixed as a
+  contributing cause: `right` on a group header used to do nothing silently.
+  If it recurs, run with RONPI_KEYS=1 (writes logs/key-debug.log: every key
+  and every selection change) and capture the tail right after a failure.
 
 ## M0 findings (corrections to earlier assumptions)
 
@@ -555,6 +559,13 @@ Near-term (post-budget-reset), rough order = dependency + value:
    parent/child messaging exists: likely a pi extension in the child
    that can receive daemon-delivered messages (check for a first-class
    delivery mechanism first). Until then parents are unaware of forks.
+   USAGE AWARENESS FOR AGENTS (parked 2026-10-25, goes with this item):
+   the ronpi_usage tool exists (quota/budget windows, credits left, resets),
+   but nothing tells an agent WHEN to use it. Design that with agent
+   management: guidance in the agent instructions ("check usage before big
+   tasks, save headroom in the long window"), and/or an extension that warns
+   an agent when a window passes a threshold, and budget-aware spawning of
+   subagents (a coordinator pacing work across a multi-week job).
 
 10. Time-based commands (ADDED 2026-10-23, Ron's idea; deliberately NOT started):
    pi has no scheduling, so ronpi adds a suite that fires prompts into

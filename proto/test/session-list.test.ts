@@ -268,21 +268,21 @@ describe("appendUnranked", () => {
   });
 });
 
-describe("done sessions", () => {
+describe("parked sessions", () => {
   const file = local("/a.jsonl", { modified: NOW - 3600_000 });
 
-  it("drop out of the recent colour once marked done", () => {
+  it("drop out of the recent colour once parked", () => {
     const [recent] = build({ files: [file] });
-    const [done] = build({ files: [file], groups: { groups: [], assignments: {}, done: { [file.id]: NOW - 60_000 } } });
-    assert.equal(recent?.done, false);
-    assert.equal(done?.done, true);
-    assert.equal(done?.ageMs, undefined);
-    assert.equal(done?.age, recent?.age);
+    const [parked] = build({ files: [file], groups: { groups: [], assignments: {}, parked: { [file.id]: NOW - 60_000 } } });
+    assert.equal(recent?.parked, false);
+    assert.equal(parked?.parked, true);
+    assert.equal(parked?.ageMs, undefined);
+    assert.equal(parked?.age, recent?.age);
   });
 
   it("are recent again once the session has been used after the mark", () => {
-    const [row] = build({ files: [file], groups: { groups: [], assignments: {}, done: { [file.id]: NOW - 2 * 3600_000 } } });
-    assert.equal(row?.done, false);
+    const [row] = build({ files: [file], groups: { groups: [], assignments: {}, parked: { [file.id]: NOW - 2 * 3600_000 } } });
+    assert.equal(row?.parked, false);
     assert.equal(row?.ageMs, 3600_000);
   });
 });

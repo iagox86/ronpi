@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { cleanSummary, describeFailure, EmptyReplyError, needsResummary, QUIET_MS, runSummarizer, transcriptOf } from "../summarize.ts";
+import { autoSummaryFailure, cleanSummary, describeFailure, EmptyReplyError, needsResummary, QUIET_MS, runSummarizer, transcriptOf } from "../summarize.ts";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-summarize-"));
 
@@ -147,5 +147,18 @@ describe("describeFailure", () => {
 
   it("falls back to the exit code when pi printed nothing", () => {
     assert.match(describeFailure("m", "", 3), /failed: exit 3$/);
+  });
+});
+
+describe("autoSummaryFailure", () => {
+  it("announces a new failure once and stays quiet while the reason is unchanged", () => {
+    const first = autoSummaryFailure(null, new Error("Connection error."));
+    assert.match(first.notify ?? "", /auto-summary is failing: Connection error\./);
+    assert.equal(autoSummaryFailure(first.seen, new Error("Connection error.")).notify, undefined);
+  });
+
+  it("announces again when the reason changes", () => {
+    const next = autoSummaryFailure("Connection error.", new Error("403 budget_exceeded"));
+    assert.match(next.notify ?? "", /budget_exceeded/);
   });
 });

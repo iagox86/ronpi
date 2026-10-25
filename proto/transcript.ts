@@ -41,10 +41,47 @@ export interface ToolItem extends ItemBase {
 export interface OtherItem extends ItemBase {
   kind: "other";
   component: Text;
+  /** Set on provider-error rows: the unprocessed text, shown instead of the tidy one while tools are expanded. */
+  rawError?: string;
 }
 export type Item = UserItem | AssistantItem | ToolItem | OtherItem | CompactionItem;
 
 /** pi's own compaction row (collapsed summary, expandable). */
+/**
+ * Whether a tool reported failure in its own words: some tools (e.g. the Hermes
+ * memory tool) return `{"success":false,...}` as ordinary text, which pi does not
+ * flag. Only that exact shape counts, so ordinary JSON output is never recolored.
+ */
+export function softFailure(content: unknown): boolean {
+  if (!Array.isArray(content)) {
+    return false;
+  }
+  const first = (content as Array<{ type?: string; text?: string }>).find((c) => c?.type === "text" && typeof c.text === "string");
+  const text = first?.text?.trim() ?? "";
+  if (!text.startsWith("{") || !text.includes('"success"')) {
+    return false;
+  }
+  try {
+    return (JSON.parse(text) as { success?: unknown }).success === false;
+  } catch {
+    return false;
+  }
+}
+
+const errorText = (raw: string, showRaw: boolean) => attention(`Error: ${showRaw ? raw : prettyError(raw)}`);
+
+/** A provider-error row: tidy by default, the original text on request (see showRawError). */
+export function errorRow(raw: string): OtherItem {
+  return { kind: "other", component: new Text(errorText(raw, false), 1, 0), rawError: raw };
+}
+
+/** Switch an error row between the tidy and the original provider text. */
+export function showRawError(item: OtherItem, showRaw: boolean): void {
+  if (item.rawError !== undefined) {
+    item.component.setText(errorText(item.rawError, showRaw));
+  }
+}
+
 /** Why a turn that ended on the output-token limit shows nothing: the model spent it all (usually thinking). */
 export function lengthNotice(m: { usage?: { output?: number; reasoning?: number } }): string {
   const out = m.usage?.output;
@@ -242,8 +279,7 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
         // pi's component draws errors itself, except on messages with tool calls
         const hasToolCalls = Array.isArray(m.content) && (m.content as Array<{ type?: string }>).some((c) => c?.type === "toolCall");
         if (m.stopReason === "error" && hasToolCalls) {
-          const errText = prettyError((m as { errorMessage?: string }).errorMessage || "provider error");
-          env.addItem({ kind: "other", component: new Text(attention(`Error: ${errText}`), 1, 0) });
+          env.addItem(errorRow((m as { errorMessage?: string }).errorMessage || "provider error"));
         }
         if (m.stopReason === "length") {
           env.addItem({ kind: "other", component: new Text(attention(lengthNotice(m as { usage?: { output?: number; reasoning?: number } })), 1, 0) });
@@ -284,9 +320,11 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
       if (item) {
         item.component.setArgsComplete();
         // the event carries isError beside the result; pi's block colors itself red from the result's own flag
-        const result = { ...(ev.result as { content?: unknown }), isError: Boolean(ev.isError) };
+        const base = ev.result as { content?: unknown };
+        const failed = Boolean(ev.isError) || softFailure(base?.content);
+        const result = { ...base, isError: failed };
         item.component.updateResult((binaryReadDisplay(item.name, item.args, result, env.cwd) ?? result) as never, false);
-        item.failed = Boolean(ev.isError);
+        item.failed = failed;
         item.done = true;
       }
       break;
@@ -342,9 +380,10 @@ export function itemsFromMessages(messages: unknown[], tui: TuiAltScreen, cwd: s
           cwd,
         );
         component.setArgsComplete();
-        const result = { content: (m.content ?? []) as never, details: m.details, isError: m.isError ?? false };
+        const failed = (m.isError ?? false) || softFailure(m.content);
+        const result = { content: (m.content ?? []) as never, details: m.details, isError: failed };
         component.updateResult((binaryReadDisplay(m.toolName, call?.args, result, cwd) ?? result) as never, false);
-        const toolCall: ToolCall = { name: m.toolName, args: call?.args, component, failed: m.isError ?? false, done: true };
+        const toolCall: ToolCall = { name: m.toolName, args: call?.args, component, failed, done: true };
         const last = items[items.length - 1];
         if (last?.kind === "tools") {
           last.component.calls.push(toolCall);

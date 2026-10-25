@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { applyDelta, applyEvent, type AssistantItem, dropEcho, echoUser, type Item, itemsFromFile, lengthNotice, messagesFromFile, newView } from "../transcript.ts";
+import { applyDelta, applyEvent, type AssistantItem, dropEcho, echoUser, type Item, itemsFromFile, errorRow, softFailure, lengthNotice, showRawError, messagesFromFile, newView } from "../transcript.ts";
 
 function assistant(content: unknown[] = []): AssistantItem {
   return { kind: "assistant", component: undefined as never, partial: { content }, text: new Map(), thinking: new Map() };
@@ -211,5 +211,35 @@ describe("lengthNotice", () => {
 
   it("still reads sensibly without usage numbers", () => {
     assert.match(lengthNotice({}), /^Stopped: hit the model's output limit before finishing/);
+  });
+});
+
+describe("error rows", () => {
+  const raw = '502: {"message":"upstream failed","type":"bad_gateway"}';
+  const text = (item: ReturnType<typeof errorRow>) => item.component.render(120).map((l) => l.replace(/\x1b\[[0-9;]*m/g, "")).join("\n");
+
+  it("show the tidy error until asked for the original", () => {
+    const item = errorRow(raw);
+    assert.match(text(item), /Error: 502 bad_gateway: upstream failed/);
+    showRawError(item, true);
+    assert.match(text(item), /\{"message":"upstream failed"/);
+    showRawError(item, false);
+    assert.doesNotMatch(text(item), /\{/);
+  });
+});
+
+describe("softFailure", () => {
+  const text = (s: string) => [{ type: "text", text: s }];
+
+  it("recognizes a tool that reports success:false in its JSON text", () => {
+    assert.equal(softFailure(text('{"success":false,"error":"no match"}')), true);
+  });
+
+  it("leaves ordinary output alone, including JSON that merely mentions success", () => {
+    assert.equal(softFailure(text('{"success":true}')), false);
+    assert.equal(softFailure(text("success: false")), false);
+    assert.equal(softFailure(text('{"items":[],"success":"false"}')), false);
+    assert.equal(softFailure(text("not json {")), false);
+    assert.equal(softFailure(undefined), false);
   });
 });

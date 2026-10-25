@@ -3,7 +3,7 @@
 // shift-move and group delete. No I/O, no UI - everything takes plain data.
 import * as path from "node:path";
 import { fmtAge, oneLineFlat } from "./format.ts";
-import { type GroupsFile, isDone } from "./groups.ts";
+import { type GroupsFile, isParked } from "./groups.ts";
 import type { SessionMeta } from "./shared.ts";
 import type { SessionState, SwitcherSession } from "./switcher.ts";
 
@@ -92,8 +92,8 @@ export function buildSessionList(inp: ListInputs): SwitcherSession[] {
       note,
       age: fmtAge(modified > 0 ? inp.now - modified : 0),
       // parked sessions take the oldest colour whatever their real age
-      ageMs: modified > 0 && !isDone(inp.groups, sessionId, modified) ? inp.now - modified : undefined,
-      done: isDone(inp.groups, sessionId, modified),
+      ageMs: modified > 0 && !isParked(inp.groups, sessionId, modified) ? inp.now - modified : undefined,
+      parked: isParked(inp.groups, sessionId, modified),
       model: meta?.model ? meta.model.split("/").pop() : info?.model,
       description:
         note ||

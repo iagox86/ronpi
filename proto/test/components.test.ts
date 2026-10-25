@@ -14,6 +14,19 @@ describe("message components", () => {
     assert.match(out, /Done/);
   });
 
+  it("shows a tidied provider error, and the original text on request", () => {
+    const raw = '403: {"message":"{\\"error\\":{\\"message\\":\\"Budget exceeded\\"}}","type":"budget_exceeded"}';
+    const msg = { role: "assistant", content: [], stopReason: "error", errorMessage: raw };
+    const comp = new AssistantMessage(msg as never, true, mdTheme, undefined, 1);
+    const tidy = comp.render(120).map(strip).join("\n");
+    assert.match(tidy, /budget_exceeded: Budget exceeded/);
+    assert.doesNotMatch(tidy, /\{/);
+    comp.setShowRawError(true);
+    assert.match(comp.render(120).map(strip).join("\n"), /\{"message"/);
+    comp.setShowRawError(false);
+    assert.doesNotMatch(comp.render(120).map(strip).join("\n"), /\{/);
+  });
+
   it("puts a blank line above a user message", () => {
     const out = new UserMessage("hello", mdTheme, 1).render(40);
     assert.equal(strip(out[0] as string).trim(), "");

@@ -63,6 +63,7 @@ import {
   itemsFromMessages,
   newView,
   type SessionView,
+  showRawError,
 } from "./transcript.ts";
 
 configureEditorKeys();
@@ -647,6 +648,9 @@ class Controller {
       // Blank label: the working indicator already says "thinking", so a hidden block leaves no line behind.
       item.component.setHiddenThinkingLabel("");
       item.component.setHideThinkingBlock(this.thinkingHidden);
+      item.component.setShowRawError(this.toolsExpanded);
+    } else if (item.kind === "other") {
+      showRawError(item, this.toolsExpanded);
     }
   }
 

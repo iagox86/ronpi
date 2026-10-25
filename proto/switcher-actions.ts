@@ -12,10 +12,10 @@ import { Key, matchesKey } from "@earendil-works/pi-tui";
 import { type Invocation, listing, parseCommandLine } from "./cli.ts";
 import { SWITCHER_COMMANDS, type SwitcherCommandName } from "./commands.ts";
 import type { Host } from "./host.ts";
-import { loadGroups, resolveGroup, saveGroups, type GroupsFile, withParked } from "./groups.ts";
+import { loadGroups, pruneStale, resolveGroup, saveGroups, type GroupsFile, withParked } from "./groups.ts";
 import { compileFilter, type Filter } from "./session-filter.ts";
 import { loadSettings } from "./settings.ts";
-import { DEFAULT_INTERVAL_MINUTES, needsResummary, type SummaryEntry, summarizeFile, summaryModel, transcriptOf } from "./summarize.ts";
+import { DEFAULT_INTERVAL_MINUTES, needsResummary, type SummaryEntry, summarizeFile, summaryModel, transcriptOf, autoSummaryFailure } from "./summarize.ts";
 import {
   buildSessionList,
   appendUnranked,
@@ -120,6 +120,10 @@ export class SwitcherActions {
     const order = appendUnranked(this.groups.order, list);
     if (order) {
       this.groups.order = order;
+    }
+    // an empty file list means the listing has not loaded, not that every session is gone
+    const pruned = this.h.local.size > 0 && pruneStale(this.groups, new Set(list.flatMap((s) => (s.sessionId ? [s.sessionId] : []))));
+    if (order || pruned) {
       saveGroups(this.groups);
     }
     if (KEY_LOG) {
@@ -279,6 +283,8 @@ export class SwitcherActions {
   }
 
   private summarizing = false;
+  /** The reason the last unattended summary pass failed, so it is announced once. */
+  private autoSummaryError: string | null = null;
   /** The temporary list filter (null = none). */
   private filter: Filter | null = null;
   /** ctrl-f: the box text is the filter and applies as it is typed. */
@@ -402,9 +408,15 @@ export class SwitcherActions {
       for (const info of todo.slice(0, MAX_AUTO_PER_RUN)) {
         this.saveSummary(info.id, await summarizeFile(info.path, model));
       }
+      this.autoSummaryError = null;
     } catch (err) {
-      // quiet: this runs unattended; the next tick tries again
+      // unattended: log every failure, but tell the user only when the reason changes
       log(`auto-summary failed: ${err instanceof Error ? err.message : err}`);
+      const { notify, seen } = autoSummaryFailure(this.autoSummaryError, err);
+      this.autoSummaryError = seen;
+      if (notify) {
+        this.h.notify(notify);
+      }
     } finally {
       this.summarizing = false;
     }
@@ -602,7 +614,7 @@ export class SwitcherActions {
           return;
         }
         const undo = call.opts.undo === true;
-        this.groups.done = withParked(this.groups, t.sessionId, !undo);
+        this.groups.parked = withParked(this.groups, t.sessionId, !undo);
         saveGroups(this.groups);
         this.refresh();
         this.h.switcher.hint = undo ? `${t.name} unparked` : `${t.name} parked (using it again unparks it)`;
@@ -802,6 +814,11 @@ export class SwitcherActions {
   private setCollapsed(title: string, collapse: boolean): void {
     if (this.filter) {
       this.h.switcher.hint = "groups can't be folded while a filter is on";
+      this.h.tui.requestRender();
+      return;
+    }
+    if (collapse && this.h.switcher.currentHeaderEmpty()) {
+      this.h.switcher.hint = `${title} is empty - nothing to fold (you can drag a session into it)`;
       this.h.tui.requestRender();
       return;
     }

@@ -194,6 +194,15 @@ export function runSummarizer(opts: SummarizerOptions): Promise<string> {
   });
 }
 
+/**
+ * An unattended summary pass failed: say so once per distinct error, not on every hourly retry.
+ * `seen` is what to remember for the next call (null after a success).
+ */
+export function autoSummaryFailure(previous: string | null, err: unknown): { notify?: string; seen: string } {
+  const message = err instanceof Error ? err.message : String(err);
+  return message === previous ? { seen: message } : { notify: `auto-summary is failing: ${message} (retrying every hour)`, seen: message };
+}
+
 /** Summarize one session file with `model`, sending at most about `maxChars` of transcript. */
 export async function summarizeFile(file: string, model: string, maxChars = DEFAULT_TRANSCRIPT_CHARS): Promise<SummaryEntry> {
   const { text, messages } = transcriptOf(file, maxChars);

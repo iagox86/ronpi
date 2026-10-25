@@ -17,10 +17,25 @@ const isBlank = (line: string): boolean => line.replace(ESCAPES, "").trim() === 
  * nothing visible takes no space, and leading blanks collapse to one.
  */
 export class AssistantMessage extends AssistantMessageComponent {
+  // `declare`: pi's constructor already calls updateContent, and an initialized field would reset what it stored
+  declare private lastArgs?: [Parameters<AssistantMessageComponent["updateContent"]>[0], ...unknown[]];
+  private showRawError = false;
+
   override updateContent(message: Parameters<AssistantMessageComponent["updateContent"]>[0], ...rest: unknown[]): void {
+    this.lastArgs = [message, ...rest];
     const failed = message.stopReason === "error" && message.errorMessage;
-    const shown = failed ? { ...message, errorMessage: prettyError(message.errorMessage as string) } : message;
+    const shown = failed && !this.showRawError ? { ...message, errorMessage: prettyError(message.errorMessage as string) } : message;
     (super.updateContent as (...a: unknown[]) => void)(shown, ...rest);
+  }
+
+  /** Show the provider's original error text instead of the tidied one. */
+  setShowRawError(on: boolean): void {
+    if (on !== this.showRawError && this.lastArgs) {
+      this.showRawError = on;
+      this.updateContent(...this.lastArgs);
+    } else {
+      this.showRawError = on;
+    }
   }
 
   override render(width: number): string[] {
