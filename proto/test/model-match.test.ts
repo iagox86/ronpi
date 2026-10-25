@@ -5,7 +5,7 @@ import { matchModel } from "../model-match.ts";
 const models = [
   { provider: "anthropic", id: "claude-opus-5" },
   { provider: "anthropic", id: "claude-sonnet-5" },
-  { provider: "ollama", id: "gemma4:12b" },
+  { provider: "litellm", id: "gemma4:12b" },
   { provider: "other", id: "claude-sonnet-5" },
 ];
 
@@ -20,7 +20,7 @@ describe("matchModel", () => {
 
   it("matches words anywhere, in any case, when only one model fits", () => {
     assert.deepEqual(matchModel(models, "OPUS"), { kind: "one", model: models[0] });
-    assert.deepEqual(matchModel(models, "ollama gemma"), { kind: "one", model: models[2] });
+    assert.deepEqual(matchModel(models, "litellm gemma"), { kind: "one", model: models[2] });
   });
 
   it("reports every candidate when the words are ambiguous", () => {

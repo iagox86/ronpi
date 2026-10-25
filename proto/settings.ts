@@ -18,7 +18,7 @@ export interface RonpiSettings {
   thinking?: string;
   /** Path of pi's cli.js. */
   piCli?: string;
-  /** Model /summarize uses (provider/id); default ollama/gemma4:12b. */
+  /** Model /summarize uses (provider/id); default litellm/gemma4:12b. */
   summaryModel?: string;
   /** Re-summarize changed sessions this often while ronpi is open (default 60; 0 = never). */
   summaryIntervalMinutes?: number;

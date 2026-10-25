@@ -4,10 +4,11 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { prettyError } from "./error-format.ts";
 import { messageText } from "./format.ts";
 import { loadSettings, resolveChildConfig } from "./settings.ts";
 
-export const DEFAULT_SUMMARY_MODEL = "ollama/gemma4:12b";
+export const DEFAULT_SUMMARY_MODEL = "litellm/gemma4:12b";
 /** Local models are slow; wait a good while before giving up. */
 export const SUMMARY_TIMEOUT_MS = 5 * 60_000;
 const MAX_LINE = 100;
@@ -104,6 +105,28 @@ export class EmptyReplyError extends Error {
   }
 }
 
+/**
+ * What to tell the user when pi exits non-zero: its last real error line(s),
+ * unwrapped like any provider error, plus what to try for the usual causes.
+ * pi's own "Warning:" lines are noise here.
+ */
+export function describeFailure(model: string, stderr: string, code: number | null): string {
+  const lines = stderr
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !/^warning:/i.test(l));
+  // a proxy's HTML error page: keep its text, not its markup
+  const text = lines.slice(-2).join(" ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const detail = prettyError(text || `exit ${code}`);
+  let hint = "";
+  if (/not found/i.test(detail)) {
+    hint = " - check summaryModel in the ronpi settings, or pass -m provider/id";
+  } else if (/connection error|econnrefused|enotfound|fetch failed/i.test(detail)) {
+    hint = " - the model's server is unreachable";
+  }
+  return `summarizer (${model}) failed: ${detail}${hint}`;
+}
+
 export interface SummarizerOptions {
   piCli: string;
   model: string;
@@ -141,7 +164,7 @@ export function runSummarizer(opts: SummarizerOptions): Promise<string> {
     let err = "";
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      reject(new Error(`timed out after ${Math.round((opts.timeoutMs ?? SUMMARY_TIMEOUT_MS) / 1000)}s`));
+      reject(new Error(`${opts.model} timed out after ${Math.round((opts.timeoutMs ?? SUMMARY_TIMEOUT_MS) / 1000)}s`));
     }, opts.timeoutMs ?? SUMMARY_TIMEOUT_MS);
     child.stdout.on("data", (d: Buffer) => {
       out += d.toString();
@@ -161,8 +184,7 @@ export function runSummarizer(opts: SummarizerOptions): Promise<string> {
       } else if (code === 0) {
         reject(new EmptyReplyError(err.trim().split("\n").slice(-2).join(" ")));
       } else {
-        const detail = err.trim().split("\n").slice(-2).join(" ") || `exit ${code}`;
-        reject(new Error(`summarizer failed: ${detail}`));
+        reject(new Error(describeFailure(opts.model, err, code)));
       }
     });
     child.stdin.on("error", () => {

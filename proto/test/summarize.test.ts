@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { cleanSummary, EmptyReplyError, needsResummary, QUIET_MS, runSummarizer, transcriptOf } from "../summarize.ts";
+import { cleanSummary, describeFailure, EmptyReplyError, needsResummary, QUIET_MS, runSummarizer, transcriptOf } from "../summarize.ts";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-summarize-"));
 
@@ -120,5 +120,32 @@ describe("needsResummary", () => {
   it("writes a first summary once a session has enough messages", () => {
     assert.equal(needsResummary({ ...base, entry: undefined, messages: 8 }), true);
     assert.equal(needsResummary({ ...base, entry: undefined, messages: 3 }), false);
+  });
+});
+
+describe("describeFailure", () => {
+  it("unwraps a gateway error instead of showing its JSON", () => {
+    const text = describeFailure("litellm/gemma4:12b", '500: {"message":"litellm.InternalServerError: ollama connection failed","type":"None","code":"500"}', 1);
+    assert.match(text, /^summarizer \(litellm\/gemma4:12b\) failed: 500 None: litellm\.InternalServerError/);
+    assert.doesNotMatch(text, /[{}]/);
+  });
+
+  it("says the server is unreachable when it cannot be connected to", () => {
+    assert.match(describeFailure("m", "Connection error.", 1), /Connection error\. - the model's server is unreachable/);
+  });
+
+  it("points at the settings when the model is unknown, ignoring pi's warnings", () => {
+    const stderr = 'Warning: something harmless\nError: Model "ollama/gemma4:12b" not found. Use --list-models to see available models.';
+    const text = describeFailure("ollama/gemma4:12b", stderr, 1);
+    assert.doesNotMatch(text, /harmless/);
+    assert.match(text, /not found.*summaryModel/);
+  });
+
+  it("shows the text of a proxy's HTML error page without its markup", () => {
+    assert.match(describeFailure("m", "502 <html><body><h1>502 Bad Gateway</h1></body></html>", 1), /failed: 502 502 Bad Gateway$/);
+  });
+
+  it("falls back to the exit code when pi printed nothing", () => {
+    assert.match(describeFailure("m", "", 3), /failed: exit 3$/);
   });
 });

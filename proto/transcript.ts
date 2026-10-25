@@ -45,6 +45,13 @@ export interface OtherItem extends ItemBase {
 export type Item = UserItem | AssistantItem | ToolItem | OtherItem | CompactionItem;
 
 /** pi's own compaction row (collapsed summary, expandable). */
+/** Why a turn that ended on the output-token limit shows nothing: the model spent it all (usually thinking). */
+export function lengthNotice(m: { usage?: { output?: number; reasoning?: number } }): string {
+  const out = m.usage?.output;
+  const spent = out ? ` (${out.toLocaleString("en-US")} output tokens${m.usage?.reasoning ? `, ${m.usage.reasoning.toLocaleString("en-US")} of them thinking` : ""})` : "";
+  return `Stopped: hit the model's output limit${spent} before finishing. Raise maxTokens for this model in ~/.pi/agent/models.json.`;
+}
+
 export function compactionItem(summary: string, tokensBefore: number, timestamp: number): CompactionItem {
   const message = { role: "compactionSummary" as const, summary, tokensBefore, timestamp };
   return { kind: "compaction", component: new CompactionRow(message, mdTheme, 1) };
@@ -237,6 +244,9 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
         if (m.stopReason === "error" && hasToolCalls) {
           const errText = prettyError((m as { errorMessage?: string }).errorMessage || "provider error");
           env.addItem({ kind: "other", component: new Text(attention(`Error: ${errText}`), 1, 0) });
+        }
+        if (m.stopReason === "length") {
+          env.addItem({ kind: "other", component: new Text(attention(lengthNotice(m as { usage?: { output?: number; reasoning?: number } })), 1, 0) });
         }
       }
       break;

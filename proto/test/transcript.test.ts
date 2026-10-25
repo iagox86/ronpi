@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { applyDelta, applyEvent, type AssistantItem, dropEcho, echoUser, type Item, itemsFromFile, messagesFromFile, newView } from "../transcript.ts";
+import { applyDelta, applyEvent, type AssistantItem, dropEcho, echoUser, type Item, itemsFromFile, lengthNotice, messagesFromFile, newView } from "../transcript.ts";
 
 function assistant(content: unknown[] = []): AssistantItem {
   return { kind: "assistant", component: undefined as never, partial: { content }, text: new Map(), thinking: new Map() };
@@ -199,5 +199,17 @@ describe("compaction in a session file", () => {
   it("shows everything undimmed for a session that was never compacted", () => {
     const items = itemsFromFile(file([msg("a", "user", "hi"), msg("b", "assistant", "yo")]), {} as never, "/");
     assert.ok(items.every((i) => !i.dimmed));
+  });
+});
+
+describe("lengthNotice", () => {
+  it("says the output limit was hit and how much was thinking", () => {
+    const text = lengthNotice({ usage: { output: 16384, reasoning: 16384 } });
+    assert.match(text, /output limit/);
+    assert.match(text, /16,384 output tokens, 16,384 of them thinking/);
+  });
+
+  it("still reads sensibly without usage numbers", () => {
+    assert.match(lengthNotice({}), /^Stopped: hit the model's output limit before finishing/);
   });
 });
