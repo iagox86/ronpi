@@ -179,7 +179,13 @@ they started with, and the switcher status line says how many are behind
 ## Code layout
 
 Daemon side:
-- `daemon.ts` - sockets, session table, child lifecycle, command dispatch
+- `daemon.ts` - entry point: wires the pieces below together, owns startup, polling and shutdown
+- `daemon-session.ts` (session record + registry), `daemon-hub.ts` (connected controllers, fan-out),
+  `daemon-children.ts` (starting/stopping pi children, their events), `daemon-meta.ts` (session list per
+  controller), `daemon-history.ts` (what a controller shows for a session)
+- `daemon-server.ts` (socket server), `daemon-dispatch.ts` (command -> handler), `daemon-handlers-lifecycle.ts`
+  (prompt, spawn, adopt, attach, delete, rename), `daemon-handlers-ops.ts` (model, compact, reload, clear,
+  rewind, dialogs); handlers get a `DaemonContext` (`daemon-context.ts`) - no module-level mutable state
 - `presence.ts` - sessions open in external pi processes (heartbeat/pid/ghost pruning)
 - `trash.ts` - delete-to-trash with manifest; `rewind.ts` - cut a session file back to before a user message (tail to trash)
 - `settings.ts` - ronpi settings file, layered with `RONPI_*` env, re-read at every child spawn
