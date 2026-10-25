@@ -3,7 +3,7 @@
 // shift-move and group delete. No I/O, no UI - everything takes plain data.
 import * as path from "node:path";
 import { fmtAge, oneLineFlat } from "./format.ts";
-import type { GroupsFile } from "./groups.ts";
+import { type GroupsFile, isDone } from "./groups.ts";
 import type { SessionMeta } from "./shared.ts";
 import type { SessionState, SwitcherSession } from "./switcher.ts";
 
@@ -91,6 +91,9 @@ export function buildSessionList(inp: ListInputs): SwitcherSession[] {
       cwd,
       note,
       age: fmtAge(modified > 0 ? inp.now - modified : 0),
+      // parked sessions take the oldest colour whatever their real age
+      ageMs: modified > 0 && !isDone(inp.groups, sessionId, modified) ? inp.now - modified : undefined,
+      done: isDone(inp.groups, sessionId, modified),
       model: meta?.model ? meta.model.split("/").pop() : info?.model,
       description:
         note ||
@@ -231,4 +234,28 @@ export function deleteEmptyGroup(groups: GroupsFile, sessions: SwitcherSession[]
     }
   }
   return { changed: true, hint: `group ${title} deleted` };
+}
+
+/** One line for a collapsed group: how many sessions, what they are doing, how recent the newest is. */
+export function groupTldr(list: SwitcherSession[]): string {
+  if (list.length === 0) {
+    return "empty";
+  }
+  const count = (state: SwitcherSession["state"]) => list.filter((s) => s.state === state).length;
+  const parts = [`${list.length} session${list.length === 1 ? "" : "s"}`];
+  const states: Array<[SwitcherSession["state"], string]> = [
+    ["streaming", "working"],
+    ["idle", "idle"],
+    ["dead", "crashed"],
+  ];
+  for (const [state, label] of states) {
+    if (count(state) > 0) {
+      parts.push(`${count(state)} ${label}`);
+    }
+  }
+  const newest = list.filter((s) => s.ageMs !== undefined).sort((a, b) => (a.ageMs as number) - (b.ageMs as number))[0];
+  if (newest) {
+    parts.push(`newest ${newest.age}`);
+  }
+  return parts.join(" - ");
 }

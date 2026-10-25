@@ -5,7 +5,7 @@ import { type Invocation, parseCommandLine } from "./cli.ts";
 import { SESSION_COMMANDS, type SessionCommandName } from "./commands.ts";
 import { fmtTokens } from "./format.ts";
 import { forkName, placeFork } from "./fork-placement.ts";
-import { loadGroups, saveGroups } from "./groups.ts";
+import { loadGroups, saveGroups, withParked } from "./groups.ts";
 import type { Host } from "./host.ts";
 import { displayName } from "./session-list.ts";
 import { runFeedback } from "./feedback-command.ts";
@@ -55,6 +55,7 @@ export class SessionCommands {
     return {
       exit: () => this.h.dispose(),
       quit: () => this.h.switching.open(),
+      park: () => this.park(),
       abort: () => this.abort(),
       name: rename,
       rename,
@@ -66,6 +67,36 @@ export class SessionCommands {
       clear: () => this.clear(),
       compact: (c) => this.compact(c.args.join(" ")),
     };
+  }
+
+  /** Mark the viewed session parked, stop its process unless it is busy, and return to the switcher. */
+  private async park(): Promise<void> {
+    const key = this.h.viewing;
+    const meta = this.viewedMeta();
+    const sessionId = meta?.sessionId ?? (key ? this.h.local.get(key)?.id : undefined);
+    if (!sessionId) {
+      this.h.notify("nothing to park yet - send a message first");
+      return;
+    }
+    const groups = loadGroups();
+    groups.done = withParked(groups, sessionId, true);
+    saveGroups(groups);
+    let note = "parked";
+    if (meta?.active) {
+      if (meta.streaming || meta.pendingDialog) {
+        note = "parked (still running: it is working or waiting on you)";
+      } else {
+        try {
+          await this.h.request({ type: "deactivate", session: meta.id });
+          note = "parked and stopped";
+        } catch (err) {
+          note = `parked, but stopping it failed: ${err instanceof Error ? err.message : err}`;
+        }
+      }
+    }
+    this.h.switching.open();
+    this.h.switcher.hint = `${note} (using it again unparks it)`;
+    this.h.tui.requestRender();
   }
 
   private viewedMeta(): SessionMeta | undefined {

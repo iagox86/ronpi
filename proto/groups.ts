@@ -16,6 +16,10 @@ export interface GroupsFile {
    * extension and the controller never wipe each other's data.
    */
   order?: string[];
+  /** Group titles collapsed in the switcher ("(ungrouped)" included). */
+  collapsed?: string[];
+  /** Sessions parked with /park (stored as "done"): session UUID -> when (ms). They show in the oldest colour until used again. */
+  done?: Record<string, number>;
   /** One-line summaries by session UUID (written by /summarize). */
   summaries?: Record<string, { text: string; messages: number; at: string; model: string }>;
 }
@@ -92,4 +96,21 @@ export function resolveGroup(data: GroupsFile, name: string): string {
   }
   data.groups.push(trimmed);
   return trimmed;
+}
+
+/** A session is done from the moment it was marked until its file changes again. */
+export function isDone(data: GroupsFile, sessionId: string | undefined, modifiedMs: number): boolean {
+  const at = sessionId ? data.done?.[sessionId] : undefined;
+  return at !== undefined && modifiedMs <= at;
+}
+
+/** Park or unpark a session (see isDone); returns a new map, leaving `data.done` untouched. */
+export function withParked(data: GroupsFile, sessionId: string, parked: boolean, now = Date.now()): Record<string, number> {
+  const done = { ...data.done };
+  if (parked) {
+    done[sessionId] = now;
+  } else {
+    delete done[sessionId];
+  }
+  return done;
 }

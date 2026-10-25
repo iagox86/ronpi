@@ -43,13 +43,20 @@ export const SWITCHER_COMMANDS = [
       cmd.argument("[group...]", "group name, created if new (leave out to edit)");
     },
   },
+  {
+    name: "park",
+    description: "park the highlighted session: shown in the oldest colour until you use it again",
+    build: (cmd) => {
+      cmd.option("-u, --undo", "unpark it");
+    },
+  },
   { name: "ungroup", description: "take the highlighted session out of its group" },
   {
     name: "summarize",
     description: "write a one-line summary of the highlighted session into the Summary column",
     build: (cmd) => {
       cmd
-        .option("-m, --model <model>", "model to summarize with, provider/id (default: summaryModel in settings, else ollama/gemma4:12b)")
+        .option("-m, --model <model>", "model to summarize with, provider/id (default: summaryModel in settings, else litellm/gemma4:12b)")
         .option("-c, --chars <n>", "most transcript characters to send (default 2500; smaller suits small models)", Number)
         .option("--all", "summarize every session that has no summary or a stale one, one after another");
     },
@@ -93,6 +100,10 @@ export type SwitcherCommandName = (typeof SWITCHER_COMMANDS)[number]["name"];
 export const SESSION_COMMANDS = [
   { name: "exit", description: "leave ronpi (sessions keep running)" },
   { name: "quit", description: "back to the session list" },
+  {
+    name: "park",
+    description: "park this session (oldest colour in the switcher until used again), stop it if idle, and go back to the list",
+  },
   { name: "abort", description: "interrupt the running agent" },
   { name: "name", description: "rename this session", build: nameArgument("show the current name") },
   { name: "rename", description: "rename this session (same as /name)", build: nameArgument("show the current name") },

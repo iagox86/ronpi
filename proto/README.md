@@ -95,6 +95,7 @@ is time since the session file was last written - pi appends on every
 request/response):
 - `up`/`down` select, `enter`/`right` open, `esc` cancels a typed command
   (no-op otherwise), `left` no-op
+- `left`/`right`/`enter` on a group header fold/unfold it (`left` folds, `right` unfolds, `enter` toggles; remembered across runs; dragging a session into a folded group unfolds it): a folded group shows `▸`, hides its sessions and gives a one-line summary (count, working/idle, newest age); a filter unfolds everything while it is on
 - `shift+up`/`shift+down` move the highlighted session or group (crossing a
   header moves the session between groups; persisted to groups.json)
 - `ctrl-n` new session (controller's cwd), `ctrl-k` stop the highlighted
@@ -106,7 +107,7 @@ request/response):
   session with that as its first message
 - `/` completes commands (popup, tab); the list comes from `commands.ts`, so
   new commands appear automatically
-- the bottom chat box doubles as the switcher command line: `/new [-n name] [-C dir]` `/stop` `/delete [-y]` `/ungroup` `/filter [-r] [words]` (show only matching sessions - name, summary, group, model or directory, all words must match; `-r` takes one regex; no text clears)
+- the bottom chat box doubles as the switcher command line: `/new [-n name] [-C dir]` `/stop` `/delete [-y]` `/park [-u]` (session name and age are coloured by recency - bold white under a day, light grey under 3 days, grey under a week, then dark grey; `/park` forces the muted colour until the session is used again, `-u` clears it; inside a session `/park` also stops it (if idle) and goes back to the list) `/ungroup` `/filter [-r] [words]` (show only matching sessions - name, summary, group, model or directory, all words must match; `-r` takes one regex; no text clears)
   `/rename <name>` `/group <name>` `/adopt` `/kill-daemon` `/quit` `/exit`
   `/help` `/summarize` `/restore [words]` (pick a deleted session from the trash to bring back,
   with its group and summary; a single match is restored directly)
@@ -169,7 +170,7 @@ they started with, and the switcher status line says how many are behind
 - `RONPI_PROVIDER` / `RONPI_MODEL` / `RONPI_THINKING` / `RONPI_STEERING_MODE` -
   override the settings file: provider, model and
   thinking level for spawned
-  children (e.g. `RONPI_PROVIDER=ollama RONPI_MODEL=gemma4:12b` for free
+  children (e.g. `RONPI_PROVIDER=litellm RONPI_MODEL=gemma4:12b` for free
   local tests, or `RONPI_MODEL=glm-4.7 RONPI_THINKING=low` for cheap test
   fleets); unset = your normal pi settings
 - `PI_CODING_AGENT_DIR` - pass to BOTH processes in tests to isolate
@@ -248,7 +249,7 @@ choices, narrowed by what is typed. Flags are not completed.
 `/summarize` (switcher) writes a one-line summary of the highlighted session
 into the Summary column, using a model run through pi's print mode:
 `-m provider/id` (default: `summaryModel` in `~/.config/ronpi/settings.json`,
-else `ollama/gemma4:12b`), `-c <chars>` (transcript size, default 2500), `--all`
+else `litellm/gemma4:12b`), `-c <chars>` (transcript size, default 2500), `--all`
 (every session with no summary or a stale one). Summaries live in
 `session-groups.json`. They are kept up automatically: every
 `summaryIntervalMinutes` (default 60, `0` turns it off) while ronpi is open, it

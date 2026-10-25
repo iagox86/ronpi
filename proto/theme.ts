@@ -114,6 +114,24 @@ const accentFg = fg("accent");
 const warningFg = fg("warning");
 const errorFg = fg("error");
 const brightFg = fg("toolTitle");
+// bold white, bright grey, grey, dark grey
+const ageFgs = [`\x1b[1m\x1b[38;2;${rgb("base3")}m`, fg("toolTitle"), fg("text"), dimFg];
+
+const DAY_MS = 24 * 3600_000;
+/** Upper bounds of the age tiers: past a day, past ~3 days, past a week; anything older is the last tier. */
+const AGE_TIERS_MS = [DAY_MS, 3 * DAY_MS, 7 * DAY_MS];
+
+/** 0 (used within a day) .. 3 (older than a week); unknown age counts as oldest. */
+export function ageTier(ageMs: number | undefined): number {
+  if (ageMs === undefined || !(ageMs >= 0)) {
+    return AGE_TIERS_MS.length;
+  }
+  const tier = AGE_TIERS_MS.findIndex((limit) => ageMs < limit);
+  return tier === -1 ? AGE_TIERS_MS.length : tier;
+}
+
+/** Colour `text` by how recently the session was used: bold white < 1d, light grey < 3d, grey < 1w, then dark grey. */
+export const byAge = (ageMs: number | undefined, text: string): string => `${ageFgs[ageTier(ageMs)]}${text}\x1b[22m\x1b[39m`;
 
 /** muted - captions, descriptions, quiet chrome. */
 export const dim = (s: string) => `${dimFg}${s}\x1b[39m`;
@@ -135,7 +153,7 @@ export const queued = (s: string) => `\x1b[3m${dimFg}${s}\x1b[39m\x1b[23m`;
 /** bold bright - column headers. */
 export const header = (s: string) => `\x1b[1m${brightFg}${s}\x1b[0m`;
 /** bright - group titles. */
-export const groupTitle = (s: string) => `${brightFg}${s}\x1b[0m`;
+export const groupTitle = (s: string) => `\x1b[1m${brightFg}${s}\x1b[0m`;
 
 /** The UI is built for 24-bit color; refuse to run garbled on anything less. */
 export function assertTruecolor(env: NodeJS.ProcessEnv = process.env): void {

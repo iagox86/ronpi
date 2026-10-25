@@ -11,6 +11,7 @@ import {
   moveSession,
   sessionKey,
   sortSessions,
+  groupTldr,
 } from "../session-list.ts";
 import type { SessionMeta } from "../shared.ts";
 import type { SwitcherSession } from "../switcher.ts";
@@ -264,5 +265,38 @@ describe("appendUnranked", () => {
   });
   it("reports no change when the order is complete", () => {
     assert.equal(appendUnranked(["a"], [row("a"), row()]), null);
+  });
+});
+
+describe("done sessions", () => {
+  const file = local("/a.jsonl", { modified: NOW - 3600_000 });
+
+  it("drop out of the recent colour once marked done", () => {
+    const [recent] = build({ files: [file] });
+    const [done] = build({ files: [file], groups: { groups: [], assignments: {}, done: { [file.id]: NOW - 60_000 } } });
+    assert.equal(recent?.done, false);
+    assert.equal(done?.done, true);
+    assert.equal(done?.ageMs, undefined);
+    assert.equal(done?.age, recent?.age);
+  });
+
+  it("are recent again once the session has been used after the mark", () => {
+    const [row] = build({ files: [file], groups: { groups: [], assignments: {}, done: { [file.id]: NOW - 2 * 3600_000 } } });
+    assert.equal(row?.done, false);
+    assert.equal(row?.ageMs, 3600_000);
+  });
+});
+
+describe("groupTldr", () => {
+  const row = (state: SwitcherSession["state"], age: string, ageMs: number) => ({ key: age, name: age, state, age, ageMs }) as SwitcherSession;
+
+  it("counts sessions, what they are doing, and the newest age", () => {
+    const text = groupTldr([row("idle", "3h", 3 * 3600_000), row("streaming", "5m", 300_000), row("inactive", "9d", 9 * 86_400_000)]);
+    assert.equal(text, "3 sessions - 1 working - 1 idle - newest 5m");
+  });
+
+  it("speaks of a single session in the singular and leaves out empty parts", () => {
+    assert.equal(groupTldr([row("inactive", "2d", 2 * 86_400_000)]), "1 session - newest 2d");
+    assert.equal(groupTldr([]), "empty");
   });
 });

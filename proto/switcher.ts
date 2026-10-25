@@ -8,8 +8,10 @@ import { spinnerFrame } from "./activity.ts";
 import { appendFileSync } from "node:fs";
 import { Container, truncateToWidth, type Focusable } from "@earendil-works/pi-tui";
 import { fmtTokens, oneLine } from "./format.ts";
+import { groupTldr } from "./session-list.ts";
 import {
   attention,
+  byAge,
   paintLine,
   dim as themeDim,
   groupTitle,
@@ -34,6 +36,10 @@ export interface SwitcherSession {
   note?: string;
   /** Preformatted age of the last request/response, e.g. "30s", "2h". */
   age?: string;
+  /** The same age in ms, for colouring; undefined when never used. */
+  ageMs?: number;
+  /** Parked with /park: shown in the oldest colour until used again. */
+  done?: boolean;
   /** Short model id, e.g. "glm-5.3-flash". */
   model?: string;
   /** Live in an external pi process: [pi] prefix + dimmed until selected. */
@@ -56,7 +62,7 @@ function visibleLen(s: string): number {
   return s.replace(/\x1b\[[0-9;]*m/g, "").length;
 }
 
-type Row = { kind: "header"; title: string; count: number } | { kind: "session"; s: SwitcherSession };
+type Row = { kind: "header"; title: string; count: number; collapsed: boolean; tldr: string } | { kind: "session"; s: SwitcherSession };
 
 export class Switcher extends Container implements Focusable {
   focused = false;
@@ -67,6 +73,8 @@ export class Switcher extends Container implements Focusable {
   /** Aggregate token/cost rollup across all sessions (daemon-tracked). */
   budget = { cost: 0, tokens: 0 };
   hint = "";
+  /** Group titles whose sessions are hidden (ignored while a filter is on, so matches show). */
+  collapsed = new Set<string>();
   /** Shown in the title line while a filter is on; the filter also hides groups with no matching sessions. */
   filterNote = "";
   /** With a filter on: whether an empty group's name matches it (such a group still shows). */
@@ -100,9 +108,13 @@ export class Switcher extends Container implements Focusable {
       if (this.filterNote && !list?.length && !(isGroup && this.groupMatches?.(title))) {
         return;
       }
-      rows.push({ kind: "header", title, count: list?.length ?? 0 });
+      const collapsed = !this.filterNote && this.collapsed.has(title) && (list?.length ?? 0) > 0;
+      rows.push({ kind: "header", title, count: list?.length ?? 0, collapsed, tldr: collapsed ? groupTldr(list ?? []) : "" });
       for (const s of list ?? []) {
-        rows.push({ kind: "session", s });
+        // hidden sessions stay in `ordered` (their order and group still count) but get no row
+        if (!collapsed) {
+          rows.push({ kind: "session", s });
+        }
         ordered.push(s);
       }
     };
@@ -128,13 +140,22 @@ export class Switcher extends Container implements Focusable {
       }
       this.selectedHeader = null;
     }
-    let at = ordered.findIndex((s) => s.key === this.selectedKey);
+    let at = rows.findIndex((r) => r.kind === "session" && r.s.key === this.selectedKey);
     if (at === -1) {
-      // No/stale selection: default to the first session (row 0 is a header).
-      this.selectedKey = ordered[0]?.key ?? null;
-      at = 0;
+      const hidden = ordered.find((s) => s.key === this.selectedKey);
+      if (hidden) {
+        // its group was collapsed: the header stands in for it
+        const title = hidden.group ?? "(ungrouped)";
+        this.selectedKey = null;
+        this.selectedHeader = title;
+        this.selRow = Math.max(0, rows.findIndex((r) => r.kind === "header" && r.title === title));
+        return;
+      }
+      // No/stale selection: default to the first session shown (row 0 is a header).
+      at = rows.findIndex((r) => r.kind === "session");
+      this.selectedKey = at === -1 ? null : (rows[at] as { s: SwitcherSession }).s.key;
     }
-    this.selRow = ordered.length === 0 ? 0 : this.rowIndexOfSession(at);
+    this.selRow = Math.max(0, at);
   }
 
   /** Select the entry that follows `key` in display order (or the previous
@@ -151,21 +172,6 @@ export class Switcher extends Container implements Focusable {
     }
   }
 
-  /** Display-row index of the Nth session. */
-  private rowIndexOfSession(sessionIdx: number): number {
-    let seen = 0;
-    for (let i = 0; i < this.rows.length; i++) {
-      const row = this.rows[i];
-      if (row.kind === "session") {
-        if (seen === sessionIdx) {
-          return i;
-        }
-        seen++;
-      }
-    }
-    return 0;
-  }
-
   current(): SwitcherSession | undefined {
     const row = this.rows[this.selRow];
     return row?.kind === "session" ? row.s : undefined;
@@ -173,6 +179,12 @@ export class Switcher extends Container implements Focusable {
 
   currentIsHeader(): boolean {
     return this.rows[this.selRow]?.kind === "header";
+  }
+
+  /** Whether the highlighted group header is folded; undefined when a session (or nothing) is highlighted. */
+  currentHeaderFolded(): boolean | undefined {
+    const row = this.rows[this.selRow];
+    return row?.kind === "header" ? row.collapsed : undefined;
   }
 
   currentHeaderTitle(): string {
@@ -284,7 +296,11 @@ export class Switcher extends Container implements Focusable {
       }
       if (row.kind === "header") {
         const isSelHeader = this.selectedHeader === row.title && this.selectedKey === null;
-        lines.push(isSelHeader ? selected(oneLine(row.title)) : groupTitle(oneLine(row.title)));
+        // an empty group has nothing to fold but still gets the open arrow, so it reads as a group, not a session
+        const glyph = row.collapsed ? "\u25b8" : "\u25be";
+        const title = `${glyph} ${oneLine(row.title)}`;
+        const tldr = row.collapsed ? `   ${row.tldr}` : "";
+        lines.push(truncateToWidth(isSelHeader ? selected(title + tldr) : groupTitle(title) + dim(tldr), width));
         continue;
       }
       const s = row.s;
@@ -293,8 +309,10 @@ export class Switcher extends Container implements Focusable {
       const markerText = isSel ? marker : dim(marker);
       const displayName = s.muted ? `[pi] ${oneLine(s.name)}` : oneLine(s.name);
       const bodyCell = truncateToWidth(displayName, nameWidth - 3).padEnd(nameWidth - 3);
-      const body = !isSel && s.muted ? dim(bodyCell) : bodyCell;
-      const ageCell = dim(truncateToWidth(s.age ?? "-", ageW).padEnd(ageW));
+      // recency colours; the selected row keeps its accent, external ones stay dim
+      const body = isSel ? bodyCell : s.muted ? dim(bodyCell) : byAge(s.ageMs, bodyCell);
+      const ageText = truncateToWidth(s.age ?? "-", ageW).padEnd(ageW);
+      const ageCell = isSel ? dim(ageText) : byAge(s.muted ? undefined : s.ageMs, ageText);
       let line = `${markerText}  ${body}`;
       line += GAP + ageCell;
       if (showModel) {

@@ -592,6 +592,38 @@ Near-term (post-budget-reset), rough order = dependency + value:
      tool the model can call: a pi extension tool talking to the daemon.
      Same extension channel as parent/child messaging (item 9) - build
      them together, or at least share the daemon-side mechanism.
+   - PRIOR ART: Claude Code (added 2026-10-25, Ron's pointer; from its tool
+     descriptions, not its source). Worth weighing when this is designed:
+     * Three model-callable tools, CronCreate / CronList / CronDelete: the
+       model schedules its own prompts. Standard 5-field cron in LOCAL time
+       (no timezone conversion), `recurring: false` for one-shots (a cron
+       expression pinned to one date), a job id for deleting. Our /in /at
+       /every could be sugar over the same one primitive (cron + once flag).
+     * Jobs fire only while the session is IDLE (never mid-query): a
+       settled answer to our "fire during a run" question - delay, do not
+       skip or interrupt.
+     * Persistence is session-only (memory, gone on exit) and recurring jobs
+       AUTO-EXPIRE after 7 days. Ours should be durable (daemon-owned, see
+       above), but the expiry is a good default guard against forgotten
+       schedules burning budget; make it a visible per-schedule field.
+     * Deliberate JITTER: recurring jobs run late by a fixed per-job offset
+       (up to half the period, capped at 30 min), and the tool tells the model
+       to avoid :00 / :30 so users do not all hit the API on the same
+       minute. Relevant to us only against shared gateways, but it shows the
+       real next-fire time must be what gets displayed, not the cron minute.
+     * `/loop` is a skill on top of it: `/loop 5m /foo`, or no interval to
+       let the model self-pace (a ScheduleWakeup call picks the next delay,
+       with guidance to prefer long delays when nothing is expected).
+     * Polling vs watching is split: cron re-runs a prompt on a clock, while
+       a separate Monitor tool streams a command's output and wakes the
+       session on events. Our "--until/--while shell condition, no model
+       involved" is the cheap middle: poll without spending tokens.
+     * Gap in theirs that ours can fill: schedules that survive restarts and
+       fire with nobody attached, and a cost guard tied to the usage readout
+       (ronpi_usage, built 2026-10-24) so a schedule can pause itself when
+       the budget window is nearly spent.
+     TODO when picked up: also search pi packages for existing scheduling
+     extensions before building (not done yet).
 
 ## Usage and quota in the status bar (built 2026-10-24)
 

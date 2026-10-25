@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mdTheme } from "../pi-theme.ts";
-import { assertTruecolor, dim, gauge, rampColor, selected, streaming } from "../theme.ts";
+import { ageTier, assertTruecolor, byAge, dim, gauge, rampColor, selected, streaming } from "../theme.ts";
 
 describe("theme", () => {
   it("renders pi components with the solarized theme, not a silent fallback", () => {
@@ -35,5 +35,29 @@ describe("theme", () => {
     assert.throws(() => assertTruecolor({}), /24-bit/);
     assert.doesNotThrow(() => assertTruecolor({ COLORTERM: "truecolor" }));
     assert.doesNotThrow(() => assertTruecolor({ COLORTERM: "24bit" }));
+  });
+});
+
+describe("age colouring", () => {
+  const H = 3600_000;
+
+  it("buckets recency into a day, a couple of days, a week, and older", () => {
+    assert.equal(ageTier(5 * H), 0);
+    assert.equal(ageTier(30 * H), 1);
+    assert.equal(ageTier(5 * 24 * H), 2);
+    assert.equal(ageTier(30 * 24 * H), 3);
+  });
+
+  it("treats a session with no known age as the oldest", () => {
+    assert.equal(ageTier(undefined), 3);
+  });
+
+  it("colours the last day differently from older sessions", () => {
+    assert.notEqual(byAge(1 * H, "x"), byAge(10 * 24 * H, "x"));
+    assert.notEqual(byAge(1 * H, "x"), byAge(30 * H, "x"));
+  });
+
+  it("resets only the foreground so row backgrounds survive", () => {
+    assert.ok(byAge(H, "x").endsWith("x\x1b[22m\x1b[39m"));
   });
 });

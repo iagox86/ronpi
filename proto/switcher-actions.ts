@@ -12,7 +12,7 @@ import { Key, matchesKey } from "@earendil-works/pi-tui";
 import { type Invocation, listing, parseCommandLine } from "./cli.ts";
 import { SWITCHER_COMMANDS, type SwitcherCommandName } from "./commands.ts";
 import type { Host } from "./host.ts";
-import { loadGroups, resolveGroup, saveGroups, type GroupsFile } from "./groups.ts";
+import { loadGroups, resolveGroup, saveGroups, type GroupsFile, withParked } from "./groups.ts";
 import { compileFilter, type Filter } from "./session-filter.ts";
 import { loadSettings } from "./settings.ts";
 import { DEFAULT_INTERVAL_MINUTES, needsResummary, type SummaryEntry, summarizeFile, summaryModel, transcriptOf } from "./summarize.ts";
@@ -136,6 +136,7 @@ export class SwitcherActions {
     this.h.switcher.groupMatches = this.filter ? (title) => this.filter!.testGroup(title) : undefined;
     this.h.switcher.sessions = shown;
     this.h.switcher.groups = this.groups.groups;
+    this.h.switcher.collapsed = new Set(this.groups.collapsed);
     this.h.switcher.height = this.h.tui.terminal.rows || 24;
     this.h.switcher.refresh();
     this.h.tui.requestRender();
@@ -474,7 +475,13 @@ export class SwitcherActions {
       this.h.tui.requestRender();
       return;
     }
-    this.applyGroupChange(moveSession(this.groups, this.h.switcher.sessions, s, delta));
+    const result = moveSession(this.groups, this.h.switcher.sessions, s, delta);
+    // a session dragged into a folded group would vanish into it: unfold the group so it stays selected in view
+    const into = this.groups.assignments[s.sessionId] ?? "(ungrouped)";
+    if (result.changed && this.groups.collapsed?.includes(into)) {
+      this.groups.collapsed = this.groups.collapsed.filter((g) => g !== into);
+    }
+    this.applyGroupChange(result);
   }
 
   /** shift+up/down on a group header: swap with the neighboring group. */
@@ -484,6 +491,16 @@ export class SwitcherActions {
 
   /** ctrl-x on a group header: delete it (only when it has no sessions). */
   async deleteGroupIfEmpty(title: string): Promise<void> {
+    const armKey = `group:${title}`;
+    const deletable = title !== "(ungrouped)" && !this.h.switcher.sessions.some((s) => s.group === title);
+    // a group that cannot be deleted just gets the explanation; an empty one needs a second ctrl-x
+    if (deletable && this.armedDelete !== armKey) {
+      this.armedDelete = armKey;
+      this.h.switcher.hint = `${title}: press ctrl-x again to delete this group`;
+      this.h.tui.requestRender();
+      return;
+    }
+    this.armedDelete = null;
     this.applyGroupChange(deleteEmptyGroup(this.groups, this.h.switcher.sessions, title));
   }
 
@@ -511,13 +528,13 @@ export class SwitcherActions {
 
   /** One handler per SWITCHER_COMMANDS entry (the Record type makes a missing one a compile error). */
   private commandHandlers(): Record<SwitcherCommandName, (call: Invocation, target: SwitcherSession | undefined) => Promise<void>> {
-    const needsTarget = (verb: string, run: (t: SwitcherSession, arg: string) => Promise<void>) =>
+    const needsTarget = (verb: string, run: (t: SwitcherSession, arg: string, call: Invocation) => Promise<void>) =>
       async (call: Invocation, target: SwitcherSession | undefined) => {
         if (!target) {
           this.h.switcher.hint = `${verb}: highlight a session first`;
           return;
         }
-        await run(target, call.args.join(" "));
+        await run(target, call.args.join(" "), call);
       };
     const leave = async () => {
       this.h.dispose();
@@ -578,6 +595,17 @@ export class SwitcherActions {
             this.h.switcher.hint = `group failed: ${err instanceof Error ? err.message : err}`;
           }
         }
+      }),
+      park: needsTarget("park", async (t, _arg, call) => {
+        if (!t.sessionId) {
+          this.h.switcher.hint = "park: session has no id yet";
+          return;
+        }
+        const undo = call.opts.undo === true;
+        this.groups.done = withParked(this.groups, t.sessionId, !undo);
+        saveGroups(this.groups);
+        this.refresh();
+        this.h.switcher.hint = undo ? `${t.name} unparked` : `${t.name} parked (using it again unparks it)`;
       }),
       ungroup: needsTarget("ungroup", async (t) => {
         if (!t.sessionId) {
@@ -710,12 +738,22 @@ export class SwitcherActions {
       }
       return true;
     }
-// left is a no-op in the switcher (furthest back level)
-
+    // on a session, left is a no-op (furthest back level); on a group header it folds the group
+    if (matchesKey(data, Key.left) && editorEmpty) {
+      if (this.h.switcher.currentIsHeader()) {
+        this.setCollapsed(this.h.switcher.currentHeaderTitle(), true);
+      }
+      return true;
+    }
     if (matchesKey(data, Key.right) && editorEmpty) {
       const target = this.h.switcher.current();
       if (target) {
         void this.enter(target);
+      } else if (this.h.switcher.currentIsHeader()) {
+        this.setCollapsed(this.h.switcher.currentHeaderTitle(), false);
+      } else {
+        this.h.switcher.hint = "nothing to open";
+        this.h.tui.requestRender();
       }
       return true;
     }
@@ -735,35 +773,58 @@ export class SwitcherActions {
       return true;
     }
     if (matchesKey(data, Key.ctrl("k"))) {
-      const target = this.h.switcher.current();
-      if (this.h.switcher.currentIsHeader() || !target) {
-        this.h.switcher.hint = "stop works on sessions, not group headers";
-      } else {
+      const target = this.sessionRow("stop");
+      if (target) {
         void this.stop(target);
       }
       return true;
     }
     if (isF2(data) || matchesKey(data, Key.ctrl("r"))) {
-      const target = this.h.switcher.current();
-      if (this.h.switcher.currentIsHeader() || !target) {
-        this.h.switcher.hint = "rename works on sessions, not group headers";
-      } else {
+      const target = this.sessionRow("rename");
+      if (target) {
         this.h.editor.setText(`/rename ${target.name}`);
         this.h.switcher.hint = "rename: edit the name and press enter";
       }
       return true;
     }
     if (matchesKey(data, Key.ctrl("g"))) {
-      const target = this.h.switcher.current();
-      if (this.h.switcher.currentIsHeader() || !target) {
-        this.h.switcher.hint = "group works on sessions, not group headers";
-      } else {
+      const target = this.sessionRow("group");
+      if (target) {
         this.h.editor.setText(`/group ${target.group ?? ""}`);
         this.h.switcher.hint = `group: ${target.name} - edit or type a group name and press enter`;
       }
       return true;
     }
     return false;
+  }
+
+  /** Fold or unfold a group in the switcher; remembered across runs. */
+  private setCollapsed(title: string, collapse: boolean): void {
+    if (this.filter) {
+      this.h.switcher.hint = "groups can't be folded while a filter is on";
+      this.h.tui.requestRender();
+      return;
+    }
+    const set = new Set(this.groups.collapsed);
+    if (collapse) {
+      set.add(title);
+    } else {
+      set.delete(title);
+    }
+    this.groups.collapsed = [...set];
+    saveGroups(this.groups);
+    this.refresh();
+    this.h.tui.requestRender();
+  }
+
+  /** The highlighted session row; on a group header (or nothing) it sets a hint saying `verb` needs a session. */
+  private sessionRow(verb: string): SwitcherSession | undefined {
+    const target = this.h.switcher.current();
+    if (this.h.switcher.currentIsHeader() || !target) {
+      this.h.switcher.hint = `${verb} works on sessions, not group headers`;
+      return undefined;
+    }
+    return target;
   }
 
 
@@ -780,10 +841,15 @@ export class SwitcherActions {
       void this.newSession(trimmed);
       return;
     }
-    // enter opens the highlighted session; on a group header it is a no-op
+    // enter opens the highlighted session; on a group header it folds or unfolds the group
     const target = this.h.switcher.current();
     if (target) {
       void this.enter(target);
+      return;
+    }
+    const folded = this.h.switcher.currentHeaderFolded();
+    if (folded !== undefined) {
+      this.setCollapsed(this.h.switcher.currentHeaderTitle(), !folded);
     }
   }
 }

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { groupsFile, loadGroups, resolveGroup, saveGroups } from "../groups.ts";
+import { groupsFile, isDone, loadGroups, resolveGroup, saveGroups, withParked } from "../groups.ts";
 
 let dir: string;
 const saved = { data: process.env.XDG_DATA_HOME, agent: process.env.PI_CODING_AGENT_DIR };
@@ -84,5 +84,21 @@ describe("groups file round trip", () => {
     const after = JSON.parse(fs.readFileSync(groupsFile(), "utf8"));
     assert.deepEqual(after.summaries, summaries);
     assert.equal(after.other, 1);
+  });
+});
+
+describe("withParked", () => {
+  it("marks a session parked at the given time without touching the original map", () => {
+    const data = { groups: [], assignments: {}, done: { a: 1 } };
+    const next = withParked(data, "b", true, 99);
+    assert.deepEqual(next, { a: 1, b: 99 });
+    assert.deepEqual(data.done, { a: 1 });
+  });
+
+  it("unparks, and a parked session counts as done until its file changes", () => {
+    const data = { groups: [], assignments: {}, done: { a: 100 } };
+    assert.ok(isDone(data, "a", 100));
+    assert.ok(!isDone(data, "a", 101));
+    assert.deepEqual(withParked(data, "a", false), {});
   });
 });
