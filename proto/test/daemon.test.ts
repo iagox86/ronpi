@@ -235,6 +235,20 @@ describe("daemon: lifecycle", () => {
     assert.deepEqual(replies, ["echo: one", "echo: two"]);
   });
 
+  it("refuses to reload, clear or compact again while a compaction is running", async () => {
+    harness = await startDaemon({ FAKE_PI_COMPACT_MS: "600" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const compact = c.request({ type: "compact", session: sessionId });
+    await new Promise((r) => setTimeout(r, 150));
+    for (const type of ["reload", "clear", "compact"] as const) {
+      await assert.rejects(c.request({ type, session: sessionId }), /compacting/);
+    }
+    await compact;
+    await c.request({ type: "reload", session: sessionId });
+  });
+
   it("reloads a session onto a fresh child with the same file and history", async () => {
     harness = await startDaemon();
     const c = await harness.connect();

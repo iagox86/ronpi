@@ -120,11 +120,6 @@ export function usageHint(spec: CommandSpec): string {
   return [...(hasOptions ? ["[options]"] : []), ...args].join(" ");
 }
 
-/** The -h/--help text of `spec`. */
-export function helpOf(spec: CommandSpec): string {
-  return commandFor(spec, []).helpInformation().trimEnd();
-}
-
 /** Parse a "/name args" line against `specs`. Unknown names are not ours to judge. */
 export function parseCommandLine(specs: readonly CommandSpec[], line: string): ParseResult {
   const name = commandName(line);

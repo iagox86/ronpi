@@ -417,8 +417,7 @@ async function handlePrompt(
     s.attachedTo = socket;
     await startChild(s, { sessionFile: cmd.sessionFile, name: cmd.name });
     broadcastSessions();
-    const messages = await historyOf(s);
-    send(socket, { type: "history", session: s.id, messages });
+    await sendHistory(socket, s);
   }
   // "steer" covers both cases: executes immediately when idle, and is
   // queued as a steering message when a run is already in flight.
@@ -458,8 +457,7 @@ async function handleSpawn(
         await refreshMeta(s);
       }
       broadcastSessions();
-      const messages = await historyOf(s);
-      send(socket, { type: "history", session: s.id, messages });
+      await sendHistory(socket, s);
     });
     s.starting = starting.finally(() => {
       s.starting = undefined;
@@ -515,11 +513,9 @@ async function handleRewind(cmd: Extract<ClientCommand, { type: "rewind" }>, res
   if (!file) {
     throw new Error("rewind requires a session or path");
   }
-  if (presence.has(file)) {
-    throw new Error("session is open in another pi process; close it first");
-  }
-  if (s?.streaming) {
-    throw new Error("session is working; abort it first");
+  requireNotInPi(file);
+  if (s) {
+    requireIdle(s);
   }
   if (s?.child) {
     await deactivate(s);
@@ -582,6 +578,26 @@ async function handleModel(cmd: Extract<ClientCommand, { type: "model" }>, res: 
   res(true, undefined, { model: modelName(match.model) });
 }
 
+async function sendHistory(socket: net.Socket, s: DaemonSession): Promise<void> {
+  send(socket, { type: "history", session: s.id, messages: await historyOf(s) });
+}
+
+function requireIdle(s: DaemonSession): void {
+  // a manual compaction is not a run (no agent_start), but restarting or rewinding under it loses it
+  if (s.held) {
+    throw new Error("session is compacting; wait for it to finish");
+  }
+  if (s.streaming) {
+    throw new Error("session is working; abort it first");
+  }
+}
+
+function requireNotInPi(file: string): void {
+  if (presence.has(file)) {
+    throw new Error("session is open in another pi process; close it first");
+  }
+}
+
 /**
  * What a controller should show for a session: pi's in-context messages, except
  * that once the session has been compacted the file is used - it keeps the whole
@@ -630,16 +646,14 @@ async function handleCompact(
   res: Responder,
 ): Promise<void> {
   const s = liveSession(cmd.session);
-  if (s.streaming) {
-    throw new Error("session is working; abort it first");
-  }
+  requireIdle(s);
   s.held = [];
   try {
     const result = await compactAndWait(s.child, cmd.instructions?.trim() || undefined);
     await refreshMeta(s);
     broadcastSessions();
     // the transcript now starts from the summary: replace the controller's view
-    send(socket, { type: "history", session: s.id, messages: await historyOf(s) });
+    await sendHistory(socket, s);
     res(true, undefined, { tokensBefore: result?.tokensBefore, tokensAfter: result?.estimatedTokensAfter });
   } finally {
     const held = s.held;
@@ -656,16 +670,13 @@ async function handleReload(
   res: Responder,
 ): Promise<void> {
   const s = liveSession(cmd.session);
-  if (s.streaming) {
-    throw new Error("session is working; abort it first");
-  }
+  requireIdle(s);
   if (!s.sessionFile) {
     throw new Error("nothing to reload yet (no session file)");
   }
   await restartChild(s);
   broadcastSessions();
-  const messages = await historyOf(s);
-  send(socket, { type: "history", session: s.id, messages });
+  await sendHistory(socket, s);
   res(true);
 }
 
@@ -688,11 +699,9 @@ async function handleRestoreClear(
   if (!file) {
     throw new Error("restore requires a session or path");
   }
-  if (presence.has(file)) {
-    throw new Error("session is open in another pi process; close it first");
-  }
-  if (s?.streaming) {
-    throw new Error("session is working; abort it first");
+  requireNotInPi(file);
+  if (s) {
+    requireIdle(s);
   }
   const backup = latestClearBackup(TRASH_DIR, file);
   if (!backup) {
@@ -715,7 +724,7 @@ async function handleRestoreClear(
       await s.child!.setThinkingLevel(before.thinkingLevel);
       await refreshMeta(s);
     }
-    send(socket, { type: "history", session: s.id, messages: await historyOf(s) });
+    await sendHistory(socket, s);
   }
   broadcastSessions();
   res(true, undefined, { entries: backup.entries });
@@ -727,16 +736,12 @@ async function handleClear(
   res: Responder,
 ): Promise<void> {
   const s = liveSession(cmd.session);
-  if (s.streaming) {
-    throw new Error("session is working; abort it first");
-  }
+  requireIdle(s);
   const file = s.sessionFile;
   if (!file || !fs.existsSync(file)) {
     throw new Error("nothing to clear yet (no session file)");
   }
-  if (presence.has(file)) {
-    throw new Error("session is open in another pi process; close it first");
-  }
+  requireNotInPi(file);
   // pi restores a session's model and thinking level only when the file has
   // messages, so an emptied one would start on the defaults: carry them over.
   const before = await s.child!.getState();
@@ -752,7 +757,7 @@ async function handleClear(
   await s.child!.setThinkingLevel(before.thinkingLevel);
   await refreshMeta(s);
   broadcastSessions();
-  send(socket, { type: "history", session: s.id, messages: await historyOf(s) });
+  await sendHistory(socket, s);
   res(true, undefined, { removed: result.removed });
 }
 
@@ -761,13 +766,7 @@ async function handleAttach(
   socket: net.Socket,
   res: Responder,
 ): Promise<void> {
-  const s = sessions.get(cmd.session);
-  if (!s) {
-    throw new Error(`unknown session ${cmd.session}`);
-  }
-  if (!s.child) {
-    throw new Error("session is not active");
-  }
+  const s = liveSession(cmd.session);
   if (s.attachedTo === socket) {
     res(true);
     return;
@@ -780,213 +779,213 @@ async function handleAttach(
   if (s.pendingDialog && s.lastDialog) {
     send(socket, { type: "ui_request", session: s.id, request: s.lastDialog });
   }
-  const messages = await historyOf(s);
-  send(socket, { type: "history", session: s.id, messages });
+  await sendHistory(socket, s);
   res(true);
+}
+
+async function handleAbort(cmd: Extract<ClientCommand, { type: "abort" }>, res: Responder): Promise<void> {
+  await liveSession(cmd.session).child.abort();
+  res(true);
+}
+
+async function handleClearQueue(cmd: Extract<ClientCommand, { type: "clear_queue" }>, res: Responder): Promise<void> {
+  res(true, undefined, await liveSession(cmd.session).child.clearQueue());
+}
+
+async function handleCommands(cmd: Extract<ClientCommand, { type: "commands" }>, res: Responder): Promise<void> {
+  const s = cmd.session === undefined ? undefined : sessions.get(cmd.session);
+  if (s?.child) {
+    try {
+      lastCommands = await s.child.getCommands();
+    } catch (err) {
+      log(`get_commands failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  res(true, undefined, lastCommands);
+}
+
+async function handleDeactivate(cmd: Extract<ClientCommand, { type: "deactivate" }>, res: Responder): Promise<void> {
+  const s = sessions.get(cmd.session);
+  if (!s) {
+    throw new Error(`unknown session ${cmd.session}`);
+  }
+  await deactivate(s);
+  broadcastSessions();
+  res(true);
+}
+
+function handleDetach(cmd: Extract<ClientCommand, { type: "detach" }>, socket: net.Socket, res: Responder): void {
+  const s = sessions.get(cmd.session);
+  if (s?.attachedTo === socket) {
+    s.attachedTo = undefined;
+    broadcastSessions();
+  }
+  res(true);
+}
+
+function handleExternalRegister(cmd: Extract<ClientCommand, { type: "external_register" }>, res: Responder): void {
+  const file = cmd.sessionFile;
+  if ([...sessions.values()].some((s) => (s.child as { process?: { pid?: number } } | undefined)?.process?.pid === cmd.pid)) {
+    // a daemon-owned child loaded the presence extension before the
+    // RONPI_CHILD guard existed - never treat our own children as
+    // external
+    log(`ignoring self-registration from daemon child (pid ${cmd.pid})`);
+    res(true);
+    return;
+  }
+  if (cmd.live) {
+    presence.register(file, { pid: cmd.pid, cwd: cmd.cwd });
+    log(`external pi registered: ${file} (pid ${cmd.pid})`);
+  } else {
+    presence.deregister(file);
+    log(`external pi deregistered: ${file}`);
+  }
+  broadcastSessions();
+  res(true);
+}
+
+/** Fork a session that is live in some other pi process into a ronpi-managed one. */
+async function handleAdopt(
+  cmd: Extract<ClientCommand, { type: "adopt" }>,
+  socket: net.Socket,
+  res: Responder,
+): Promise<void> {
+  if (!cmd.path || !fs.existsSync(cmd.path)) {
+    throw new Error("adopt: session file not found");
+  }
+  if (!cmd.cwd) {
+    throw new Error("adopt requires cwd");
+  }
+  const existing = cmd.fork ? undefined : [...sessions.values()].find((x) => x.sessionFile === cmd.path);
+  if (existing?.child) {
+    // already daemon-managed and live: nothing to adopt
+    res(true, undefined, { sessionId: existing.id });
+    return;
+  }
+  const s = existing ?? makeSession(cmd.cwd);
+  sessions.set(s.id, s);
+  if (s.attachedTo && s.attachedTo !== socket) {
+    throw new Error("session is attached to another controller");
+  }
+  s.attachedTo = socket;
+  s.spawning = true;
+  broadcastSessions();
+  const parentId = sessionIdOfFile(cmd.path);
+  const parentFile = cmd.path;
+  const parentName = cmd.parentName ?? "(unnamed)";
+  try {
+    const cfg = childConfigFor(s);
+    const args = ["--fork", cmd.path];
+    if (cmd.name) {
+      args.push("--name", cmd.name);
+    }
+    // the fork learns its parent now; its own id is not known until it starts
+    if (parentId) {
+      const note = forkNote({ id: parentId, name: parentName, file: parentFile });
+      args.push("--append-system-prompt", note);
+    }
+    const client = makeChildClient(s, args, cfg);
+    client.onEvent((event) => onChildEvent(s, event as Record<string, unknown>));
+    await startClient(client, cfg.steeringMode);
+    s.child = client;
+    s.dead = false;
+    if (cmd.name) {
+      await client.setSessionName(cmd.name);
+    }
+    await refreshMeta(s);
+    log(`session ${s.id} adopted (forked from ${cmd.path})`);
+  } finally {
+    s.spawning = false;
+    broadcastSessions();
+  }
+  if (parentId && s.sessionId && s.sessionFile) {
+    recordFork(
+      { id: parentId, name: parentName, file: parentFile },
+      { id: s.sessionId, name: cmd.name ?? s.sessionName ?? "(unnamed)", file: s.sessionFile },
+    );
+  }
+  await sendHistory(socket, s);
+  res(true, undefined, { sessionId: s.id, sessionUuid: s.sessionId });
+}
+
+/** Deliver the user's answer to a dialog the child asked for. */
+function handleUiResponse(cmd: Extract<ClientCommand, { type: "ui_response" }>, res: Responder): void {
+  const s = liveSession(cmd.session);
+  const response = cmd.response ?? {};
+  if (typeof response.id !== "string") {
+    throw new Error("ui_response without id");
+  }
+  s.pendingDialog = false;
+  s.lastDialog = undefined;
+  broadcastSessions();
+  // Write raw: RpcClient.send() overwrites the record's id with its own
+  // correlation id, which would break the dialog reply matching, and it
+  // would also wait 30s for an ack that extension_ui_response never sends.
+  const record = { type: "extension_ui_response", ...response };
+  const stdin = (s.child as unknown as { process?: { stdin?: { write(s: string): void } } }).process?.stdin;
+  if (!stdin) {
+    throw new Error("child stdin unavailable");
+  }
+  stdin.write(encodeLine(record));
+  res(true);
+}
+
+function handleRestore(cmd: Extract<ClientCommand, { type: "restore" }>, res: Responder): void {
+  const restored = restoreTrashedSession(cmd.trashedTo, TRASH_DIR);
+  log(`restored deleted session ${restored}`);
+  res(true, undefined, { path: restored });
 }
 
 async function dispatch(cmd: ClientCommand, socket: net.Socket, res: Responder): Promise<void> {
   switch (cmd.type) {
     case "prompt":
-      await handlePrompt(cmd, socket, res);
-      break;
+      return handlePrompt(cmd, socket, res);
     case "spawn":
-      await handleSpawn(cmd, socket, res);
-      break;
-    case "abort": {
-      const s = sessions.get(cmd.session);
-      if (!s?.child) {
-        throw new Error("session is not active");
-      }
-      await s.child.abort();
-      res(true);
-      break;
-    }
-    case "clear_queue": {
-      const s = sessions.get(cmd.session);
-      if (!s?.child) {
-        throw new Error("session is not active");
-      }
-      res(true, undefined, await s.child.clearQueue());
-      break;
-    }
-    case "commands": {
-      const s = cmd.session === undefined ? undefined : sessions.get(cmd.session);
-      if (s?.child) {
-        try {
-          lastCommands = await s.child.getCommands();
-        } catch (err) {
-          log(`get_commands failed: ${err instanceof Error ? err.message : err}`);
-        }
-      }
-      res(true, undefined, lastCommands);
-      break;
-    }
+      return handleSpawn(cmd, socket, res);
+    case "abort":
+      return handleAbort(cmd, res);
+    case "clear_queue":
+      return handleClearQueue(cmd, res);
+    case "commands":
+      return handleCommands(cmd, res);
     case "model":
-      await handleModel(cmd, res);
-      break;
+      return handleModel(cmd, res);
     case "compact":
-      await handleCompact(cmd, socket, res);
-      break;
+      return handleCompact(cmd, socket, res);
     case "reload":
-      await handleReload(cmd, socket, res);
-      break;
+      return handleReload(cmd, socket, res);
     case "clear":
-      await handleClear(cmd, socket, res);
-      break;
-    case "restore": {
-      const restored = restoreTrashedSession(cmd.trashedTo, TRASH_DIR);
-      log(`restored deleted session ${restored}`);
-      res(true, undefined, { path: restored });
-      break;
-    }
+      return handleClear(cmd, socket, res);
+    case "restore":
+      return handleRestore(cmd, res);
     case "restore_clear":
-      await handleRestoreClear(cmd, socket, res);
-      break;
-    case "deactivate": {
-      const s = sessions.get(cmd.session);
-      if (!s) {
-        throw new Error(`unknown session ${cmd.session}`);
-      }
-      await deactivate(s);
-      broadcastSessions();
-      res(true);
-      break;
-    }
+      return handleRestoreClear(cmd, socket, res);
+    case "deactivate":
+      return handleDeactivate(cmd, res);
     case "delete":
-      await handleDelete(cmd, res);
-      break;
+      return handleDelete(cmd, res);
     case "rewind":
-      await handleRewind(cmd, res);
-      break;
+      return handleRewind(cmd, res);
     case "rename":
-      await handleRename(cmd, res);
-      break;
+      return handleRename(cmd, res);
     case "attach":
-      await handleAttach(cmd, socket, res);
-      break;
-    case "detach": {
-      const s = sessions.get(cmd.session);
-      if (s?.attachedTo === socket) {
-        s.attachedTo = undefined;
-        broadcastSessions();
-      }
-      res(true);
-      break;
-    }
+      return handleAttach(cmd, socket, res);
+    case "detach":
+      return handleDetach(cmd, socket, res);
     case "list":
       send(socket, { type: "sessions", sessions: sessionsFor(socket) });
       res(true);
-      break;
+      return;
     case "shutdown":
       res(true);
       shutdown();
-      break;
-    case "external_register": {
-      const file = cmd.sessionFile;
-      if ([...sessions.values()].some((s) => (s.child as { process?: { pid?: number } } | undefined)?.process?.pid === cmd.pid)) {
-        // a daemon-owned child loaded the presence extension before the
-        // RONPI_CHILD guard existed - never treat our own children as
-        // external
-        log(`ignoring self-registration from daemon child (pid ${cmd.pid})`);
-        res(true);
-        break;
-      }
-      if (cmd.live) {
-        presence.register(file, { pid: cmd.pid, cwd: cmd.cwd });
-        log(`external pi registered: ${file} (pid ${cmd.pid})`);
-      } else {
-        presence.deregister(file);
-        log(`external pi deregistered: ${file}`);
-      }
-      broadcastSessions();
-      res(true);
-      break;
-    }
-    case "adopt": {
-      if (!cmd.path || !fs.existsSync(cmd.path)) {
-        throw new Error("adopt: session file not found");
-      }
-      if (!cmd.cwd) {
-        throw new Error("adopt requires cwd");
-      }
-      const existing = cmd.fork ? undefined : [...sessions.values()].find((x) => x.sessionFile === cmd.path);
-      if (existing?.child) {
-        // already daemon-managed and live: nothing to adopt
-        res(true, undefined, { sessionId: existing.id });
-        break;
-      }
-      const s = existing ?? makeSession(cmd.cwd);
-      sessions.set(s.id, s);
-      if (s.attachedTo && s.attachedTo !== socket) {
-        throw new Error("session is attached to another controller");
-      }
-      s.attachedTo = socket;
-      s.spawning = true;
-      broadcastSessions();
-      const parentId = sessionIdOfFile(cmd.path);
-      const parentFile = cmd.path;
-      const parentName = cmd.parentName ?? "(unnamed)";
-      try {
-        const cfg = childConfigFor(s);
-        const args = ["--fork", cmd.path];
-        if (cmd.name) {
-          args.push("--name", cmd.name);
-        }
-        // the fork learns its parent now; its own id is not known until it starts
-        if (parentId) {
-          const note = forkNote({ id: parentId, name: parentName, file: parentFile });
-          args.push("--append-system-prompt", note);
-        }
-        const client = makeChildClient(s, args, cfg);
-        client.onEvent((event) => onChildEvent(s, event as Record<string, unknown>));
-        await startClient(client, cfg.steeringMode);
-        s.child = client;
-        s.dead = false;
-        if (cmd.name) {
-          await client.setSessionName(cmd.name);
-        }
-        await refreshMeta(s);
-        log(`session ${s.id} adopted (forked from ${cmd.path})`);
-      } finally {
-        s.spawning = false;
-        broadcastSessions();
-      }
-      if (parentId && s.sessionId && s.sessionFile) {
-        recordFork(
-          { id: parentId, name: parentName, file: parentFile },
-          { id: s.sessionId, name: cmd.name ?? s.sessionName ?? "(unnamed)", file: s.sessionFile },
-        );
-      }
-      const messages = await historyOf(s);
-      send(socket, { type: "history", session: s.id, messages });
-      res(true, undefined, { sessionId: s.id, sessionUuid: s.sessionId });
-      break;
-    }
-    case "ui_response": {
-      const s = sessions.get(cmd.session);
-      if (!s?.child) {
-        throw new Error("session is not active");
-      }
-      const response = cmd.response ?? {};
-      if (typeof response.id !== "string") {
-        throw new Error("ui_response without id");
-      }
-      s.pendingDialog = false;
-      s.lastDialog = undefined;
-      broadcastSessions();
-      // Write raw: RpcClient.send() overwrites the record's id with its own
-      // correlation id, which would break the dialog reply matching, and it
-      // would also wait 30s for an ack that extension_ui_response never sends.
-      const record = { type: "extension_ui_response", ...response };
-      const stdin = (s.child as unknown as { process?: { stdin?: { write(s: string): void } } }).process?.stdin;
-      if (!stdin) {
-        throw new Error("child stdin unavailable");
-      }
-      stdin.write(encodeLine(record));
-      res(true);
-      break;
-    }
+      return;
+    case "external_register":
+      return handleExternalRegister(cmd, res);
+    case "adopt":
+      return handleAdopt(cmd, socket, res);
+    case "ui_response":
+      return handleUiResponse(cmd, res);
   }
 }
 

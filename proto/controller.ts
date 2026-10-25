@@ -301,107 +301,28 @@ class Controller {
 
   handleDaemonMessage(msg: DaemonMessage): void {
     switch (msg.type) {
-      case "sessions": {
-        this.sessionsLoaded = true;
-        this.sessions.clear();
-        for (const meta of msg.sessions) {
-          this.sessions.set(meta.id, meta);
-          // Migrate item keys once a session gains its file path.
-          const tmpKey = `daemon:${meta.id}`;
-          if (meta.sessionFile) {
-            const tmpView = this.views.get(tmpKey);
-            if (tmpView && !this.views.has(meta.sessionFile)) {
-              this.views.set(meta.sessionFile, tmpView);
-              this.views.delete(tmpKey);
-            }
-            if (this.viewing === tmpKey) {
-              this.viewing = meta.sessionFile;
-            }
-          }
-        }
-        // Resolved spawn: enter the session we just created.
-        if (this.pendingEnterId !== null && this.sessions.has(this.pendingEnterId)) {
-          const meta = this.sessions.get(this.pendingEnterId)!;
-          this.pendingEnterId = null;
-          const queuedPrompt = this.pendingPrompt;
-          this.pendingPrompt = null;
-          this.viewing = this.keyFor(meta);
-          if (queuedPrompt) {
-            void this.session.prompt(queuedPrompt);
-          }
-          this.switching.close();
-        }
-        if (this.switching.isOpen) {
-          this.switching.refresh();
-        }
-        this.renderChrome();
-        break;
-      }
-      case "history": {
-        const key = this.keyById(msg.session);
-        if (key) {
-          const old = this.views.get(key);
-          this.views.set(key, {
-            ...newView(),
-            items: itemsFromMessages(msg.messages, this.tui, this.metaForPath(key)?.cwd ?? ""),
-            // keep live activity if events raced ahead of the history reply
-            activity: old?.activity,
-            queue: old?.queue ?? [],
-          });
-          // prompts sent but not yet echoed by pi are not in the child's history
-          const fresh = this.views.get(key)!;
-          for (const echo of old?.echoes ?? []) {
-            fresh.echoes.push(echo);
-            fresh.items.push(echo.item);
-          }
-          if (key === this.viewing) {
-            this.rebuildChat();
-          }
-        }
-        break;
-      }
+      case "sessions":
+        this.onSessions(msg.sessions);
+        return;
+      case "history":
+        this.onHistory(msg.session, msg.messages);
+        return;
       case "event": {
         const key = this.keyById(msg.session);
-        if (!key) {
-          break;
+        if (key) {
+          this.applyEvent(key, this.viewFor(key), msg.event);
         }
-        const view = this.viewFor(key);
-        this.applyEvent(key, view, msg.event);
-        break;
+        return;
       }
-      case "ui_request": {
-        const key = this.keyById(msg.session);
-        if (!key) {
-          break;
-        }
-        const view = this.viewFor(key);
-        const request = msg.request as unknown as DialogRequest;
-        if (request && DIALOG_METHODS.has(request.method)) {
-          const reason = view.pendingReason;
-          view.pendingReason = undefined;
-          if (reason && isTextDialog(request) && Date.now() - reason.at < REASON_FRESH_MS) {
-            this.send({
-              type: "ui_response",
-              session: msg.session,
-              response: { type: "extension_ui_response", id: request.id, value: reason.text },
-            });
-          } else {
-            view.dialog = request;
-          }
-        } else if (request && request.method === "notify") {
-          this.notify(String(request.message ?? "notification"));
-        }
-        if (key === this.viewing) {
-          this.renderChrome();
-        }
-        break;
-      }
+      case "ui_request":
+        this.onUiRequest(msg.session, msg.request as unknown as DialogRequest);
+        return;
       case "exited": {
         const meta = this.sessions.get(msg.session);
         if (meta && this.keyFor(meta) === this.viewing) {
           this.notify("child exited");
         }
-        break;
+        return;
       }
       case "response": {
         const pending = this.responses.get(msg.id);
@@ -413,8 +334,94 @@ class Controller {
             pending.reject(new Error(msg.error ?? "daemon command failed"));
           }
         }
-        break;
+        return;
       }
+    }
+  }
+
+  private onSessions(metas: SessionMeta[]): void {
+    this.sessionsLoaded = true;
+    this.sessions.clear();
+    for (const meta of metas) {
+      this.sessions.set(meta.id, meta);
+      // Migrate item keys once a session gains its file path.
+      const tmpKey = `daemon:${meta.id}`;
+      if (meta.sessionFile) {
+        const tmpView = this.views.get(tmpKey);
+        if (tmpView && !this.views.has(meta.sessionFile)) {
+          this.views.set(meta.sessionFile, tmpView);
+          this.views.delete(tmpKey);
+        }
+        if (this.viewing === tmpKey) {
+          this.viewing = meta.sessionFile;
+        }
+      }
+    }
+    // Resolved spawn: enter the session we just created.
+    if (this.pendingEnterId !== null && this.sessions.has(this.pendingEnterId)) {
+      const meta = this.sessions.get(this.pendingEnterId)!;
+      this.pendingEnterId = null;
+      const queuedPrompt = this.pendingPrompt;
+      this.pendingPrompt = null;
+      this.viewing = this.keyFor(meta);
+      if (queuedPrompt) {
+        void this.session.prompt(queuedPrompt);
+      }
+      this.switching.close();
+    }
+    if (this.switching.isOpen) {
+      this.switching.refresh();
+    }
+    this.renderChrome();
+  }
+
+  private onHistory(sessionId: number, messages: unknown[]): void {
+    const key = this.keyById(sessionId);
+    if (!key) {
+      return;
+    }
+    const old = this.views.get(key);
+    const fresh: SessionView = {
+      ...newView(),
+      items: itemsFromMessages(messages, this.tui, this.metaForPath(key)?.cwd ?? ""),
+      // keep live activity if events raced ahead of the history reply
+      activity: old?.activity,
+      queue: old?.queue ?? [],
+    };
+    this.views.set(key, fresh);
+    // prompts sent but not yet echoed by pi are not in the child's history
+    for (const echo of old?.echoes ?? []) {
+      fresh.echoes.push(echo);
+      fresh.items.push(echo.item);
+    }
+    if (key === this.viewing) {
+      this.rebuildChat();
+    }
+  }
+
+  private onUiRequest(sessionId: number, request: DialogRequest | undefined): void {
+    const key = this.keyById(sessionId);
+    if (!key) {
+      return;
+    }
+    const view = this.viewFor(key);
+    if (request && DIALOG_METHODS.has(request.method)) {
+      const reason = view.pendingReason;
+      view.pendingReason = undefined;
+      if (reason && isTextDialog(request) && Date.now() - reason.at < REASON_FRESH_MS) {
+        this.send({
+          type: "ui_response",
+          session: sessionId,
+          response: { type: "extension_ui_response", id: request.id, value: reason.text },
+        });
+      } else {
+        view.dialog = request;
+      }
+    } else if (request && request.method === "notify") {
+      this.notify(String(request.message ?? "notification"));
+    }
+    if (key === this.viewing) {
+      this.renderChrome();
     }
   }
 
