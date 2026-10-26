@@ -43,8 +43,8 @@ export async function handlePrompt(
     await s.starting;
   }
   if (s.held) {
-    s.held.push(cmd.message);
-    ctx.hub.announceQueue(s.id, s.held);
+    s.held.push({ text: cmd.message, images: cmd.images });
+    ctx.hub.announceQueue(s.id, s.held.map((h) => h.text));
     res(true, undefined, { disposition: "queued" });
     return;
   }
@@ -68,7 +68,7 @@ export async function handlePrompt(
   }
   // "steer" covers both cases: executes immediately when idle, and is
   // queued as a steering message when a run is already in flight.
-  await s.child!.prompt(cmd.message, undefined, "steer");
+  await s.child!.prompt(cmd.message, cmd.images, "steer");
   res(true, undefined, { disposition: "started" });
 }
 

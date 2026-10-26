@@ -263,6 +263,40 @@ describe("daemon: lifecycle", () => {
     assert.ok(!after.some((m) => m.type === "event" && m.event?.type === "message_start"), "no message enters the conversation");
   });
 
+  it("passes pasted images on with the prompt", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const image = { type: "image", data: "aGVsbG8=", mimeType: "image/png" };
+    await c.request({ type: "prompt", session: sessionId, message: "look", images: [image] });
+    const reply = await c.waitFor(
+      (m) => m.type === "event" && m.event?.type === "message_end" && m.event.message?.role === "assistant",
+    );
+    assert.equal(reply.event.message.content[0].text, "echo: look [1 image(s): image/png]");
+  });
+
+  it("keeps the images of a message held during a compaction", async () => {
+    harness = await startDaemon({ FAKE_PI_COMPACT_MS: "500" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const compact = c.request({ type: "compact", session: sessionId });
+    await new Promise((r) => setTimeout(r, 120));
+    const held = await c.request({
+      type: "prompt",
+      session: sessionId,
+      message: "later",
+      images: [{ type: "image", data: "aGVsbG8=", mimeType: "image/jpeg" }],
+    });
+    assert.equal(held.disposition, "queued");
+    await compact;
+    const reply = await c.waitFor(
+      (m) => m.type === "event" && m.event?.type === "message_end" && m.event.message?.content?.[0]?.text?.startsWith("echo: later"),
+    );
+    assert.match(reply.event.message.content[0].text, /\[1 image\(s\): image\/jpeg\]/);
+  });
+
   it("reloads a session onto a fresh child with the same file and history", async () => {
     harness = await startDaemon();
     const c = await harness.connect();

@@ -69,6 +69,8 @@ export interface SessionMeta {
   /** Lifetime token/cost rollup tracked by the daemon. */
   tokens?: number;
   cost?: number;
+  /** Whether the current model takes images; undefined when pi did not say. */
+  acceptsImages?: boolean;
   /** True iff THIS receiving controller holds the exclusive input attach. */
   attachedToYou: boolean;
   /** True iff another controller holds the attach. */
@@ -78,6 +80,12 @@ export interface SessionMeta {
 // controller -> daemon. Commands with an `id` get a {type:"response", id}.
 export type ClientCommand = ClientCommandBody & { id?: string };
 
+export interface PromptImage {
+  type: "image";
+  data: string;
+  mimeType: string;
+}
+
 export type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 
 type ClientCommandBody =
@@ -85,6 +93,8 @@ type ClientCommandBody =
       type: "prompt";
       id?: string;
       message: string;
+      /** Pasted images sent with the message (base64 data, as pi's RPC takes them). */
+      images?: PromptImage[];
       /** Live session to prompt. */
       session?: number;
       /** Inactive/dead session to (re)spawn and prompt: resume this file. */

@@ -64,6 +64,11 @@ export class InputEditor extends Editor {
     return true;
   }
 
+  /** Insert text as if it had been pasted by the terminal (large pastes collapse into a marker). */
+  pasteText(text: string): void {
+    super.handleInput(`\x1b[200~${text}\x1b[201~`);
+  }
+
   handleInput(data: string): void {
     if (this.debugLog) {
       try {

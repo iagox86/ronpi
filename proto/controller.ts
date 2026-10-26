@@ -15,7 +15,6 @@ import {
   isKeyRelease,
   Key,
   matchesKey,
-  ProcessTerminal,
   ScrollView,
   Text,
   truncateToWidth,
@@ -51,6 +50,9 @@ import { buildStatusLine, fleetStats, settingsNotice } from "./status.ts";
 import { ActivityLine } from "./activity.ts";
 import { Dimmed } from "./components.ts";
 import { ChoicePanel } from "./choice-panel.ts";
+import { Attachments, MAX_IMAGE_BYTES, fmtBytes } from "./attachments.ts";
+import { Clipboard, isTextType } from "./clipboard.ts";
+import { ClipboardTerminal } from "./clipboard-terminal.ts";
 import { InfoPanel } from "./info-panel.ts";
 import { type McpServer, parseMcpStatus } from "./mcp.ts";
 import type { ToolRun } from "./tool-run.ts";
@@ -115,6 +117,8 @@ class Controller {
   views = new Map<string, SessionView>();
   /** Last message text per session key, for the switcher description. */
   summaries = new Map<string, string>();
+  readonly attachments = new Attachments();
+  private readonly clipboard = new Clipboard();
   /** Path key of the session on screen; null = none (switcher behind). */
   viewing: string | null = null;
 
@@ -139,7 +143,10 @@ class Controller {
   constructor() {
     this.switching = new SwitcherActions(this);
     this.session = new SessionActions(this);
-    this.tui = new TuiAltScreen(new ProcessTerminal(), true, undefined, { wheelScrollLines: wheelScrollLines() });
+    this.tui = new TuiAltScreen(new ClipboardTerminal(() => this.onMiddleClick()), true, undefined, {
+      wheelScrollLines: wheelScrollLines(),
+      copySelection: (text) => this.copySelection(text),
+    });
     this.scroll = new ScrollView(this.chatRoot, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" });
     this.editor = new InputEditor(this.tui, editorTheme, { paddingX: 1 });
     this.editor.setAutocompleteMaxVisible(autocompleteMaxVisible());
@@ -428,6 +435,95 @@ class Controller {
     }
   }
 
+  // ---------------- clipboard ----------------
+
+  /** Text into the chat box the way a terminal paste would put it. */
+  private insertPaste(text: string): void {
+    this.editor.pasteText(text);
+    this.tui.requestRender();
+  }
+
+  /** Whether a paste has somewhere to go: not while a panel or dialog is waiting for its own keys. */
+  private canPaste(): boolean {
+    const view = this.viewing ? this.views.get(this.viewing) : undefined;
+    return !(this.choicePanel.isOpen || this.infoPanel.isOpen || this.historySearch.isOpen || view?.dialog);
+  }
+
+  /** ctrl-v: the clipboard's text, or its image. */
+  async pasteClipboard(): Promise<void> {
+    if (!this.canPaste()) {
+      return;
+    }
+    if (this.clipboard.problem) {
+      this.notify(`paste is off: ${this.clipboard.problem}`);
+      return;
+    }
+    const types = await this.clipboard.types("clipboard");
+    if (types.some(isTextType)) {
+      const text = await this.clipboard.readText("clipboard");
+      if (text) {
+        this.insertPaste(text);
+        return;
+      }
+    }
+    await this.pasteImage();
+  }
+
+  /** The clipboard's image goes in as a marker in the chat box; the picture travels with the message. */
+  private async pasteImage(): Promise<void> {
+    const meta = this.switching.isOpen || !this.viewing ? undefined : this.metaForPath(this.viewing);
+    if (this.switching.isOpen || !this.viewing) {
+      this.notify("images can only be pasted inside a session");
+      return;
+    }
+    if (meta?.acceptsImages === false) {
+      this.notify(`${meta.model.split("/").pop()} does not take images - pick a model that does (/model)`);
+      return;
+    }
+    const image = await this.clipboard.readImage();
+    if (!image) {
+      this.notify("the clipboard is empty (nothing to paste)");
+      return;
+    }
+    if (image.data.length > MAX_IMAGE_BYTES) {
+      this.notify(`that image is ${fmtBytes(image.data.length)}; the limit is ${fmtBytes(MAX_IMAGE_BYTES)}`);
+      return;
+    }
+    this.insertPaste(this.attachments.add(image.mimeType, image.data));
+    this.notify(`image attached (${fmtBytes(image.data.length)}) - it goes with your next message`);
+  }
+
+  /**
+   * Middle click: paste whatever was last highlighted anywhere (the primary
+   * selection). Returns false when there is no clipboard tool, so the click
+   * goes on to the terminal layer as if ronpi did not know about it.
+   */
+  onMiddleClick(): boolean {
+    if (!this.clipboard.available) {
+      return false;
+    }
+    if (this.canPaste()) {
+      void this.pastePrimary();
+    }
+    return true;
+  }
+
+  private async pastePrimary(): Promise<void> {
+    const text = await this.clipboard.readText("primary");
+    if (text) {
+      this.insertPaste(text);
+    }
+  }
+
+  /** Text selected in ronpi goes to the clipboard and the primary selection, so ctrl-v and middle click both get it. */
+  private async copySelection(text: string): Promise<boolean | string> {
+    if (!this.clipboard.available) {
+      this.tui.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
+      return true;
+    }
+    return (await this.clipboard.writeText(text, ["clipboard", "primary"])) ? true : "Copy failed (is wl-clipboard installed?)";
+  }
+
   /** Models the viewed live session can switch to; cached briefly since completion asks per keystroke. */
   private modelCache?: { session: number; at: number; names: string[] };
 
@@ -542,6 +638,10 @@ class Controller {
     }
     if (this.historySearch.isOpen) {
       return this.searchKeys(data);
+    }
+    if (matchesKey(data, Key.ctrl("v"))) {
+      void this.pasteClipboard();
+      return true;
     }
     if (matchesKey(data, Key.ctrl("r")) && !this.rewindPicker.isOpen && !this.switching.isOpen) {
       this.searchDraft = this.editor.getText();
@@ -814,7 +914,8 @@ class Controller {
       dialog: key ? this.views.get(key)?.dialog : undefined,
       activity: key ? this.views.get(key)?.activity?.label : undefined,
       width,
-      notice: settingsNotice(this.sessions.values(), settingsMtime()),
+      // a clipboard problem is worth a standing note while the switcher is up; it is not an error
+      notice: settingsNotice(this.sessions.values(), settingsMtime()) || (this.clipboard.problem ? `clipboard: ${this.clipboard.problem}` : ""),
     });
     this.statusLine.setText(truncateToWidth(status, width));
     this.tui.requestRender();

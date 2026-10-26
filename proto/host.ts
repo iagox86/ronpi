@@ -1,6 +1,7 @@
 // What the action classes need from the Controller. The Controller satisfies
 // this structurally; keeping it as an interface makes the dependency explicit
 // and lets the action classes be read (and later tested) on their own.
+import type { Attachments } from "./attachments.ts";
 import type { InputEditor } from "./editor.ts";
 import type { SessionMeta, ClientCommand, DistributiveOmit } from "./shared.ts";
 import type { LocalSession } from "./session-list.ts";
@@ -26,6 +27,8 @@ export interface Host {
   local: Map<string, LocalSession>;
   views: Map<string, SessionView>;
   summaries: Map<string, string>;
+  /** Images pasted into the chat box, waiting for the message that carries them. */
+  attachments: Attachments;
   /** Path key of the session on screen; null = none (switcher behind). */
   viewing: string | null;
   /** Spawn/adopt resolved by the daemon's next session list: enter it then. */

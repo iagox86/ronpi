@@ -252,7 +252,7 @@ async function handle(cmd) {
       await sleep(Number(process.env.FAKE_PI_RUN_MS ?? 50));
       const assistant = {
         role: "assistant",
-        content: [{ type: "text", text: `echo: ${cmd.message}` }],
+        content: [{ type: "text", text: `echo: ${cmd.message}${cmd.images?.length ? ` [${cmd.images.length} image(s): ${cmd.images.map((i) => i.mimeType).join(",")}]` : ""}` }],
         usage: { totalTokens: 10, cost: { total: 0.001 } },
         stopReason: "stop",
       };

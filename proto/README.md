@@ -178,6 +178,18 @@ they started with, and the switcher status line says how many are behind
 
 ## Code layout
 
+Pasting and selecting (Linux; `wl-clipboard` on Wayland, `xclip` on X11):
+- `ctrl-v` pastes the clipboard: its text, or - when it holds only an image - an
+  `[image #1 png 340 KB]` marker in the chat box; the picture is sent with the
+  message (delete the marker to drop it). Refused with a message when the model
+  takes no images, or the image is over 8 MB. Not shown in the transcript yet.
+- Middle click pastes the primary selection (whatever you last highlighted).
+- Text selected inside ronpi is copied to both the clipboard and the primary
+  selection, so either paste finds it. Shift+click still hands the mouse to the
+  terminal.
+- Code: `clipboard.ts` (the tools), `clipboard-terminal.ts` (takes the middle
+  click out of the input before pi-tui's mouse handling), `attachments.ts`.
+
 Daemon side:
 - `daemon.ts` - entry point: wires the pieces below together, owns startup, polling and shutdown
 - `daemon-session.ts` (session record + registry), `daemon-hub.ts` (connected controllers, fan-out),

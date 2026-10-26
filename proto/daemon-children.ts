@@ -159,6 +159,7 @@ export class ChildManager {
       s.provider = state.model?.provider;
       s.thinkingLevel = state.thinkingLevel;
       s.ctxMax = state.model?.contextWindow;
+      s.acceptsImages = state.model?.input ? state.model.input.includes("image") : undefined;
       s.dead = false;
       try {
         // whole-session figures from pi, so they survive a daemon restart (our own running sums would not)

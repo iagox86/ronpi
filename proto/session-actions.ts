@@ -379,13 +379,21 @@ export class SessionActions {
     // Show the prompt now rather than when pi echoes it back. Slash lines may be
     // handled by an extension without ever becoming a message, and a prompt sent
     // mid-run is shown in the queue strip instead.
+    // pasted images ride with the message; the markers that stood for them leave the text
+    const { text: message, images } = text.startsWith("/") ? { text, images: [] } : this.h.attachments.take(text);
+    if (images.length > 0 && meta?.acceptsImages === false) {
+      this.h.notify(`${meta.model.split("/").pop()} does not take images - delete the [image] marker or switch model (/model)`);
+      this.h.editor.setText(text);
+      return false;
+    }
+    const sent = message || (images.length > 0 ? "(see the attached image)" : message);
     const echo = !text.startsWith("/") && !meta?.streaming;
     try {
       if (meta) {
         if (echo) {
-          this.h.echoPrompt(key, text);
+          this.h.echoPrompt(key, sent);
         }
-        await this.h.request({ type: "prompt", session: meta.id, message: text });
+        await this.h.request({ type: "prompt", session: meta.id, message: sent, images: images.length > 0 ? images : undefined });
       } else {
         const info = this.h.local.get(key);
         if (!key.startsWith("/") || !info) {
@@ -413,22 +421,24 @@ export class SessionActions {
         }
         this.armedFork = null;
         if (echo) {
-          this.h.echoPrompt(key, text);
+          this.h.echoPrompt(key, sent);
         }
         await this.h.request({
           type: "prompt",
           sessionFile: key,
           cwd: info.cwd || path.dirname(key),
-          message: text,
+          message: sent,
+          images: images.length > 0 ? images : undefined,
         });
       }
-      this.h.editor.addToHistory(text);
+      this.h.editor.addToHistory(message);
       this.h.editor.setText("");
       return true;
     } catch (err) {
-      this.h.dropEcho(key, text);
+      this.h.dropEcho(key, sent);
       this.h.notify(`prompt failed: ${err instanceof Error ? err.message : err}`);
-      this.h.editor.setText(text);
+      // give the images back, under fresh markers, so the message can be sent again
+      this.h.editor.setText([message, ...images.map((image) => this.h.attachments.put(image))].join(" "));
       return false;
     }
   }

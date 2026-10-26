@@ -136,6 +136,15 @@ Risk: Loader/diff components are interactive-mode internals, not all exported
 - Group folding: BUILT 2026-10-25 (left/right/enter on a header; persisted as
   `collapsed` in session-groups.json; a folded group shows a one-line summary;
   dragging a session into a folded group unfolds it).
+- Command completion beyond positional arguments (PARKED 2026-10-25, Ron: it
+  would keep needing per-option work and add complexity). Audited candidates:
+  flag-name completion for every command (from the option declarations),
+  option VALUES (`-m <model>` for /summarize and /why, `-C <dir>` for /new,
+  `-c <category>` for /feedback), `/help [command]`, `/restore` from trash
+  names, a ronpi `/group` inside sessions. Done so far: models (/model),
+  groups (/group in the switcher), MCP servers (/mcp). pi's own extension
+  commands cannot be completed through RPC (no completion API); only worth
+  doing one by one, the way /mcp was, or upstream in pi.
 - Known issue, no repro yet (tracked 2026-10-25): `right` on a normal session
   row sometimes does not open it. Ruled out: terminal key timeouts (kitty
   protocol sends whole sequences) and key-release events. Fixed as a
@@ -831,7 +840,10 @@ Bigger goals - design-arounds, not scheduled:
   (LineSplitter over unix socket today); a web UI is a WebSocket bridge
   plus a re-implementation of the controller's rendering. Keep daemon
   state terminal-free so this stays possible.
-- Image paste into sessions (NOT scheduled; Ron 2026-10-24): wl-paste ->
+- Image paste into sessions (BUILT 2026-10-25 as ctrl-v with an [image #N]
+  marker in the chat box; still open: show the image in the transcript, and
+  downscale big ones; X11 path (xclip) written but never run). Original notes
+  (Ron 2026-10-24): wl-paste ->
   controller -> daemon -> child. Verified 2026-10-24: pi's RpcClient
   `prompt(message, images?: ImageContent[])` (and steer/followUp) carry image
   parts, so the protocol supports it; ronpi's `prompt` command is text-only
