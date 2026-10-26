@@ -38,6 +38,10 @@ export async function handleCommands(
   res(true, undefined, await ctx.children.slashCommands(s));
 }
 
+export async function handleMcpStatus(ctx: DaemonContext, cmd: Cmd<"mcp_status">, res: Responder): Promise<void> {
+  res(true, undefined, { text: await ctx.children.mcpStatus(ctx.registry.live(cmd.session)) });
+}
+
 export async function handleModel(
   ctx: DaemonContext,
   cmd: Cmd<"model">,

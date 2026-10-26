@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { type Invocation, parseCommandLine } from "./cli.ts";
 import { SESSION_COMMANDS, type SessionCommandName } from "./commands.ts";
 import { fmtTokens } from "./format.ts";
+import { MCP_ACTIONS } from "./mcp.ts";
 import { forkName, placeFork } from "./fork-placement.ts";
 import { loadGroups, saveGroups, withParked } from "./groups.ts";
 import type { Host } from "./host.ts";
@@ -66,6 +67,7 @@ export class SessionCommands {
       why: (c) => this.why(c.opts.model as string | undefined),
       clear: () => this.clear(),
       compact: (c) => this.compact(c.args.join(" ")),
+      mcp: (c) => this.mcp(c.args[0], c.args[1]),
     };
   }
 
@@ -323,6 +325,32 @@ export class SessionCommands {
       this.h.tui.requestRender();
     } catch (err) {
       this.fail("why", err);
+    }
+  }
+
+  /** /mcp: our own list (pi shows its status as a one-line notice); the other actions are pi's, so they go to it. */
+  private async mcp(action = "list", server?: string): Promise<void> {
+    if (!(MCP_ACTIONS as readonly string[]).includes(action)) {
+      this.h.notify(`/mcp: unknown action "${action}" - use ${MCP_ACTIONS.join(", ")}`);
+      return;
+    }
+    if (action !== "list") {
+      this.h.editor.setText("");
+      await this.h.session.prompt(`/mcp ${action}${server ? ` ${server}` : ""}`);
+      return;
+    }
+    const meta = await this.liveMeta();
+    if (!meta) {
+      return;
+    }
+    try {
+      this.h.notify("asking the MCP servers...");
+      const r = (await this.h.request({ type: "mcp_status", session: meta.id }, 60_000)) as { text: string };
+      this.h.infoPanel.show(`MCP servers\n\n${r.text}\n\n/mcp reconnect <server> - tab completes the names`);
+      this.h.notify("");
+      this.h.tui.requestRender();
+    } catch (err) {
+      this.fail("mcp", err);
     }
   }
 

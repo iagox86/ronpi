@@ -20,6 +20,7 @@ import {
   handleClearQueue,
   handleCommands,
   handleCompact,
+  handleMcpStatus,
   handleModel,
   handleReload,
   handleRestoreClear,
@@ -56,6 +57,8 @@ export async function dispatch(ctx: DaemonContext, cmd: ClientCommand, socket: n
       return handleClearQueue(ctx, cmd, res);
     case "commands":
       return handleCommands(ctx, cmd, res);
+    case "mcp_status":
+      return handleMcpStatus(ctx, cmd, res);
     case "model":
       return handleModel(ctx, cmd, res);
     case "compact":

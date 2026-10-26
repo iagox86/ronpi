@@ -47,6 +47,10 @@ describe("argument completion", () => {
   const sources = {
     models: async () => ["zai/glm-5.3-flash", "zai/glm-5.3", "anthropic/claude-opus"],
     groups: () => ["Work", "Home"],
+    mcpServers: async () => [
+      { name: "mealie", detail: "connected, 12 tools (direct)" },
+      { name: "freecad", detail: "failed (direct)" },
+    ],
   };
 
   it("offers the viewed session's models after /model, narrowed by the words typed", async () => {
@@ -60,6 +64,13 @@ describe("argument completion", () => {
 
   it("offers group names after /group in the switcher", async () => {
     assert.deepEqual(await suggest({ ...base, switcher: true, sources }, "/group ho"), ["Home"]);
+  });
+
+  it("offers the MCP actions, then the servers with their states", async () => {
+    assert.deepEqual(await suggest({ ...base, sources }, "/mcp "), ["list", "reconnect ", "login ", "logout "]);
+    assert.deepEqual(await suggest({ ...base, sources }, "/mcp rec"), ["reconnect "]);
+    assert.deepEqual(await suggest({ ...base, sources }, "/mcp reconnect "), ["reconnect mealie", "reconnect freecad"]);
+    assert.deepEqual(await suggest({ ...base, sources }, "/mcp reconnect f"), ["reconnect freecad"]);
   });
 
   it("does not try to complete flags", async () => {

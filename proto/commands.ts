@@ -8,6 +8,7 @@
 import type { Command } from "commander";
 import type { CommandSpec } from "./cli.ts";
 import { matching } from "./completion.ts";
+import { mcpCompletions } from "./mcp.ts";
 
 export type { CommandSpec };
 
@@ -114,6 +115,16 @@ export const SESSION_COMMANDS = [
     complete: async (typed, src) => matching(await src.models(), typed),
     build: (cmd) => {
       cmd.option("-l, --list", "just show every available model, without the picker").argument("[query...]", "words that must all appear in provider/model (leave out to pick from a list)");
+    },
+  },
+  {
+    name: "mcp",
+    description: "list the MCP servers and their states, or reconnect / sign in to / sign out of one (tab completes names)",
+    complete: async (typed, src) => mcpCompletions(typed, await src.mcpServers()),
+    build: (cmd) => {
+      cmd
+        .argument("[action]", "list (default), reconnect, login or logout")
+        .argument("[server]", "which server, for reconnect / login / logout (leave out to be asked)");
     },
   },
   {

@@ -97,6 +97,8 @@ type ClientCommandBody =
   | { type: "abort"; session: number }
   /** Drop queued steering/follow-up messages; the response carries their text. */
   | { type: "clear_queue"; session: number }
+  /** The text pi's /mcp prints (servers and their states), for listing and completion. */
+  | { type: "mcp_status"; session: number }
   /** pi's slash commands (extensions, skills, prompt templates). Without a
    * live session the daemon answers from the last list any child reported. */
   | { type: "commands"; id?: string; session?: number }

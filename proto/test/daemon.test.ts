@@ -249,6 +249,20 @@ describe("daemon: lifecycle", () => {
     await c.request({ type: "reload", session: sessionId });
   });
 
+  it("returns pi's /mcp status text without showing it to controllers or adding it to the conversation", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const seen = c.messages.length;
+    const r = await c.request({ type: "mcp_status", session: sessionId });
+    assert.match(r.text, /^mealie: connected, 12 tools/);
+    assert.match(r.text, /config error: bad\.json/);
+    const after = c.messages.slice(seen);
+    assert.ok(!after.some((m) => m.type === "ui_request"), "the notice must not reach controllers");
+    assert.ok(!after.some((m) => m.type === "event" && m.event?.type === "message_start"), "no message enters the conversation");
+  });
+
   it("reloads a session onto a fresh child with the same file and history", async () => {
     harness = await startDaemon();
     const c = await harness.connect();

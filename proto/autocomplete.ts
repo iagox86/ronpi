@@ -32,7 +32,7 @@ export function commandsFor(ctx: AutocompleteContext): SlashCommand[] {
       argumentHint: usageHint(c) || undefined,
       getArgumentCompletions: async (typed: string) => {
         const choices = c.complete && ctx.sources ? await c.complete(typed, ctx.sources) : [];
-        return choices.map((value) => ({ value, label: value }));
+        return choices.map((c) => (typeof c === "string" ? { value: c, label: c } : { value: c.value, label: c.value, description: c.description }));
       },
     })),
     ...(ctx.switcher ? [] : ctx.piCommands.filter((c) => !taken.has(c.name))),

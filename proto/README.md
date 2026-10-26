@@ -80,7 +80,7 @@ Session view (chat):
   `/abort`, `/quit` (back to the switcher), `/exit` (quit the controller; child exit
   is ctrl-x's job), `/name <name>` or `/rename <name>`, `/model [-l] [words]` (no
   argument: an interactive picker - up/down, type to filter, enter; `-l` just lists them; otherwise switches to the one model
-  whose `provider/id` contains all the words), `/compact [focus]`, `/clear` (wipe the conversation in place - same session, name and model; old contents go to trash), `/reload`
+  whose `provider/id` contains all the words), `/compact [focus]`, `/mcp [list|reconnect|login|logout] [server]` (pi has no connect/disconnect: `list` shows every server and its state in a panel; the others are pi's own, and tab after an action completes server names with their state), `/clear` (wipe the conversation in place - same session, name and model; old contents go to trash), `/reload`
   (restarts pi on the same file so new extensions, skills and settings load) and
   `/fork [-n name] [prompt]` (continue in a copy, entered immediately; the original is untouched. The copy is named `⑂ <original name>`, listed right below it in its group, and optionally gets `prompt` as its first message. The copy is told its parent - id, name, file - via an appended system prompt; lineage is recorded both ways in `lineage.json` next to the groups file, but the parent is not told about its forks yet: see design.md, parent/child communication)
 - typing while the agent streams sends the message as steering (never fails
@@ -246,7 +246,7 @@ arguments on the commander `Command`), then add its handler to the handler
 table in `session-commands.ts` / `switcher-actions.ts` - the compiler rejects a
 table with a missing entry. Parsing, help text, error messages and the
 autocomplete hint all come from the declaration. A command whose argument has a
-fixed set of choices (`/model`, `/group`) can also give a `complete` function
+fixed set of choices (`/model`, `/group`, `/mcp`) can also give a `complete` function
 (see `CommandSpec` in `cli.ts`): typing the command and a space then pops up the
 choices, narrowed by what is typed. Flags are not completed.
 

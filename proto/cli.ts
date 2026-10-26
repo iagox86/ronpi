@@ -3,6 +3,7 @@
 // A command is declared once as a CommandSpec (commands.ts); everything here
 // works from that, so adding a command needs no parsing code.
 import { Command, CommanderError } from "commander";
+import type { McpServer } from "./mcp.ts";
 
 /** Live data an argument completer may draw on. */
 export interface CompletionSources {
@@ -10,7 +11,12 @@ export interface CompletionSources {
   models(): Promise<string[]>;
   /** Existing group names. */
   groups(): string[];
+  /** MCP servers of the viewed session, with their states. */
+  mcpServers(): Promise<McpServer[]>;
 }
+
+/** A completion with a note shown beside it in the popup; a bare string has none. */
+export type Choice = string | { value: string; description?: string };
 
 export interface CommandSpec {
   name: string;
@@ -22,7 +28,7 @@ export interface CommandSpec {
    * of the line). Only for arguments with a known set of choices; flags are
    * not completed.
    */
-  complete?: (typed: string, sources: CompletionSources) => string[] | Promise<string[]>;
+  complete?: (typed: string, sources: CompletionSources) => Choice[] | Promise<Choice[]>;
 }
 
 export interface Invocation {

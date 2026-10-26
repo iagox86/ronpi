@@ -222,6 +222,17 @@ async function handle(cmd) {
       if (compacting) {
         return out({ type: "response", id: cmd.id, command: "prompt", success: false, error: "Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry." });
       }
+      if (cmd.message.trim() === "/mcp") {
+        // like pi's extension command: answered as a notice, never entering the conversation
+        ok(cmd.id, "prompt", { disposition: "started" });
+        return out({
+          type: "extension_ui_request",
+          id: "mcp-status",
+          method: "notify",
+          message: "mealie: connected, 12 tools (direct)\nfreecad: failed (direct)\n    connection refused\nconfig error: bad.json",
+          notifyType: "info",
+        });
+      }
       if (slow) {
         if (streaming) {
           queue.push(cmd.message);

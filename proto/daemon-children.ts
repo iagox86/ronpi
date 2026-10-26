@@ -29,6 +29,8 @@ export class ChildManager {
   private readonly usage: Map<string, UsageReport>;
   /** Newest slash-command list any child reported; serves sessions with no child. */
   private lastCommands: SlashCommand[] = [];
+  /** Sessions waiting for the notice pi's /mcp prints, by daemon session id (see mcpStatus). */
+  private readonly noticeTaps = new Map<number, (text: string) => void>();
 
   constructor(hub: ClientHub, usage: Map<string, UsageReport>) {
     this.hub = hub;
@@ -187,6 +189,30 @@ export class ChildManager {
     return this.lastCommands;
   }
 
+  /**
+   * The server list pi's /mcp prints. pi shows it as a notice, which we catch
+   * here instead of passing on, so asking does not flash it at every controller.
+   */
+  async mcpStatus(s: DaemonSession, timeoutMs = 20_000): Promise<string> {
+    const child = s.child;
+    if (!child) {
+      throw new Error("session is not active");
+    }
+    return new Promise<string>((resolve, reject) => {
+      const done = (settle: () => void) => {
+        clearTimeout(timer);
+        this.noticeTaps.delete(s.id);
+        settle();
+      };
+      const timer = setTimeout(
+        () => done(() => reject(new Error("no answer from /mcp - is the MCP extension loaded?"))),
+        timeoutMs,
+      );
+      this.noticeTaps.set(s.id, (text) => done(() => resolve(text)));
+      child.prompt("/mcp").catch((err: unknown) => done(() => reject(err)));
+    });
+  }
+
   /** Keep a "ronpi-usage" status record from a child's usage extension; true if it was one. */
   private takeUsageReport(event: Record<string, unknown>): boolean {
     if (event.method !== "setStatus" || event.statusKey !== "ronpi-usage") {
@@ -209,6 +235,11 @@ export class ChildManager {
     if (type === "extension_ui_request") {
       if (this.takeUsageReport(event)) {
         return; // for the daemon, not for controllers
+      }
+      const tap = this.noticeTaps.get(s.id);
+      if (tap && event.method === "notify") {
+        tap(String(event.message ?? ""));
+        return;
       }
       if (DIALOG_METHODS.has(event.method as string)) {
         s.pendingDialog = true;

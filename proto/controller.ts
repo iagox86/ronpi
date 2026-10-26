@@ -52,6 +52,7 @@ import { ActivityLine } from "./activity.ts";
 import { Dimmed } from "./components.ts";
 import { ChoicePanel } from "./choice-panel.ts";
 import { InfoPanel } from "./info-panel.ts";
+import { type McpServer, parseMcpStatus } from "./mcp.ts";
 import type { ToolRun } from "./tool-run.ts";
 import { assertTruecolor, dim, OSC_RESET_BG, OSC_SET_BG } from "./theme.ts";
 import { Switcher, } from "./switcher.ts";
@@ -150,6 +151,7 @@ class Controller {
         sources: {
           models: () => this.modelNames(),
           groups: () => this.switching.groups.groups,
+          mcpServers: () => this.mcpServers(),
         },
       })),
     );
@@ -442,6 +444,28 @@ class Controller {
       const r = (await this.request({ type: "model", session: meta.id })) as { models: string[] };
       this.modelCache = { session: meta.id, at: Date.now(), names: r.models };
       return r.models;
+    } catch {
+      return [];
+    }
+  }
+
+  /** MCP servers of the viewed session; cached briefly since completion asks per keystroke. */
+  private mcpCache?: { session: number; at: number; servers: McpServer[] };
+
+  async mcpServers(): Promise<McpServer[]> {
+    const meta = this.switching.isOpen || !this.viewing ? undefined : this.metaForPath(this.viewing);
+    if (!meta?.active) {
+      return [];
+    }
+    const cached = this.mcpCache;
+    if (cached && cached.session === meta.id && Date.now() - cached.at < 10_000) {
+      return cached.servers;
+    }
+    try {
+      const r = (await this.request({ type: "mcp_status", session: meta.id })) as { text: string };
+      const servers = parseMcpStatus(r.text);
+      this.mcpCache = { session: meta.id, at: Date.now(), servers };
+      return servers;
     } catch {
       return [];
     }
