@@ -5,7 +5,7 @@
 // The API key never leaves this process: the key is looked up through pi's own
 // model registry, used for one request to the provider, and only the resulting
 // percentages go back, as a setStatus record under "ronpi-usage" (JSON, see
-// UsageReport in proto/shared.ts). ronpi normalizes by provider, so a new
+// UsageReport in src/shared.ts). ronpi normalizes by provider, so a new
 // provider is one adapter here, and a non-pi backend (Claude Code) can produce
 // the same report from its own data.
 //

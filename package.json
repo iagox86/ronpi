@@ -1,0 +1,27 @@
+{
+  "name": "ronpi",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "description": "daemon-backed controller that hosts multiple live pi sessions in one terminal",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.2",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  },
+  "bin": {
+    "ronpi": "ronpi.ts"
+  },
+  "scripts": {
+    "start": "node ronpi.ts",
+    "install-pi": "node src/install.ts",
+    "lint": "biome lint .",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p ."
+  }
+}
