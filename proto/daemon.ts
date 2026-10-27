@@ -62,8 +62,24 @@ async function main(): Promise<void> {
 
   log("daemon starting");
   fs.rmSync(SOCK, { force: true });
-  await new Promise<void>((resolve) => server.listen(SOCK, resolve));
-  fs.writeFileSync(PID_FILE, `${process.pid}\n`);
+  // The socket is an unauthenticated command channel (spawn, prompt, ...), so it
+  // must be owner-only from the moment it exists: the umask covers the bind,
+  // the chmod covers a umask that was looser than we asked for.
+  const prevMask = process.umask(0o177);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(SOCK, resolve);
+    });
+  } catch (err) {
+    // the daemon runs detached with no stdio, so the log is the only place this shows
+    log(`cannot listen on ${SOCK}: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  } finally {
+    process.umask(prevMask);
+  }
+  fs.chmodSync(SOCK, 0o600);
+  fs.writeFileSync(PID_FILE, `${process.pid}\n`, { mode: 0o600 });
   log(`listening on ${SOCK} (pid ${process.pid})`);
 
   // Prune external presence registrations whose pi exited, whose session

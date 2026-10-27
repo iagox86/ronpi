@@ -3,8 +3,20 @@
 // setting RONPI_SOCK / RONPI_LOG / RONPI_TRASH / XDG_DATA_HOME before spawning.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
-export const SOCK = process.env.RONPI_SOCK ?? `${process.env.XDG_RUNTIME_DIR ?? "/tmp"}/ronpi.sock`;
+function sockPath(): string {
+  if (process.env.RONPI_SOCK) {
+    return process.env.RONPI_SOCK;
+  }
+  // No /tmp fallback: the socket takes unauthenticated commands, so it only ever
+  // lives in a per-user directory.
+  if (!process.env.XDG_RUNTIME_DIR) {
+    throw new Error("XDG_RUNTIME_DIR is not set; set it or set RONPI_SOCK to a path in a private (0700) directory");
+  }
+  return `${process.env.XDG_RUNTIME_DIR}/ronpi.sock`;
+}
+export const SOCK = sockPath();
 export const PID_FILE = `${SOCK}.pid`;
 export const DATA_DIR = process.env.XDG_DATA_HOME ?? path.join(process.env.HOME ?? "", ".local", "share");
 export const TRASH_DIR = process.env.RONPI_TRASH ?? path.join(DATA_DIR, "ronpi", "trash");
@@ -31,8 +43,12 @@ function keyLogPath(): string {
   return path.join(dir, "key-debug.log");
 }
 export const KEY_LOG = keyLogPath();
-export const DEFAULT_PI_CLI =
-  "/var/home/ron/.nvm/versions/node/v26.12.0/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js";
+// The pi that npm installed next to ronpi. The package's exports map hides
+// dist/cli.js, so resolve its entry (dist/index.js) and take the sibling.
+export const DEFAULT_PI_CLI = path.join(
+  path.dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"))),
+  "cli.js",
+);
 
 // Extension dialog methods block the child until answered; the rest are
 // fire-and-forget (notify/setStatus/setWidget/setTitle/set_editor_text).

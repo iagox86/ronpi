@@ -2,7 +2,10 @@
 // Usage: node test/smoke-client.mjs
 import net from "node:net";
 
-const SOCK = process.env.RONPI_SOCK ?? `${process.env.XDG_RUNTIME_DIR ?? "/tmp"}/ronpi.sock`;
+const SOCK = process.env.RONPI_SOCK ?? (process.env.XDG_RUNTIME_DIR ? `${process.env.XDG_RUNTIME_DIR}/ronpi.sock` : undefined);
+if (!SOCK) {
+  throw new Error("XDG_RUNTIME_DIR is not set; set it or RONPI_SOCK");
+}
 const sock = net.connect(SOCK);
 let buf = "";
 const messages = [];

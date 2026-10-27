@@ -5,12 +5,17 @@
 import { connect } from "node:net";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const sockPath = process.env.RONPI_SOCK ?? `${process.env.XDG_RUNTIME_DIR ?? "/tmp"}/ronpi.sock`;
+const sockPath = process.env.RONPI_SOCK ?? (process.env.XDG_RUNTIME_DIR ? `${process.env.XDG_RUNTIME_DIR}/ronpi.sock` : undefined);
 
 export default function (pi: ExtensionAPI) {
   // daemon-owned children register through the daemon itself - never as
   // "external" processes
   if (process.env.RONPI_CHILD) {
+    return;
+  }
+  // No socket location means ronpi can't be running (config.ts refuses to start
+  // without one); stay quiet rather than break plain pi.
+  if (!sockPath) {
     return;
   }
   let timer: ReturnType<typeof setInterval> | undefined;
