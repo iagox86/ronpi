@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { type Invocation, parseCommandLine } from "./cli.ts";
 import { SESSION_COMMANDS, type SessionCommandName } from "./commands.ts";
 import { fmtTokens } from "./format.ts";
-import { MCP_ACTIONS } from "./mcp.ts";
+import { addMcpServer, MCP_ACTIONS, mcpConfigFile, mcpEntry } from "./mcp.ts";
 import { forkName, placeFork } from "./fork-placement.ts";
 import { loadGroups, saveGroups, withParked } from "./groups.ts";
 import type { Host } from "./host.ts";
@@ -13,6 +13,13 @@ import { runFeedback } from "./feedback-command.ts";
 import { explainLastThinking } from "./why.ts";
 import { newView } from "./transcript.ts";
 import type { SessionMeta } from "./shared.ts";
+
+const INIT_PROMPT = [
+  "Survey this project and write an AGENTS.md in its root for future agents.",
+  "If one already exists, read it first and update it rather than starting over; keep anything that is still accurate.",
+  "Cover: what the project does, what the main files and directories are for, how to build, run and test it, and the conventions the code follows (naming, style, error handling, anything a newcomer would get wrong).",
+  "Base it on what you actually find in the code and config, not guesses; keep it concise, and skip anything obvious from file names alone.",
+].join(" ");
 
 const COMPACT_TIMEOUT_MS = 10 * 60_000;
 
@@ -65,9 +72,10 @@ export class SessionCommands {
       fork: (c) => this.fork(c.opts.name as string | undefined, c.opts.switch !== false, c.args.join(" ")),
       feedback: (c) => runFeedback(this.h, c, this.h.viewing ?? undefined),
       why: (c) => this.why(c.opts.model as string | undefined),
+      init: () => this.init(),
       clear: () => this.clear(),
       compact: (c) => this.compact(c.args.join(" ")),
-      mcp: (c) => this.mcp(c.args[0], c.args[1]),
+      mcp: (c) => this.mcp(c.args[0], c.args[1], c.args.slice(2)),
     };
   }
 
@@ -329,9 +337,13 @@ export class SessionCommands {
   }
 
   /** /mcp: our own list (pi shows its status as a one-line notice); the other actions are pi's, so they go to it. */
-  private async mcp(action = "list", server?: string): Promise<void> {
+  private async mcp(action = "list", server?: string, target: string[] = []): Promise<void> {
     if (!(MCP_ACTIONS as readonly string[]).includes(action)) {
       this.h.notify(`/mcp: unknown action "${action}" - use ${MCP_ACTIONS.join(", ")}`);
+      return;
+    }
+    if (action === "add") {
+      await this.mcpAdd(server, target);
       return;
     }
     if (action !== "list") {
@@ -352,6 +364,29 @@ export class SessionCommands {
     } catch (err) {
       this.fail("mcp", err);
     }
+  }
+
+  /** /init: an ordinary prompt asking the agent to write the project's AGENTS.md. */
+  private async init(): Promise<void> {
+    this.h.editor.setText("");
+    await this.h.session.prompt(INIT_PROMPT);
+  }
+
+  /** /mcp add: write the server into pi's mcp.json, then reload so the session picks it up. */
+  private async mcpAdd(name: string | undefined, target: string[]): Promise<void> {
+    if (!name) {
+      this.h.notify("/mcp add <name> <url | command args...>");
+      return;
+    }
+    try {
+      addMcpServer(mcpConfigFile(), name, mcpEntry(target));
+    } catch (err) {
+      this.h.notify(`/mcp add: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+    this.h.editor.setText("");
+    this.h.notify(`added "${name}" to ${mcpConfigFile()}`);
+    await this.reload();
   }
 
   private async compact(instructions: string): Promise<void> {

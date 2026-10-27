@@ -1,5 +1,7 @@
 // pi's /mcp command prints its status as plain text; this reads it back into
 // records ronpi can list and complete from.
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 export interface McpServer {
   name: string;
@@ -25,7 +27,7 @@ export function parseMcpStatus(text: string): McpServer[] {
   return servers;
 }
 
-export const MCP_ACTIONS = ["list", "reconnect", "login", "logout"] as const;
+export const MCP_ACTIONS = ["list", "add", "reconnect", "login", "logout"] as const;
 export type McpAction = (typeof MCP_ACTIONS)[number];
 
 export interface Completion {
@@ -45,13 +47,69 @@ export function mcpCompletions(typed: string, servers: readonly McpServer[]): Co
   if (!hasSpace) {
     return MCP_ACTIONS.filter((a) => a.startsWith(action.toLowerCase())).map((a) => ({
       value: a === "list" ? a : `${a} `,
-      description: a === "list" ? "show every server with its state" : `${a} a server (tab completes its name)`,
+      description:
+        a === "list"
+          ? "show every server with its state"
+          : a === "add"
+            ? "add a server: add <name> <url | command args...>"
+            : `${a} a server (tab completes its name)`,
     }));
   }
-  if (!(MCP_ACTIONS as readonly string[]).includes(action) || action === "list") {
+  if (!(MCP_ACTIONS as readonly string[]).includes(action) || action === "list" || action === "add") {
     return [];
   }
   return servers
     .filter((s) => s.name.toLowerCase().startsWith(prefix.toLowerCase()))
     .map((s) => ({ value: `${action} ${s.name}`, description: s.detail }));
+}
+
+export interface McpEntry {
+  url?: string;
+  command?: string;
+  args?: string[];
+}
+
+/** pi's mcp.json: a URL means a remote server, anything else is a command to run over stdio. */
+export function mcpEntry(target: readonly string[]): McpEntry {
+  const [first, ...rest] = target;
+  if (!first) {
+    throw new Error("give a URL or a command to run");
+  }
+  if (/^https?:\/\//i.test(first)) {
+    if (rest.length > 0) {
+      throw new Error("a URL takes no further arguments");
+    }
+    return { url: first };
+  }
+  return rest.length > 0 ? { command: first, args: rest } : { command: first };
+}
+
+/** Where pi reads its MCP servers from. */
+export function mcpConfigFile(): string {
+  const agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(process.env.HOME ?? "", ".pi", "agent");
+  return path.join(agentDir, "mcp.json");
+}
+
+/**
+ * Add `name` to the mcp.json at `file`, keeping every other key as it was.
+ * Refuses to replace an existing server or to touch a file that is not valid JSON.
+ */
+export function addMcpServer(file: string, name: string, entry: McpEntry): void {
+  let config: { mcpServers?: Record<string, unknown> } = {};
+  if (fs.existsSync(file)) {
+    try {
+      config = JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch (err) {
+      throw new Error(`${file} is not valid JSON (${err instanceof Error ? err.message : err}); fix it by hand first`);
+    }
+  }
+  const servers = config.mcpServers ?? {};
+  if (Object.hasOwn(servers, name)) {
+    throw new Error(`server "${name}" already exists in ${file}`);
+  }
+  config.mcpServers = { ...servers, [name]: entry };
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(tmp, file);
 }

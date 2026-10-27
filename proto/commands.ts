@@ -119,12 +119,13 @@ export const SESSION_COMMANDS = [
   },
   {
     name: "mcp",
-    description: "list the MCP servers and their states, or reconnect / sign in to / sign out of one (tab completes names)",
+    description: "list the MCP servers and their states, add one, or reconnect / sign in to / sign out of one (tab completes names)",
     complete: async (typed, src) => mcpCompletions(typed, await src.mcpServers()),
     build: (cmd) => {
       cmd
-        .argument("[action]", "list (default), reconnect, login or logout")
-        .argument("[server]", "which server, for reconnect / login / logout (leave out to be asked)");
+        .argument("[action]", "list (default), add, reconnect, login or logout")
+        .argument("[server]", "which server (for add, the name to give it); leave out to be asked for reconnect / login / logout")
+        .argument("[target...]", "for add: a URL, or a command and its arguments; put -- before arguments that start with -");
     },
   },
   {
@@ -153,6 +154,10 @@ export const SESSION_COMMANDS = [
     build: (cmd) => {
       cmd.option("-m, --model <model>", "model to explain with (default: the summary model)");
     },
+  },
+  {
+    name: "init",
+    description: "have the agent survey the project and write an AGENTS.md (what it is, layout, conventions); updates one that exists",
   },
   { name: "clear", description: "wipe this session's conversation and start over (same name and model; old contents go to trash)" },
   {
