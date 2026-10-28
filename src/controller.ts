@@ -488,8 +488,7 @@ class Controller {
 
   /** Whether a paste has somewhere to go: not while a panel or dialog is waiting for its own keys. */
   private canPaste(): boolean {
-    const view = this.viewing ? this.views.get(this.viewing) : undefined;
-    return !(this.choicePanel.isOpen || this.infoPanel.isOpen || this.historySearch.isOpen || view?.dialog);
+    return !(this.choicePanel.isOpen || this.infoPanel.isOpen || this.historySearch.isOpen || this.openDialog(this.viewing));
   }
 
   /** ctrl-v: the clipboard's text, or its image. */
@@ -684,7 +683,7 @@ class Controller {
       }
     }
     const view = this.viewing ? this.views.get(this.viewing) : undefined;
-    if (view?.dialog && this.session.dialogKeys(view, data)) {
+    if (view?.dialog && !this.switching.isOpen && this.session.dialogKeys(view, data)) {
       return true;
     }
     if (this.historySearch.isOpen) {
@@ -984,9 +983,14 @@ class Controller {
     return live?.sessionName ?? file?.name ?? (file ? displayName(live, file) : undefined);
   }
 
+  /** The dialog waiting in the session on screen; none while the switcher is up (it stays pending, and is shown again on re-entering). */
+  private openDialog(key: string | null): DialogRequest | undefined {
+    return key && !this.switching.isOpen ? this.views.get(key)?.dialog : undefined;
+  }
+
   renderChrome(): void {
     this.syncActivity();
-    this.dialogPanel.sync(this.viewing ? this.views.get(this.viewing)?.dialog : undefined);
+    this.dialogPanel.sync(this.openDialog(this.viewing));
     const width = this.tui.terminal.columns || process.stdout.columns || 80;
     const key = this.viewing;
     const stats = fleetStats(this.sessions.values());
@@ -1011,7 +1015,7 @@ class Controller {
       info: key ? this.local.get(key) : undefined,
       stats,
       flash: this.flash,
-      dialog: key ? this.views.get(key)?.dialog : undefined,
+      dialog: this.openDialog(key),
       activity: key ? this.views.get(key)?.activity?.label : undefined,
       width,
       // a clipboard problem is worth a standing note while the switcher is up; it is not an error

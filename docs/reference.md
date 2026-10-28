@@ -175,7 +175,7 @@ pi-tui turns a press and release on one cell into a `click` that pi's thinking b
 
 ## Dialogs that go stale
 
-A permission dialog is held by the daemon (`pendingDialog`, `lastDialog`) until answered. It is also dropped when the turn settles (`agent_settled`) and when the dialog's `timeout` passes (pi resolves such a dialog itself and says nothing). The controller drops its open dialog when the session list says none is pending, asks the daemon again (`attach`, which resends the waiting dialog) when the list says one is pending for us and none is open, and keeps an open dialog when the history reply replaces the view (the daemon sends the dialog just before the history).
+A permission dialog is held by the daemon (`pendingDialog`, `lastDialog`) until answered. It is also dropped when the turn settles (`agent_settled`) and when the dialog's `timeout` passes (pi resolves such a dialog itself and says nothing). The controller drops its open dialog when the session list says none is pending, asks the daemon again (`attach`, which resends the waiting dialog) when the list says one is pending for us and none is open, shows and answers a dialog only while its session is on screen (with the switcher up the dialog stays pending, the row says "waiting on permission", and entering the session shows it again), and keeps an open dialog when the history reply replaces the view (the daemon sends the dialog just before the history).
 
 ## Waking sleeping sessions
 

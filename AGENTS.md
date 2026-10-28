@@ -6,6 +6,15 @@ processes; the controller (`src/controller.ts`, started via `ronpi.ts`) is a
 pi-tui app that talks to it over a unix socket. User docs: `README.md`.
 Everything else (keys, env, code layout, design, backlog): `docs/`.
 
+## Job board
+
+Work is tracked on the Vikunja board (projects "RonPI - base" and
+"RonPI - Subagents"), not in this repo's issues. When assigned a ticket: work it
+per this file, then leave the task open with the `needs verification` label and
+a `Done (agent, <date>)` comment with validation steps - only Ron marks tasks
+done. Full workflow: the `ronpi-job-board-workflow` skill; API details: the
+`vikunja-mcp` skill.
+
 ## Commands
 
 Use node v26 (`~/.nvm/versions/node/v26.12.0/bin`); the default node is too old.

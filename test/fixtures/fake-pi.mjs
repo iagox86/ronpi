@@ -240,7 +240,7 @@ async function handle(cmd) {
       if (cmd.message.trim() === "/ask") {
         // a permission dialog pi settles by itself after its timeout, never answered by anyone
         ok(cmd.id, "prompt", { disposition: "started" });
-        return out({ type: "extension_ui_request", id: "ask-1", method: "confirm", title: "Allow?", message: "run rm", timeout: 300 });
+        return out({ type: "extension_ui_request", id: "ask-1", method: "confirm", title: "Allow?", message: "run rm", ...(process.env.FAKE_PI_ASK_MS === "0" ? {} : { timeout: Number(process.env.FAKE_PI_ASK_MS ?? 300) }) });
       }
       if (cmd.message.trim() === "/mcp") {
         // like pi's extension command: answered as a notice, never entering the conversation
