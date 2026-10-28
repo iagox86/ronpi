@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseCommandLine } from "../src/cli.ts";
+import { Command } from "commander";
+import { type CommandSpec, parseCommandLine } from "../src/cli.ts";
 import { SESSION_COMMANDS, SWITCHER_COMMANDS } from "../src/commands.ts";
 
 describe("command registries", () => {
@@ -62,5 +63,56 @@ describe("command flags", () => {
 
   it("has /ungroup in the switcher", () => {
     assert.equal(parseCommandLine(SWITCHER_COMMANDS, "/ungroup").kind, "run");
+  });
+});
+
+describe("command help", () => {
+  const all = [
+    ...SWITCHER_COMMANDS.map((c) => ["switcher", c] as const),
+    ...SESSION_COMMANDS.map((c) => ["session", c] as const),
+  ];
+  const lists = { switcher: SWITCHER_COMMANDS, session: SESSION_COMMANDS } as const;
+
+  it("answers --help and -h for every command with its description and the longer help", () => {
+    for (const [scope, spec] of all) {
+      for (const flag of ["--help", "-h"]) {
+        const r = parseCommandLine(lists[scope], `/${spec.name} ${flag}`);
+        assert.equal(r.kind, "help", `${scope} /${spec.name} ${flag}`);
+        if (r.kind === "help") {
+          assert.ok(r.text.includes(spec.description.slice(0, 20)), `${scope} /${spec.name} shows its description`);
+          assert.ok(r.text.includes(("help" in spec ? spec.help : "") as string), `${scope} /${spec.name} shows its help text`);
+        }
+      }
+    }
+  });
+
+  it("explains every command beyond its one-line description", () => {
+    const missing = all.filter(([, spec]) => !("help" in spec && typeof spec.help === "string" && spec.help.length > 20)).map(([scope, spec]) => `${scope} /${spec.name}`);
+    assert.deepEqual(missing, [], "add a `help:` text (what it does, examples) to these commands");
+  });
+
+  it("describes every option and argument", () => {
+    for (const [scope, spec] of all) {
+      const cmd = new Command(`/${spec.name}`);
+      (spec as CommandSpec).build?.(cmd);
+      for (const o of cmd.options) {
+        assert.ok(o.description, `${scope} /${spec.name} option ${o.flags} has no description`);
+      }
+      for (const a of cmd.registeredArguments) {
+        assert.ok(a.description, `${scope} /${spec.name} argument ${a.name()} has no description`);
+      }
+    }
+  });
+
+  it("lists the session commands from /help", () => {
+    assert.ok(SESSION_COMMANDS.some((c) => c.name === "help"));
+  });
+});
+
+describe("bare /mcp", () => {
+  it("passes no action, which the handler reads as list", () => {
+    const r = parseCommandLine(SESSION_COMMANDS, "/mcp");
+    assert.equal(r.kind, "run");
+    assert.deepEqual(r.kind === "run" ? r.call.args : null, []);
   });
 });

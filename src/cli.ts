@@ -25,6 +25,8 @@ export interface CommandSpec {
   description: string;
   /** Declare options and arguments on the commander Command. */
   build?: (cmd: Command) => void;
+  /** Longer explanation and examples, printed after the options by --help. Every command that is not obvious from its description should have one. */
+  help?: string;
   /**
    * Values to offer for the text typed after the command name (the whole rest
    * of the line). Only for arguments with a known set of choices; flags are
@@ -114,6 +116,9 @@ function commandFor(spec: CommandSpec, out: string[]): Command {
       outputError: () => {},
     });
   spec.build?.(cmd);
+  if (spec.help) {
+    cmd.addHelpText("after", `\n${spec.help}`);
+  }
   return cmd;
 }
 
@@ -154,7 +159,8 @@ export function parseCommandLine(specs: readonly CommandSpec[], line: string): P
     }
     throw err;
   }
-  const args = cmd.processedArgs.flat().map(String);
+  // an optional argument left out arrives as undefined, which must not become the text "undefined"
+  const args = cmd.processedArgs.flat().filter((a) => a !== undefined).map(String);
   return { kind: "run", spec, call: { args, opts: cmd.opts() } };
 }
 

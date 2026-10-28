@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { addMcpServer, mcpCompletions, mcpEntry, parseMcpStatus } from "../src/mcp.ts";
+import { addMcpServer, mcpCompletions, mcpEntry, parseMcpStatus, removeMcpServer } from "../src/mcp.ts";
 
 const STATUS = [
   "mealie: connected, 12 tools (direct)",
@@ -35,7 +35,7 @@ describe("mcpCompletions", () => {
   const servers = parseMcpStatus(STATUS);
 
   it("offers the actions for the first word, narrowed by what is typed", () => {
-    assert.deepEqual(mcpCompletions("", servers).map((c) => c.value), ["list", "add ", "reconnect ", "login ", "logout "]);
+    assert.deepEqual(mcpCompletions("", servers).map((c) => c.value), ["list", "status ", "add ", "remove ", "reconnect ", "login ", "logout "]);
     assert.deepEqual(mcpCompletions("lo", servers).map((c) => c.value), ["login ", "logout "]);
   });
 
@@ -102,5 +102,39 @@ describe("addMcpServer", () => {
     const bad = tmpFile("{ nope");
     assert.throws(() => addMcpServer(bad, "a", { command: "n" }), /not valid JSON/);
     assert.equal(fs.readFileSync(bad, "utf8"), "{ nope");
+  });
+});
+
+describe("removeMcpServer", () => {
+  function tmpFile(content: string): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-mcp-"));
+    const file = path.join(dir, "mcp.json");
+    fs.writeFileSync(file, content);
+    return file;
+  }
+
+  it("removes one server and keeps the others and every other key", () => {
+    const file = tmpFile(JSON.stringify({ settings: { t: 1 }, mcpServers: { a: { command: "a" }, b: { url: "http://b/mcp" } } }));
+    removeMcpServer(file, "a");
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { settings: { t: 1 }, mcpServers: { b: { url: "http://b/mcp" } } });
+  });
+
+  it("says where a server is defined when it is not in this file", () => {
+    const user = tmpFile(JSON.stringify({ mcpServers: { a: { command: "a" } } }));
+    const project = tmpFile(JSON.stringify({ mcpServers: { proj: { command: "p" } } }));
+    assert.throws(() => removeMcpServer(user, "proj", [project]), new RegExp(`defined in ${project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    assert.throws(() => removeMcpServer(user, "ghost", [project]), /not in .*extension cannot be removed/);
+    assert.throws(() => removeMcpServer(path.join(os.tmpdir(), "no-such-ronpi-mcp.json"), "a"), /is not in/);
+  });
+
+  it("leaves a file that is not valid JSON alone", () => {
+    const file = tmpFile("{ nope");
+    assert.throws(() => removeMcpServer(file, "a"), /not valid JSON/);
+    assert.equal(fs.readFileSync(file, "utf8"), "{ nope");
+  });
+
+  it("offers server names after remove, with their state", () => {
+    const out = mcpCompletions("remove me", [{ name: "mealie", detail: "connected, 12 tools (direct)" }, { name: "other", detail: "x" }]);
+    assert.deepEqual(out, [{ value: "remove mealie", description: "connected, 12 tools (direct)" }]);
   });
 });

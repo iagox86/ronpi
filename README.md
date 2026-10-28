@@ -71,13 +71,13 @@ begin a new session, or use the keys below.
 | ctrl-r | session | search prompt history |
 | ctrl-v, middle click | both | paste clipboard (text or image), paste selection |
 
-Type `/` for commands; tab completes them and their arguments, and
-`/<command> --help` explains one. Commands ronpi handles itself:
+Type `/` for commands; tab completes them and their arguments, `/help` lists them, and
+`/<command> --help` explains one (what it does, every option, examples). Commands ronpi handles itself:
 
 - Switcher: `/new [-a agent]`, `/agents`, `/detach`, `/stop`, `/delete`, `/rename`, `/group`, `/ungroup`, `/park`,
   `/filter`, `/summarize`, `/restore`, `/adopt`, `/feedback`, `/kill-daemon`, `/help`, `/exit`
-- In a session: `/model`, `/compact`, `/clear`, `/fork`, `/park`, `/rename`, `/reload`,
-  `/mcp` (`list`, `add`, `reconnect`, `login`, `logout`), `/init`, `/why`, `/abort`,
+- In a session: `/help`, `/model`, `/compact`, `/clear`, `/fork`, `/park`, `/rename`, `/reload`,
+  `/mcp` (`list`, `status`, `add`, `remove`, `reconnect`, `login`, `logout`), `/init`, `/why`, `/abort`,
   `/feedback`, `/parent` (jump to the agent that started this subagent), `/detach` (cut that link), `/quit` (back to the switcher), `/exit`
 
 Anything else starting with `/` goes to pi (its skills and prompt templates).

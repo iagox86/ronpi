@@ -27,7 +27,7 @@ export function parseMcpStatus(text: string): McpServer[] {
   return servers;
 }
 
-export const MCP_ACTIONS = ["list", "add", "reconnect", "login", "logout"] as const;
+export const MCP_ACTIONS = ["list", "status", "add", "remove", "reconnect", "login", "logout"] as const;
 export type McpAction = (typeof MCP_ACTIONS)[number];
 
 export interface Completion {
@@ -50,9 +50,13 @@ export function mcpCompletions(typed: string, servers: readonly McpServer[]): Co
       description:
         a === "list"
           ? "show every server with its state"
+          : a === "status"
+            ? "troubleshoot: state, error, configuration and checks for each server"
           : a === "add"
             ? "add a server: add <name> <url | command args...>"
-            : `${a} a server (tab completes its name)`,
+            : a === "remove"
+              ? "remove a server from mcp.json (tab completes its name)"
+              : `${a} a server (tab completes its name)`,
     }));
   }
   if (!(MCP_ACTIONS as readonly string[]).includes(action) || action === "list" || action === "add") {
@@ -112,4 +116,44 @@ export function addMcpServer(file: string, name: string, entry: McpEntry): void 
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   fs.renameSync(tmp, file);
+}
+
+/**
+ * Remove `name` from the mcp.json at `file`, keeping every other key. Throws a
+ * message that says where the server is defined when it is not in this file
+ * (`elsewhere` lists other config files to look in).
+ */
+export function removeMcpServer(file: string, name: string, elsewhere: readonly string[] = []): void {
+  let config: { mcpServers?: Record<string, unknown> };
+  try {
+    config = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      config = {};
+    } else {
+      throw new Error(`${file} is not valid JSON (${err instanceof Error ? err.message : err}); fix it by hand first`);
+    }
+  }
+  const servers = config.mcpServers ?? {};
+  if (!Object.hasOwn(servers, name)) {
+    const where = elsewhere.filter((f) => configuredMcpNames(f).includes(name));
+    throw new Error(
+      where.length > 0
+        ? `"${name}" is not in ${file}; it is defined in ${where.join(", ")} - remove it there`
+        : `"${name}" is not in ${file} (a server registered by an extension cannot be removed here)`,
+    );
+  }
+  const { [name]: _gone, ...rest } = servers;
+  config.mcpServers = rest;
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+
+function configuredMcpNames(file: string): string[] {
+  try {
+    return Object.keys((JSON.parse(fs.readFileSync(file, "utf8")) as { mcpServers?: Record<string, unknown> }).mcpServers ?? {});
+  } catch {
+    return [];
+  }
 }

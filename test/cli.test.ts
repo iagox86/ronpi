@@ -120,3 +120,12 @@ describe("usageHint and listing", () => {
     assert.match(text, /--help/);
   });
 });
+
+describe("omitted optional arguments", () => {
+  it("are left out of the argument list, never the text 'undefined'", () => {
+    const spec = { name: "x", description: "d", build: (cmd) => cmd.argument("[a]", "first").argument("[b]", "second") } satisfies CommandSpec;
+    const r = parseCommandLine([spec], "/x one");
+    assert.equal(r.kind, "run");
+    assert.deepEqual(r.kind === "run" ? r.call.args : null, ["one"]);
+  });
+});

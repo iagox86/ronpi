@@ -1,12 +1,13 @@
 // The /commands ronpi handles itself inside a session (SESSION_COMMANDS);
 // anything else typed with a leading slash goes to pi.
 import * as path from "node:path";
-import { type Invocation, parseCommandLine } from "./cli.ts";
+import { type Invocation, listing, parseCommandLine } from "./cli.ts";
 import { SESSION_COMMANDS, type SessionCommandName } from "./commands.ts";
 import { fmtTokens } from "./format.ts";
 import { detachFromParent, loadLineage } from "./lineage.ts";
 import { relationOf } from "./session-tree.ts";
-import { addMcpServer, MCP_ACTIONS, mcpConfigFile, mcpEntry } from "./mcp.ts";
+import { probeEntry, parseStatusDetailed, readConfigs, statusReport } from "./mcp-doctor.ts";
+import { addMcpServer, MCP_ACTIONS, mcpConfigFile, mcpEntry, removeMcpServer } from "./mcp.ts";
 import { forkName, placeFork } from "./fork-placement.ts";
 import { loadGroups, saveGroups, withParked } from "./groups.ts";
 import type { Host } from "./host.ts";
@@ -66,6 +67,10 @@ export class SessionCommands {
       exit: () => this.h.dispose(),
       quit: () => this.h.switching.open(),
       park: () => this.park(),
+      help: () => {
+        this.h.infoPanel.show(listing(SESSION_COMMANDS));
+        this.h.tui.requestRender();
+      },
       abort: () => this.abort(),
       parent: () => this.parent(),
       detach: () => this.detach(),
@@ -351,6 +356,14 @@ export class SessionCommands {
       await this.mcpAdd(server, target);
       return;
     }
+    if (action === "remove") {
+      await this.mcpRemove(server);
+      return;
+    }
+    if (action === "status") {
+      await this.mcpStatus(server);
+      return;
+    }
     if (action !== "list") {
       this.h.editor.setText("");
       await this.h.session.prompt(`/mcp ${action}${server ? ` ${server}` : ""}`);
@@ -420,6 +433,55 @@ export class SessionCommands {
     }
     this.h.editor.setText("");
     this.h.notify(`added "${name}" to ${mcpConfigFile()}`);
+    await this.reload();
+  }
+
+  /** /mcp status [server]: why servers are not working - pi's state and errors, the configuration, cheap local checks, what to try. */
+  private async mcpStatus(only: string | undefined): Promise<void> {
+    const meta = await this.liveMeta();
+    if (!meta) {
+      return;
+    }
+    try {
+      this.h.notify("checking the MCP servers...");
+      const r = (await this.h.request({ type: "mcp_status", session: meta.id }, 60_000)) as { text: string };
+      const parsed = parseStatusDetailed(r.text);
+      const configs = readConfigs([mcpConfigFile(), path.join(meta.cwd, ".pi", "mcp.json")]);
+      // probe only what needs it: the named server, or every one that is not connected
+      const findings = new Map<string, string[]>();
+      await Promise.all(
+        parsed.servers
+          .filter((s) => (only ? s.name === only : !/^connected/i.test(s.detail)))
+          .map(async (s) => {
+            const cfg = configs.get(s.name);
+            if (cfg) {
+              findings.set(s.name, await probeEntry(cfg.entry));
+            }
+          }),
+      );
+      this.h.infoPanel.show(statusReport(parsed, configs, findings, only));
+      this.h.notify("");
+      this.h.tui.requestRender();
+    } catch (err) {
+      this.fail("mcp", err);
+    }
+  }
+
+  /** /mcp remove: take the server out of pi's mcp.json and reload this session so it disconnects. */
+  private async mcpRemove(name: string | undefined): Promise<void> {
+    if (!name) {
+      this.h.notify("/mcp remove <server> (tab completes the names)");
+      return;
+    }
+    const cwd = this.viewedMeta()?.cwd ?? (this.h.viewing ? this.h.local.get(this.h.viewing)?.cwd : undefined) ?? process.cwd();
+    try {
+      removeMcpServer(mcpConfigFile(), name, [path.join(cwd, ".pi", "mcp.json")]);
+    } catch (err) {
+      this.h.notify(`/mcp remove: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+    this.h.editor.setText("");
+    this.h.notify(`removed "${name}" from ${mcpConfigFile()}`);
     await this.reload();
   }
 
