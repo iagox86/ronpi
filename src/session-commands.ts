@@ -17,14 +17,8 @@ import { askBtw, saveBtw } from "./btw.ts";
 import { loadSettings, resolveChildConfig } from "./settings.ts";
 import { explainLastThinking } from "./why.ts";
 import { newView } from "./transcript.ts";
+import { INIT_PROMPT } from "./init-prompt.ts";
 import type { SessionMeta } from "./shared.ts";
-
-const INIT_PROMPT = [
-  "Survey this project and write an AGENTS.md in its root for future agents.",
-  "If one already exists, read it first and update it rather than starting over; keep anything that is still accurate.",
-  "Cover: what the project does, what the main files and directories are for, how to build, run and test it, and the conventions the code follows (naming, style, error handling, anything a newcomer would get wrong).",
-  "Base it on what you actually find in the code and config, not guesses; keep it concise, and skip anything obvious from file names alone.",
-].join(" ");
 
 const COMPACT_TIMEOUT_MS = 10 * 60_000;
 

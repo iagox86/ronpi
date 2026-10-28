@@ -230,8 +230,8 @@ export const SESSION_COMMANDS = [
   },
   {
     name: "init",
-    description: "have the agent survey the project and write an AGENTS.md (what it is, layout, conventions); updates one that exists",
-    help: "Sends the agent a prompt to survey the project and write AGENTS.md, or update the one that exists. The agent does the scanning with its normal tools.",
+    description: "have the agent survey the project and write an AGENTS.md (what it is, layout, conventions); updates one that exists and folds in CLAUDE.md and other agent-instruction files",
+    help: "Sends the agent a prompt to survey the project and write AGENTS.md, or update the one that exists, folding in CLAUDE.md and other agent-instruction files. The agent does the scanning with its normal tools.",
   },
   { name: "clear", description: "wipe this session's conversation and start over (same name and model; old contents go to trash)",
     help: "Empties the conversation but keeps the session, its name and model. The old contents go to trash; esc esc offers to undo it." },
