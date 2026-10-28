@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { formatLocalCommand } from "../src/local-command.ts";
 import { clearFile, latestClearBackup, restoreClear, rewindFile, rewindTargets } from "../src/rewind.ts";
 
 function session(): { file: string; trash: string } {
@@ -29,6 +30,21 @@ describe("rewind", () => {
       { entryId: "u1", text: "first", ts: 0 },
       { entryId: "u2", text: "second", ts: 0 },
     ]);
+  });
+
+  it("does not offer messages from other sessions as rewind points", () => {
+    const { file } = session();
+    const label = "[from Boss (0b1c2d3e-aaaa-4bbb-8ccc-111111111111)]: hello";
+    fs.appendFileSync(file, `${JSON.stringify({ type: "message", id: "u3", parentId: "a2", message: { role: "user", content: label } })}\n`);
+    assert.deepEqual(rewindTargets(file).map((t) => t.entryId), ["u1", "u2"]);
+  });
+
+  it("lists a !command as the command that was typed, marked as local, not as the tagged output", () => {
+    const { file } = session();
+    const tagged = formatLocalCommand("cat /etc/passwd", { output: "root:x:0:0\n", exitCode: 0, cancelled: false, truncated: false });
+    fs.appendFileSync(file, `${JSON.stringify({ type: "message", id: "u3", parentId: "a2", message: { role: "user", content: tagged } })}\n`);
+    const last = rewindTargets(file).at(-1);
+    assert.deepEqual([last?.text, last?.local], ["!cat /etc/passwd", true]);
   });
 
   it("cuts the session back to before the chosen message and returns its text", () => {

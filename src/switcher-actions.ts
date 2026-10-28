@@ -25,6 +25,10 @@ import {
   sortSessions,
   type MutationResult,
 } from "./session-list.ts";
+import { detachFromParent, loadLineage, parentMap } from "./lineage.ts";
+import { arrangeTree } from "./session-tree.ts";
+import { loadAgentsChecked } from "./agents.ts";
+import { agentListing } from "./agents-completion.ts";
 import { runFeedback } from "./feedback-command.ts";
 import type { SwitcherSession } from "./switcher.ts";
 import { itemsFromFile, newView } from "./transcript.ts";
@@ -105,7 +109,7 @@ export class SwitcherActions {
 
   refresh(): void {
     this.groups = loadGroups();
-    const list = buildSessionList({
+    let list = buildSessionList({
       daemon: this.h.sessions.values(),
       local: this.h.local,
       groups: this.groups,
@@ -117,6 +121,7 @@ export class SwitcherActions {
       this.switchOrder = list.map((s) => s.key);
     }
     sortSessions(list, this.groups.order ?? [], this.switchOrder);
+    list = arrangeTree(list, parentMap(loadLineage()));
     const order = appendUnranked(this.groups.order, list);
     if (order) {
       this.groups.order = order;
@@ -146,6 +151,17 @@ export class SwitcherActions {
     this.h.tui.requestRender();
   }
 
+  /** Open the session with this UUID from outside the switcher (/parent). False when it is not in the list. */
+  async openSession(uuid: string): Promise<boolean> {
+    this.refresh();
+    const row = this.h.switcher.sessions.find((s) => s.sessionId === uuid);
+    if (!row) {
+      return false;
+    }
+    await this.enter(row);
+    return true;
+  }
+
   async enter(s: SwitcherSession): Promise<void> {
     if (s.daemonId !== undefined && (s.state === "streaming" || s.state === "idle")) {
       try {
@@ -167,9 +183,9 @@ export class SwitcherActions {
   }
 
   /** Spawn a session; `firstMessage` is prompted once it is entered. */
-  async newSession(firstMessage?: string, name?: string, cwd = process.cwd()): Promise<void> {
+  async newSession(firstMessage?: string, name?: string, cwd = process.cwd(), agent?: string): Promise<void> {
     try {
-      const data = (await this.h.request({ type: "spawn", cwd, name })) as { sessionId?: number };
+      const data = (await this.h.request({ type: "spawn", cwd, name: name ? this.h.uniqueSessionName(name) : name, agent })) as { sessionId?: number };
       if (typeof data?.sessionId === "number") {
         const meta = this.h.sessions.get(data.sessionId);
         if (meta) {
@@ -217,7 +233,9 @@ export class SwitcherActions {
       if (!confirmed && this.armedDelete !== s.key) {
         this.armedDelete = s.key;
         const live = s.state === "streaming" || s.state === "idle";
-        this.h.switcher.hint = `${s.name}: press ctrl-x again to ${live ? "stop it and " : ""}move to trash`;
+        const kids = s.descendants ?? 0;
+        const orphans = kids > 0 ? ` (its ${kids} ${kids === 1 ? "child stays" : "children stay"}, listed on their own)` : "";
+        this.h.switcher.hint = `${s.name}: press ctrl-x again to ${live ? "stop it and " : ""}move to trash${orphans}`;
         this.h.tui.requestRender();
         return;
       }
@@ -559,7 +577,11 @@ export class SwitcherActions {
           this.h.switcher.hint = `new: ${cwd} is not a directory`;
           return;
         }
-        await this.newSession(undefined, call.opts.name as string | undefined, cwd);
+        await this.newSession(undefined, call.opts.name as string | undefined, cwd, call.opts.agent as string | undefined);
+      },
+      agents: async () => {
+        const { agents, problems } = loadAgentsChecked(process.cwd());
+        this.h.infoPanel.show(agentListing(agents, problems));
       },
       feedback: async (call, target) => runFeedback(this.h, call, target?.key),
       stop: needsTarget("stop", (t) => this.stop(t)),
@@ -577,15 +599,16 @@ export class SwitcherActions {
           return;
         }
         try {
+          const unique = this.h.uniqueSessionName(arg, t.key);
           await this.h.request({
             type: "rename",
             session: t.daemonId,
             path: t.daemonId === undefined ? t.key : undefined,
-            name: arg,
+            name: unique,
           });
           await this.h.loadLocal();
           this.refresh();
-          this.h.switcher.hint = `renamed to ${arg}`;
+          this.h.switcher.hint = unique === arg ? `renamed to ${arg}` : `renamed to ${unique} (${arg} is taken)`;
         } catch (err) {
           this.h.switcher.hint = `rename failed: ${err instanceof Error ? err.message : err}`;
         }
@@ -618,6 +641,16 @@ export class SwitcherActions {
         saveGroups(this.groups);
         this.refresh();
         this.h.switcher.hint = undo ? `${t.name} unparked` : `${t.name} parked (using it again unparks it)`;
+      }),
+      detach: needsTarget("detach", async (t) => {
+        const parent = t.sessionId ? detachFromParent(t.sessionId) : undefined;
+        if (!parent) {
+          this.h.switcher.hint = `${t.name} was not started by an agent - nothing to detach`;
+        } else {
+          this.h.forgetLineage();
+          this.refresh();
+          this.h.switcher.hint = `${t.name} detached from ${parent.name} - it is top-level now`;
+        }
       }),
       ungroup: needsTarget("ungroup", async (t) => {
         if (!t.sessionId) {
@@ -752,14 +785,23 @@ export class SwitcherActions {
     }
     // on a session, left is a no-op (furthest back level); on a group header it folds the group
     if (matchesKey(data, Key.left) && editorEmpty) {
+      const here = this.h.switcher.current();
       if (this.h.switcher.currentIsHeader()) {
         this.setCollapsed(this.h.switcher.currentHeaderTitle(), true);
+      } else if (here && (here.descendants ?? 0) > 0 && !this.isFolded(here)) {
+        this.setSessionFolded(here, true);
+      } else if (here?.parentId) {
+        // like a file tree: left on a child goes up to its parent
+        this.h.switcher.selectSessionId(here.parentId);
+        this.h.tui.requestRender();
       }
       return true;
     }
     if (matchesKey(data, Key.right) && editorEmpty) {
       const target = this.h.switcher.current();
-      if (target) {
+      if (target && (target.descendants ?? 0) > 0 && this.isFolded(target)) {
+        this.setSessionFolded(target, false);
+      } else if (target) {
         void this.enter(target);
       } else if (this.h.switcher.currentIsHeader()) {
         this.setCollapsed(this.h.switcher.currentHeaderTitle(), false);
@@ -808,6 +850,31 @@ export class SwitcherActions {
       return true;
     }
     return false;
+  }
+
+  private isFolded(s: SwitcherSession): boolean {
+    return !this.filter && s.sessionId !== undefined && (this.groups.collapsed ?? []).includes(s.sessionId);
+  }
+
+  /** Fold or unfold the children of a session; remembered across runs (same list as folded groups). */
+  private setSessionFolded(s: SwitcherSession, fold: boolean): void {
+    if (this.filter) {
+      this.h.switcher.hint = "children can't be folded while a filter is on";
+      this.h.tui.requestRender();
+      return;
+    }
+    if (!s.sessionId) {
+      return;
+    }
+    const set = new Set(this.groups.collapsed);
+    if (fold) {
+      set.add(s.sessionId);
+    } else {
+      set.delete(s.sessionId);
+    }
+    this.groups.collapsed = [...set];
+    saveGroups(this.groups);
+    this.refresh();
   }
 
   /** Fold or unfold a group in the switcher; remembered across runs. */

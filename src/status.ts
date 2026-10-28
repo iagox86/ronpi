@@ -79,6 +79,10 @@ export interface StatusInputs {
   notice?: string;
   /** What the session is doing right now ("thinking", "running bash"), when it is working. */
   activity?: string;
+  /** Set while viewing a fork/subagent: what it is and whose. */
+  relation?: { kind: "subagent"; parentName: string };
+  /** Spend of everything below the viewed session. */
+  childCost?: number;
   /** Terminal width; low-priority segments are dropped to fit. */
   width?: number;
 }
@@ -129,6 +133,12 @@ function sessionSegments(inp: StatusInputs): Segment[] {
     const provider = meta?.provider ? dim(` (${meta.provider})`) : "";
     out.push({ text: `${gauge(modelBadness(modelId), modelId)}${provider}`, drop: 4 });
   }
+  if (inp.relation) {
+    out.push({ text: attention(`SUBAGENT of ${inp.relation.parentName}`), drop: 0 });
+  }
+  if (meta?.agent) {
+    out.push({ text: accent(`agent ${meta.agent}`), drop: 3 });
+  }
   const label = meta?.streaming && inp.activity ? inp.activity : stateLabel(meta);
   out.push({ text: label === "crashed" ? attention(label) : label === "idle" || label === "inactive" ? dim(label) : accent(label), drop: 1 });
   if (meta?.ctxMax) {
@@ -149,6 +159,9 @@ function sessionSegments(inp: StatusInputs): Segment[] {
   }
   if (meta?.cost) {
     out.push({ text: `$${meta.cost.toFixed(meta.cost < 0.1 ? 3 : 2)}`, drop: 3 });
+  }
+  if (inp.childCost) {
+    out.push({ text: dim(`+$${inp.childCost.toFixed(inp.childCost < 0.1 ? 3 : 2)} children`), drop: 3 });
   }
   if (meta?.attachedElsewhere) {
     out.push({ text: attention("VIEW-ONLY"), drop: 0 });

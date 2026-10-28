@@ -4,7 +4,10 @@ import { RpcClient } from "@earendil-works/pi-coding-agent";
 import { DIALOG_METHODS } from "./config.ts";
 import type { ClientHub } from "./daemon-hub.ts";
 import type { DaemonSession } from "./daemon-session.ts";
+import { randomUUID } from "node:crypto";
+import { type AgentProfile, profileArgs } from "./agents.ts";
 import { lineageArgs, sessionIdOfFile } from "./lineage.ts";
+import { profileOfSession, saveSessionAgent } from "./session-agents.ts";
 import { log } from "./log.ts";
 import type { UsageReport } from "./shared.ts";
 import { type ChildConfig, loadSettings, resolveChildConfig, settingsMtime } from "./settings.ts";
@@ -19,6 +22,8 @@ export interface StartOptions {
   sessionFile?: string;
   forkPath?: string;
   name?: string;
+  /** Launch a new session as this agent profile (a respawn finds its profile on its own). */
+  agent?: AgentProfile;
 }
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -64,7 +69,7 @@ export class ChildManager {
       cliPath: cfg.piCli,
       cwd: s.cwd,
       args,
-      env: { ...process.env, RONPI_CHILD: "1" },
+      env: { ...process.env, RONPI_CHILD: "1", ...(s.sessionId ? { RONPI_SESSION_ID: s.sessionId } : {}) },
     });
     client.onEvent((event) => this.onEvent(s, event as Record<string, unknown>));
     await client.start();
@@ -100,18 +105,35 @@ export class ChildManager {
       // A session that already has a file resumes with its own (pi restores them
       // from the file), so a restart, /reload or /clear must not reset them.
       const isNew = !opts.forkPath && !(useFile && fs.existsSync(useFile));
-      if (isNew && cfg.thinking) {
+      // The profile a session was started with is saved by UUID, so lazy respawns, /reload and /clear keep its loadout.
+      // Known before pi starts, so the child's tools can say who it is: a new session
+      // gets an id chosen here (pi takes --session-id), a resumed one has it in its file.
+      if (isNew) {
+        s.sessionId = randomUUID();
+        args.push("--session-id", s.sessionId);
+      } else if (useFile) {
+        s.sessionId = sessionIdOfFile(useFile) ?? s.sessionId;
+      }
+      const agent = opts.agent ?? profileOfSession(useFile ? sessionIdOfFile(useFile) : undefined) ?? s.agent;
+      s.agent = agent;
+      if (agent) {
+        args.push(...profileArgs(agent, { isNew }));
+      }
+      if (isNew && cfg.thinking && !agent?.thinking) {
         args.push("--thinking", cfg.thinking);
       }
-      if (isNew && cfg.model) {
+      if (isNew && cfg.model && !agent?.model) {
         args.push("--model", cfg.model);
       }
-      if (isNew && cfg.provider) {
+      if (isNew && cfg.provider && !agent?.model) {
         args.push("--provider", cfg.provider);
       }
       s.child = await this.launch(s, args, cfg);
       s.dead = false;
       await this.refreshMeta(s);
+      if (opts.agent && s.sessionId) {
+        saveSessionAgent(s.sessionId, opts.agent);
+      }
       log(`session ${s.id} child started (file=${s.sessionFile ?? "new"})`);
     } finally {
       s.spawning = false;

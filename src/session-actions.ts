@@ -13,8 +13,8 @@ import { SessionCommands } from "./session-commands.ts";
 import { itemsFromFile, newView, type SessionView } from "./transcript.ts";
 
 const DOUBLE_ESC_MS = 600;
-/** pi's RPC gives a command 30s to answer; the controller waits a little longer than that. */
-const BANG_TIMEOUT_MS = 40_000;
+/** The daemon stops a command after 10 minutes; wait a little longer than that for its answer. */
+const BANG_TIMEOUT_MS = 11 * 60_000;
 
 export class SessionActions {
   /** Armed: prompting a recently-modified external session (fork warning). */
@@ -332,45 +332,49 @@ export class SessionActions {
     void this.prompt(trimmed);
   }
 
+  /** Put `text` back in the box after a failed send, unless the user has already typed something new (then it stays reachable with up-arrow). */
+  private giveBack(text: string): void {
+    if (this.h.editor.getText().trim() === "") {
+      this.h.editor.setText(text);
+    } else {
+      this.h.editor.addToHistory(text);
+      this.h.notify("not sent - it is in the up-arrow history");
+    }
+  }
+
   /**
-   * `!command`: run it in the session's directory through pi, which records it
-   * so the model sees command and output on its next turn. `!!` (output kept
-   * from the model) is pi's own syntax but not reachable over RPC.
+   * `!command`: the daemon runs it in the session's directory and tells the
+   * agent the result at once (see local-command.ts); the command block appears
+   * in the transcript when that message does. `!!` (output hidden from the
+   * agent) is not offered.
    */
   private async bang(line: string): Promise<void> {
     const command = line.slice(1).trim();
     if (line.startsWith("!!")) {
-      this.h.notify("!! (keep output from the model) is not supported over pi's RPC - use !");
+      this.h.notify("!! is not supported - use ! (the agent sees the output)");
       return;
     }
-    const key = this.h.viewing;
-    const meta = key ? this.h.metaForPath(key) : undefined;
-    if (!key || !command) {
+    if (!this.h.viewing || !command) {
       this.h.notify("!<command> runs a shell command here and shows its output to the agent");
       return;
     }
-    if (!meta?.active) {
-      this.h.notify("!command needs a running session - send a message first");
+    // a sleeping session is started first (no message needed), like /model or /compact do
+    this.h.editor.setText("");
+    const meta = await this.commands.liveMeta();
+    if (!meta) {
+      this.giveBack(line); // not started: keep the line so it can be retried
       return;
     }
     if (meta.attachedElsewhere || !meta.attachedToYou) {
       this.h.notify("view-only: this session is attached in another controller");
       return;
     }
-    this.h.editor.setText("");
-    const shown = this.h.startBash(key, command);
+    this.h.notify(`running: ${command} (esc stops it)`);
     this.bangSession = meta.id;
     try {
-      const r = (await this.h.request({ type: "bash", session: meta.id, command }, BANG_TIMEOUT_MS)) as {
-        output: string;
-        exitCode?: number;
-        cancelled: boolean;
-        fullOutputPath?: string;
-      };
-      shown.appendOutput(r.output);
-      shown.setComplete(r.exitCode, r.cancelled, undefined, r.fullOutputPath);
+      await this.h.request({ type: "bash", session: meta.id, command }, BANG_TIMEOUT_MS);
+      this.h.notify("");
     } catch (err) {
-      shown.setComplete(undefined, true);
       this.h.notify(`!${command}: ${err instanceof Error ? err.message : err}`);
     } finally {
       this.bangSession = undefined;
@@ -490,13 +494,17 @@ export class SessionActions {
         });
       }
       this.h.editor.addToHistory(message);
-      this.h.editor.setText("");
+      // starting a sleeping session takes seconds: only clear the box if it still holds what was sent,
+      // not something typed meanwhile
+      if (this.h.editor.getText() === text) {
+        this.h.editor.setText("");
+      }
       return true;
     } catch (err) {
       this.h.dropEcho(key, sent);
       this.h.notify(`prompt failed: ${err instanceof Error ? err.message : err}`);
       // give the images back, under fresh markers, so the message can be sent again
-      this.h.editor.setText([message, ...images.map((image) => this.h.attachments.put(image))].join(" "));
+      this.giveBack([message, ...images.map((image) => this.h.attachments.put(image))].join(" "));
       return false;
     }
   }

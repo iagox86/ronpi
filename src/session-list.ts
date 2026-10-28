@@ -159,6 +159,22 @@ export function moveSession(groups: GroupsFile, sessions: SwitcherSession[], s: 
   if (uuid === undefined) {
     return { changed: false };
   }
+  if ((s.depth ?? 0) > 0) {
+    return { changed: false, hint: "move the parent instead - children stay under it" };
+  }
+  // A parent moves with everything below it: only top-level sessions are placed, descendants follow.
+  const below = new Map<string, string[]>();
+  let owner: string | undefined;
+  for (const x of sessions) {
+    if (x.sessionId === undefined) {
+      continue;
+    }
+    if ((x.depth ?? 0) === 0) {
+      owner = x.sessionId;
+    } else if (owner !== undefined) {
+      below.set(owner, [...(below.get(owner) ?? []), x.sessionId]);
+    }
+  }
   // Section structure INCLUDING empty groups: [ungrouped, ...groups]. Moves
   // are section-relative, so an empty group is a valid target (the moved
   // session becomes its only member).
@@ -168,7 +184,7 @@ export function moveSession(groups: GroupsFile, sessions: SwitcherSession[], s: 
   }
   const sectionIndex = (group: string | null) => (group === null ? 0 : 1 + groups.groups.indexOf(group));
   for (const x of sessions) {
-    if (x.sessionId !== undefined) {
+    if (x.sessionId !== undefined && (x.depth ?? 0) === 0) {
       sections[sectionIndex(x.group ?? null)].uuids.push(x.sessionId);
     }
   }
@@ -193,10 +209,13 @@ export function moveSession(groups: GroupsFile, sessions: SwitcherSession[], s: 
       adjacent.uuids.push(uuid);
     }
     groups.assignments[uuid] = adjacent.group;
+    for (const kid of below.get(uuid) ?? []) {
+      groups.assignments[kid] = adjacent.group;
+    }
   } else {
     return { changed: false, hint: step > 0 ? "already at the bottom" : "already at the top" };
   }
-  groups.order = sections.flatMap((sec) => sec.uuids);
+  groups.order = sections.flatMap((sec) => sec.uuids.flatMap((id) => [id, ...(below.get(id) ?? [])]));
   return { changed: true };
 }
 

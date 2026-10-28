@@ -5,8 +5,11 @@
 // (`Record<SwitcherCommandName, ...>` in switcher-actions.ts, likewise in
 // session-commands.ts) makes the compiler insist that every command here has
 // a handler, so adding one is: an entry here, plus a function there.
+// A session command that talks to a running pi child must also wake a sleeping
+// session first (`liveMeta()` in session-commands.ts; see AGENTS.md).
 import type { Command } from "commander";
 import type { CommandSpec } from "./cli.ts";
+import { agentCompletions } from "./agents-completion.ts";
 import { matching } from "./completion.ts";
 import { mcpCompletions } from "./mcp.ts";
 
@@ -24,9 +27,13 @@ export const SWITCHER_COMMANDS = [
     build: (cmd) => {
       cmd
         .option("-n, --name <name>", "name for the new session")
-        .option("-C, --cwd <dir>", "working directory for the new session (default: where ronpi was started)");
+        .option("-C, --cwd <dir>", "working directory for the new session (default: where ronpi was started)")
+        .option("-a, --agent <name>", "start it as an agent profile (see /agents; tab completes the name after -a)");
     },
+    // flags are not completed in general; this one value is worth it
+    complete: (typed, src) => agentCompletions(typed, src.agents()),
   },
+  { name: "agents", description: "list the agent profiles (/new --agent <name> starts one) and any problems loading them" },
   { name: "stop", description: "stop the highlighted session's process (file kept; respawns on next prompt)" },
   {
     name: "delete",
@@ -51,6 +58,7 @@ export const SWITCHER_COMMANDS = [
       cmd.option("-u, --undo", "unpark it");
     },
   },
+  { name: "detach", description: "cut the highlighted subagent loose from the agent that started it (it becomes a top-level session)" },
   { name: "ungroup", description: "take the highlighted session out of its group" },
   {
     name: "summarize",
@@ -106,6 +114,8 @@ export const SESSION_COMMANDS = [
     description: "park this session (oldest colour in the switcher until used again), stop it if idle, and go back to the list",
   },
   { name: "abort", description: "interrupt the running agent" },
+  { name: "detach", description: "cut this subagent loose from the agent that started it (no more banner or nesting)" },
+  { name: "parent", description: "jump to the agent that started this subagent" },
   { name: "name", description: "rename this session", build: nameArgument("show the current name") },
   { name: "rename", description: "rename this session (same as /name)", build: nameArgument("show the current name") },
   { name: "reload", description: "restart pi on this session to pick up new extensions and settings" },

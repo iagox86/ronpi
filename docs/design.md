@@ -532,6 +532,23 @@ Near-term (post-budget-reset), rough order = dependency + value:
    toggle, proper error rendering (message.error), better code-block
    colors (rides on 7).
 9. Multiple agents / subagents (ADDED 2026-10-23; deliberately DEFERRED,
+   BUT the project was started 2026-10-27 - read this status first, the notes
+   below are the earlier evaluation). DESIGN (decided): subagents are real pi
+   sessions owned by the daemon, started by a ronpi_agent tool, shown nested
+   under the parent, agent types as markdown files (Claude-style), limits
+   enforced by the daemon; pi-subagents is NOT used. Full proposal and the
+   decisions are in the job board ticket "Big feature - subagents" (Ron's
+   notes folder, Issues/). BUILT so far (tickets 1-4 of 7): agent profiles
+   (`agents/`, `/new -a`, `/agents`; profile saved per session UUID), session
+   identity (UUIDs chosen at spawn via --session-id, `resolve`, unique names),
+   the parent/child tree for agent-started sessions (`kind: "subagent"` in
+   lineage.json: nesting, folds, banner, /parent, /detach), and session
+   messaging (`ronpi_message` tool, daemon `message`). NOT built: the spawn
+   tool and limits (ticket 5), permission trickle-up (6), delegation skill and
+   shipped types (7). Findings that matter: `--tools` does not remove
+   extension tools (use --no-extensions); pi cannot select MCP servers per run
+   (every enabled server connects; only --no-mcp or a project override
+   changes that); pi's `--fork` ignores --session-id. Older evaluation:
    not installed): goal is CC-Task-style lightweight subagents living
    INSIDE a ronpi-affiliated session - in-process, not switcher rows,
    results streaming into the conversation - plus an optional tree-view

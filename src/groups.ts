@@ -122,14 +122,15 @@ export function withParked(data: GroupsFile, sessionId: string, park: boolean, n
 export const PARK_KEEP_MS = 30 * 24 * 3600_000;
 
 /**
- * Drop saved state that points at nothing: fold entries for groups that no
- * longer exist, and park marks for sessions that are gone and were marked long
+ * Drop saved state that points at nothing: fold entries for groups or parent
+ * sessions that no longer exist, and park marks for sessions that are gone and were marked long
  * ago. Mutates `data`; returns whether anything was removed.
  */
 export function pruneStale(data: GroupsFile, knownSessionIds: ReadonlySet<string>, now = Date.now()): boolean {
   let changed = false;
   if (data.collapsed) {
-    const keep = data.collapsed.filter((title) => title === "(ungrouped)" || data.groups.includes(title));
+    // entries are group titles, or the UUID of a folded parent session (kept while that session exists)
+    const keep = data.collapsed.filter((entry) => entry === "(ungrouped)" || data.groups.includes(entry) || knownSessionIds.has(entry));
     if (keep.length !== data.collapsed.length) {
       data.collapsed = keep;
       changed = true;

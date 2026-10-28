@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { formatLocalCommand } from "../src/local-command.ts";
 import { applyDelta, applyEvent, type AssistantItem, dropEcho, echoUser, type Item, itemsFromFile, itemsFromMessages, errorRow, softFailure, lengthNotice, showRawError, messagesFromFile, newView } from "../src/transcript.ts";
 
 function assistant(content: unknown[] = []): AssistantItem {
@@ -135,13 +136,39 @@ describe("applyEvent", () => {
     assert.notEqual(rendered(true), rendered(false));
   });
 
+  it("shows a message from another session as 'from NAME' rather than as something the user typed", () => {
+    const tui = { requestRender() {} } as never;
+    const label = "[from Boss (0b1c2d3e-aaaa-4bbb-8ccc-111111111111)]: please check the schema";
+    const items = itemsFromMessages([{ role: "user", content: label }], tui, "/w");
+    const component = items[0]?.component as unknown as { render(w: number): string[] };
+    const text = component.render(80).join("\n");
+    assert.match(text, /from Boss \(0b1c2d3e\)/);
+    assert.match(text, /please check the schema/);
+    assert.doesNotMatch(text, /\[from Boss/);
+  });
+
+  it("draws a !command result sent to the agent as a command block, live and on replay", () => {
+    const tui = { requestRender() {} } as never;
+    const text = formatLocalCommand("ls /x", { output: "a\nb\n", exitCode: 0, cancelled: false, truncated: false });
+    const items = itemsFromMessages([{ role: "user", content: text }], tui, "/w");
+    assert.equal(items[0]?.kind, "bash");
+    const shown: Item[] = [];
+    applyEvent(newView(), { type: "message_start", message: { role: "user", content: [{ type: "text", text }] } }, { tui, cwd: "/w", addItem: (i: Item) => shown.push(i) });
+    assert.equal(shown[0]?.kind, "bash");
+    const block = shown[0]?.component as unknown as { render(w: number): string[] };
+    const rendered = block.render(60).join("\n");
+    assert.match(rendered, /ls \/x/);
+    assert.doesNotMatch(rendered, /local-command/);
+  });
+
   it("replays a !command with its output", () => {
     const tui = { requestRender() {} } as never;
     const msg = { role: "bashExecution", command: "echo hi", output: "hi\n", exitCode: 0, cancelled: false, truncated: false };
     const items = itemsFromMessages([msg], tui, "/w");
     assert.equal(items.length, 1);
     assert.equal(items[0]?.kind, "bash");
-    const text = (items[0]?.component as { render(w: number): string[] }).render(60).join("\n");
+    const component = items[0]?.component as unknown as { render(w: number): string[] };
+    const text = component.render(60).join("\n");
     assert.match(text, /echo hi/);
     assert.match(text, /hi/);
   });

@@ -263,16 +263,25 @@ describe("daemon: lifecycle", () => {
     assert.ok(!after.some((m) => m.type === "event" && m.event?.type === "message_start"), "no message enters the conversation");
   });
 
-  it("runs a !command through pi and can stop a long one", async () => {
+  it("runs a !command, tells the agent the result at once, and can stop a long one", async () => {
     harness = await startDaemon();
     const c = await harness.connect();
     const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
     await c.waitFor((m) => m.type === "history");
-    const done = await c.request({ type: "bash", session: sessionId, command: "echo hi" });
-    assert.deepEqual([done.output, done.exitCode, done.cancelled], ["ran: echo hi\n", 0, false]);
-    const long = c.request({ type: "bash", session: sessionId, command: "sleep" });
+    const done = await c.request({ type: "bash", session: sessionId, command: "echo hi; echo oops >&2; exit 3" });
+    assert.deepEqual([done.output, done.exitCode, done.cancelled], ["hi\noops\n", 3, false]);
+    const told = await c.waitFor((m) => m.type === "event" && m.event?.type === "message_start" && JSON.stringify(m.event).includes("<local-command>"));
+    const text = JSON.stringify(told.event);
+    assert.match(text, /<local-command>echo hi; echo oops >&2; exit 3<\/local-command>/);
+    assert.match(text, /exit=\\"3\\"/);
+    assert.match(text, /you did not run it|You did not run it/i);
+
+    const long = c.request({ type: "bash", session: sessionId, command: "sleep 30" });
+    await new Promise((r) => setTimeout(r, 300));
+    await assert.rejects(c.request({ type: "bash", session: sessionId, command: "echo again" }), /already running/);
     await c.request({ type: "abort_bash", session: sessionId });
-    assert.equal((await long).cancelled, true);
+    const stopped = await long;
+    assert.equal(stopped.cancelled, true);
   });
 
   it("passes pasted images on with the prompt", async () => {
@@ -464,6 +473,115 @@ describe("daemon: lifecycle", () => {
     assert.ok(!argv().includes("--model"), "/clear does not pass the default model");
     const after = await c.request({ type: "model", session: sessionId });
     assert.equal(after.current, "other/fake-big", "/clear keeps the model the session was on");
+  });
+
+  it("starts a session as an agent profile and keeps its loadout across a respawn", async () => {
+    harness = await startDaemon({ RONPI_AGENTS_DIR: path.join(os.tmpdir(), "ronpi-no-user-agents") });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir, agent: "explore" });
+    await c.waitFor((m) => m.type === "history");
+    const file = (): string | undefined => c.sessions().find((x) => x.id === sessionId)?.sessionFile;
+    const argv = (): string[] => JSON.parse(fs.readFileSync(`${file()}.argv.json`, "utf8")) as string[];
+    assert.equal(c.sessions().find((x) => x.id === sessionId)?.agent, "explore");
+    assert.deepEqual(argv().slice(argv().indexOf("--tools"), argv().indexOf("--tools") + 3), ["--tools", "read,grep,find,ls", "--no-mcp"]);
+    assert.ok(argv().includes("--append-system-prompt"));
+
+    await c.request({ type: "prompt", session: sessionId, message: "hi" });
+    await c.waitFor(isSettled);
+    await c.request({ type: "deactivate", session: sessionId });
+    await c.request({ type: "prompt", session: sessionId, message: "again" });
+    await c.waitFor(isSettled);
+    assert.ok(argv().includes("--tools"), "the respawn kept the tool limits");
+    assert.ok(!argv().includes("--thinking"), "but did not reset the model settings of an existing session");
+    assert.equal(c.sessions().find((x) => x.id === sessionId)?.agent, "explore");
+  });
+
+  it("refuses to start an unknown agent and names the ones it has", async () => {
+    harness = await startDaemon({ RONPI_AGENTS_DIR: path.join(os.tmpdir(), "ronpi-no-user-agents") });
+    const c = await harness.connect();
+    await assert.rejects(c.request({ type: "spawn", cwd: harness.dir, agent: "nope" }), /no agent called "nope" \(have: explore, summarize\)/);
+  });
+
+  it("gives a new session an id before pi starts and tells the child", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const r = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    assert.match(r.uuid, /^[0-9a-f]{8}-/);
+    const file = c.sessions().find((x) => x.id === r.sessionId)?.sessionFile as string;
+    const argv = JSON.parse(fs.readFileSync(`${file}.argv.json`, "utf8")) as string[];
+    assert.equal(argv[argv.indexOf("--session-id") + 1], r.uuid);
+    assert.equal(JSON.parse(fs.readFileSync(`${file}.env.json`, "utf8")).RONPI_SESSION_ID, r.uuid);
+    assert.equal(c.sessions().find((x) => x.id === r.sessionId)?.sessionId, r.uuid);
+    // a respawn of the same file is the same session, so the child is told the same id
+    await c.request({ type: "prompt", session: r.sessionId, message: "hi" });
+    await c.waitFor(isSettled);
+    await c.request({ type: "deactivate", session: r.sessionId });
+    await c.request({ type: "prompt", session: r.sessionId, message: "again" });
+    await c.waitFor(isSettled);
+    assert.equal(JSON.parse(fs.readFileSync(`${file}.env.json`, "utf8")).RONPI_SESSION_ID, r.uuid);
+  });
+
+  it("resolves a session from its UUID, prefix, #number or name, and says when it cannot", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const one = await c.request({ type: "spawn", cwd: harness.dir, name: "Resolver One" });
+    const two = await c.request({ type: "spawn", cwd: harness.dir, name: "Resolver Two" });
+    await c.waitFor((m) => m.type === "history");
+    await c.waitFor(() => c.sessions().filter((x) => x.sessionName).length === 2);
+    const by = async (query: string) => c.request({ type: "resolve", query });
+    assert.equal((await by(one.uuid)).id, one.sessionId);
+    assert.equal((await by(two.uuid.slice(0, 10))).id, two.sessionId);
+    assert.equal((await by(`#${two.sessionId}`)).uuid, two.uuid);
+    assert.equal((await by("resolver one")).uuid, one.uuid);
+    await assert.rejects(by("no such session"), /no session matches/);
+  });
+
+  it("delivers a message to another session, labelled with the sender, and wakes an idle one without taking its attach", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const a = await c.request({ type: "spawn", cwd: harness.dir, name: "Sender" });
+    const b = await c.request({ type: "spawn", cwd: harness.dir, name: "Receiver" });
+    await c.waitFor(() => c.sessions().filter((x) => x.sessionName).length === 2);
+    await c.request({ type: "prompt", session: b.sessionId, message: "first" });
+    await c.waitFor(isSettled);
+    await c.request({ type: "deactivate", session: b.sessionId });
+    const file = c.sessions().find((x) => x.id === b.sessionId)?.sessionFile as string;
+
+    const sender = await harness.connect();
+    const r = await sender.request({ type: "message", to: "receiver", text: "please check X", from: a.uuid });
+    assert.equal(r.delivered, true);
+    assert.equal(r.to, "Receiver");
+    // wait for the turn the message started (isSettled alone could match the earlier one)
+    await c.waitFor((m) => m.type === "event" && m.event?.type === "message_start" && JSON.stringify(m.event).includes("please check X"));
+    await c.waitFor((m) => isSettled(m) && c.messages.indexOf(m) > c.messages.findIndex((x) => JSON.stringify(x).includes("please check X")));
+    const meta = c.sessions().find((x) => x.id === b.sessionId);
+    assert.equal(meta?.active, true, "the idle session was started");
+    assert.equal(meta?.attachedToYou, false, "delivering does not take the input attach");
+    assert.equal(meta?.attachedElsewhere, false);
+    assert.match(fs.readFileSync(file, "utf8"), new RegExp(`\\[from Sender \\(${a.uuid}\\)\\]: please check X`));
+  });
+
+  it("says why a message cannot be delivered", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const a = await c.request({ type: "spawn", cwd: harness.dir, name: "Solo" });
+    await c.waitFor((m) => m.type === "history");
+    await c.waitFor(() => c.sessions().some((x) => x.sessionName === "Solo"));
+    await assert.rejects(c.request({ type: "message", to: "nobody", text: "hi" }), /no session matches/);
+    await assert.rejects(c.request({ type: "message", to: "Solo", text: "  " }), /empty/);
+    await assert.rejects(c.request({ type: "message", to: "Solo", text: "hi", from: a.uuid }), /cannot message itself/);
+  });
+
+  it("queues a message behind the work a busy session is doing", async () => {
+    harness = await startDaemon({ FAKE_PI_SLOW: "1", FAKE_PI_STEP_MS: "150" });
+    const c = await harness.connect();
+    const busy = await c.request({ type: "spawn", cwd: harness.dir, name: "Busy" });
+    await c.waitFor(() => c.sessions().some((x) => x.sessionName === "Busy"));
+    await c.request({ type: "prompt", session: busy.sessionId, message: "work" });
+    await c.waitFor(() => c.sessions().find((x) => x.id === busy.sessionId)?.streaming === true);
+    const r = await c.request({ type: "message", to: "Busy", text: "psst" });
+    assert.match(r.disposition, /queued/);
   });
 
   it("records the settings file's mtime per child and re-reads it on respawn", async () => {

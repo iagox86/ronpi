@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const SRC = join(import.meta.dirname, "..", "pi");
-const KINDS = ["extensions", "themes"];
+const KINDS = ["extensions", "themes", "skills"];
 
 export function agentDir(env: NodeJS.ProcessEnv = process.env): string {
   return env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");

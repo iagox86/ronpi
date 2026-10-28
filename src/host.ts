@@ -1,7 +1,6 @@
 // What the action classes need from the Controller. The Controller satisfies
 // this structurally; keeping it as an interface makes the dependency explicit
 // and lets the action classes be read (and later tested) on their own.
-import type { BashExecutionComponent } from "@earendil-works/pi-coding-agent";
 import type { Attachments } from "./attachments.ts";
 import type { InputEditor } from "./editor.ts";
 import type { SessionMeta, ClientCommand, DistributiveOmit } from "./shared.ts";
@@ -51,8 +50,10 @@ export interface Host {
   syncHistory(force?: boolean): void;
   /** Show a sent prompt immediately in the session's transcript (and start the spinner). */
   echoPrompt(key: string, text: string): void;
-  /** Show a `!command` in the transcript; the caller feeds it the output. */
-  startBash(key: string, command: string): BashExecutionComponent;
+  /** `wanted`, suffixed (" #2") if another session already has that name; `selfKey` is the session being renamed. */
+  uniqueSessionName(wanted: string, selfKey?: string): string;
+  /** Re-read lineage.json on the next redraw (after the link between two sessions changed). */
+  forgetLineage(): void;
   /** Undo echoPrompt when the send failed. */
   dropEcho(key: string, text: string): void;
   notify(message: string): void;

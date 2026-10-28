@@ -20,7 +20,7 @@ const flag = (name) => {
   return i === -1 ? undefined : args[i + 1];
 };
 
-const sessionId = randomUUID();
+const sessionId = flag("--session-id") ?? randomUUID();
 let sessionFile = flag("--session");
 const forkFrom = flag("--fork");
 if (!sessionFile) {
@@ -32,6 +32,7 @@ let sessionName = flag("--name");
 // let tests see how the daemon launched this child
 mkdirSync(dirname(sessionFile), { recursive: true });
 writeFileSync(`${sessionFile}.argv.json`, JSON.stringify(args));
+writeFileSync(`${sessionFile}.env.json`, JSON.stringify({ RONPI_SESSION_ID: process.env.RONPI_SESSION_ID ?? null }));
 const messages = [];
 
 function loadMessages(file) {

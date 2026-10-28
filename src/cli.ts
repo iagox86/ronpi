@@ -13,6 +13,8 @@ export interface CompletionSources {
   groups(): string[];
   /** MCP servers of the viewed session, with their states. */
   mcpServers(): Promise<McpServer[]>;
+  /** Agent profiles usable for a new session: name and one-line description. */
+  agents(): Array<{ name: string; description: string }>;
 }
 
 /** A completion with a note shown beside it in the popup; a bare string has none. */

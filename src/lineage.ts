@@ -15,6 +15,8 @@ export interface SessionRef {
 }
 
 export interface LineageEntry {
+  /** How this session came to be: a copy ("fork", the default) or started by an agent ("subagent"). */
+  kind?: "fork" | "subagent";
   parent?: SessionRef;
   forks?: SessionRef[];
 }
@@ -34,6 +36,51 @@ function saveLineage(data: Lineage, file: string): void {
   const tmp = `${file}.tmp.${process.pid}`;
   fs.writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, "utf8");
   fs.renameSync(tmp, file);
+}
+
+/**
+ * child UUID -> parent UUID for the sessions an agent started (kind "subagent").
+ * Copies the user makes (/fork, /adopt) are recorded in the lineage file but are
+ * independent sessions in the UI: no nesting, no banner.
+ */
+export function parentMap(lineage: Lineage): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const [id, entry] of Object.entries(lineage)) {
+    if (entry.parent && entry.kind === "subagent") {
+      map.set(id, entry.parent.id);
+    }
+  }
+  return map;
+}
+
+/**
+ * Cut `uuid` loose from its parent: both directions of the link go, so the
+ * session is top-level again and a respawn no longer tells it who its parent
+ * was. Returns the parent it had, or undefined when it had none.
+ */
+export function detachFromParent(uuid: string, file = LINEAGE_FILE): SessionRef | undefined {
+  const data = loadLineage(file);
+  const parent = data[uuid]?.parent;
+  if (!parent) {
+    return undefined;
+  }
+  const { parent: _gone, kind: _kind, ...rest } = data[uuid] as LineageEntry;
+  if (Object.keys(rest).length > 0) {
+    data[uuid] = rest;
+  } else {
+    delete data[uuid];
+  }
+  const up = data[parent.id];
+  if (up) {
+    const forks = (up.forks ?? []).filter((f) => f.id !== uuid);
+    if (forks.length > 0 || up.parent) {
+      data[parent.id] = { ...up, forks };
+    } else {
+      delete data[parent.id];
+    }
+  }
+  saveLineage(data, file);
+  return parent;
 }
 
 /** Record that `child` was forked from `parent`. */

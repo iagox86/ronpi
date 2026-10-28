@@ -47,6 +47,7 @@ describe("argument completion", () => {
   const sources = {
     models: async () => ["zai/glm-5.3-flash", "zai/glm-5.3", "anthropic/claude-opus"],
     groups: () => ["Work", "Home"],
+    agents: () => [{ name: "explore", description: "look around" }],
     mcpServers: async () => [
       { name: "mealie", detail: "connected, 12 tools (direct)" },
       { name: "freecad", detail: "failed (direct)" },

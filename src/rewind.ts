@@ -5,6 +5,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { messageText } from "./format.ts";
+import { parseLocalCommand } from "./local-command.ts";
+import { parseReceived } from "./received.ts";
 
 export interface RewindTarget {
   /** Session entry id of the user message. */
@@ -14,6 +16,8 @@ export interface RewindTarget {
   ts: number;
   /** A compaction came after this message, so rewinding here also undoes it. */
   compacted?: boolean;
+  /** The message is a `!command` result; `text` is the command as typed. */
+  local?: boolean;
   /** Set on the one pseudo-entry that undoes a /clear instead of rewinding. */
   restore?: { entries: number; trashedAt: string };
 }
@@ -46,19 +50,30 @@ function parseLines(file: string): ParsedLine[] {
   return lines;
 }
 
+/** A message another session sent: not something the user typed, so it is not offered as a rewind point. */
+const isReceived = (l: ParsedLine): boolean => parseReceived(messageText(l.entry?.message as never)) !== undefined;
+
 const isUserMessage = (l: ParsedLine): boolean =>
   l.entry?.type === "message" && l.entry.message?.role === "user" && typeof l.entry.id === "string";
+
+/** `!command` for a message made by `!command`; any other text unchanged. */
+function bangText(text: string): string {
+  const local = parseLocalCommand(text);
+  return local ? `!${local.command}` : text;
+}
 
 /** The user messages of a session, oldest first. */
 export function rewindTargets(file: string): RewindTarget[] {
   const lines = parseLines(file);
   const lastCompaction = lines.findLastIndex((l) => l.entry?.type === "compaction");
   return lines.flatMap((l, i) =>
-    isUserMessage(l)
+    isUserMessage(l) && !isReceived(l)
       ? [
           {
             entryId: l.entry!.id as string,
-            text: messageText(l.entry!.message as never),
+            // a `!command` result is shown (and restored to the box) as the command the user typed
+            text: bangText(messageText(l.entry!.message as never)),
+            ...(parseLocalCommand(messageText(l.entry!.message as never)) ? { local: true } : {}),
             ts: Date.parse(l.entry!.timestamp ?? "") || 0,
             ...(i < lastCompaction ? { compacted: true } : {}),
           },

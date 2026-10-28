@@ -7,6 +7,7 @@ import { TRASH_DIR } from "./config.ts";
 import { type Cmd, type DaemonContext, requireNotInPi, type Responder } from "./daemon-context.ts";
 import { sendHistory } from "./daemon-history.ts";
 import { type DaemonSession, type HeldPrompt, requireIdle } from "./daemon-session.ts";
+import { formatLocalCommand, type LocalResult, runLocal } from "./local-command.ts";
 import { log } from "./log.ts";
 import { matchModel, modelName } from "./model-match.ts";
 import { clearFile, latestClearBackup, restoreClear, rewindFile } from "./rewind.ts";
@@ -21,15 +22,38 @@ export async function handleAbort(
   res(true);
 }
 
-/** `!command`: run it through pi so the output lands in the session (and the model's context). */
+/**
+ * `!command`: run it here, then tell the agent at once (an ordinary message in
+ * <local-command> tags, which starts a turn or queues behind the one running).
+ * pi's own `bash` call is avoided on purpose: it would only show the output to
+ * the model with the user's next message.
+ */
 export async function handleBash(ctx: DaemonContext, cmd: Cmd<"bash">, res: Responder): Promise<void> {
   const s = ctx.registry.live(cmd.session);
-  requireIdle(s);
-  res(true, undefined, await s.child.bash(cmd.command));
+  if (s.held) {
+    throw new Error("session is compacting; wait for it to finish");
+  }
+  if (s.localCommand) {
+    throw new Error("a ! command is already running here (esc stops it)");
+  }
+  const abort = new AbortController();
+  s.localCommand = abort;
+  let result: LocalResult;
+  try {
+    result = await runLocal(cmd.command, s.cwd, abort.signal);
+  } finally {
+    s.localCommand = undefined;
+  }
+  const text = formatLocalCommand(cmd.command, result);
+  const child = ctx.registry.get(cmd.session)?.child;
+  if (child) {
+    await child.prompt(text, undefined, "steer");
+  }
+  res(true, undefined, result);
 }
 
 export async function handleAbortBash(ctx: DaemonContext, cmd: Cmd<"abort_bash">, res: Responder): Promise<void> {
-  await ctx.registry.live(cmd.session).child.abortBash();
+  ctx.registry.live(cmd.session).localCommand?.abort();
   res(true);
 }
 

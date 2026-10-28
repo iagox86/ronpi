@@ -1,6 +1,7 @@
 // The daemon's record of one session, and the registry that owns them all.
 import type * as net from "node:net";
 import type { RpcClient } from "@earendil-works/pi-coding-agent";
+import type { AgentProfile } from "./agents.ts";
 import type { PromptImage } from "./shared.ts";
 
 export interface DaemonSession {
@@ -34,6 +35,10 @@ export interface DaemonSession {
   lastDialog?: Record<string, unknown>;
   /** Set while a manual compaction runs (pi refuses prompts then): messages wait here, in order. */
   held?: HeldPrompt[];
+  /** A `!command` the user is running in this session; abort() stops it. */
+  localCommand?: AbortController;
+  /** The agent profile this session launches with (its tools, prompt, model); undefined = a plain session. */
+  agent?: AgentProfile;
   /** Whether the current model takes images (from pi's model entry); undefined = unknown. */
   acceptsImages?: boolean;
 }

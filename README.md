@@ -30,6 +30,8 @@ npm install
 node src/install.ts     # links ronpi's pi extensions and theme into ~/.pi/agent
 ```
 
+Agent profiles (`/agents`, `/new --agent explore`) are described in [agents/README.md](agents/README.md).
+
 `node src/install.ts` refuses to replace a file that is not its own link; move
 an older copy aside and rerun. It honors `PI_CODING_AGENT_DIR`.
 
@@ -61,6 +63,7 @@ begin a new session, or use the keys below.
 | ctrl-r or f2 | switcher | rename |
 | ctrl-g, ctrl-f | switcher | group, filter |
 | left / right / enter on a group | switcher | fold or unfold |
+| left / right on a parent session | switcher | fold / unfold its subagents (left on a subagent jumps up to the parent) |
 | left on an empty editor | session | back to the switcher |
 | esc | session | abort the running agent |
 | esc esc | session | rewind to an earlier message |
@@ -71,19 +74,17 @@ begin a new session, or use the keys below.
 Type `/` for commands; tab completes them and their arguments, and
 `/<command> --help` explains one. Commands ronpi handles itself:
 
-- Switcher: `/new`, `/stop`, `/delete`, `/rename`, `/group`, `/ungroup`, `/park`,
+- Switcher: `/new [-a agent]`, `/agents`, `/detach`, `/stop`, `/delete`, `/rename`, `/group`, `/ungroup`, `/park`,
   `/filter`, `/summarize`, `/restore`, `/adopt`, `/feedback`, `/kill-daemon`, `/help`, `/exit`
 - In a session: `/model`, `/compact`, `/clear`, `/fork`, `/park`, `/rename`, `/reload`,
   `/mcp` (`list`, `add`, `reconnect`, `login`, `logout`), `/init`, `/why`, `/abort`,
-  `/feedback`, `/quit` (back to the switcher), `/exit`
+  `/feedback`, `/parent` (jump to the agent that started this subagent), `/detach` (cut that link), `/quit` (back to the switcher), `/exit`
 
 Anything else starting with `/` goes to pi (its skills and prompt templates).
 
-`!command` in a session runs a shell command in the session's directory and
-shows the output; the agent sees both on its next turn (pi records it as part of
-the conversation). `esc` stops it. It needs a running session and an idle agent,
-and pi's RPC allows a command about 30 seconds to answer. `!!` (output hidden
-from the agent) is not supported.
+`!command` in a session (the chat box border turns yellow while you type it) runs a shell command in the session's directory and shows the output. The agent gets the command and output immediately, as a message wrapped in `<local-command>` tags with a note that you ran it yourself, so it reacts right away (or queues it behind its current turn). `esc` stops a running command; a command is stopped after 10 minutes; very long output is cut to its start and end. It needs a running session. `!!` is not supported.
+
+Sessions can message each other: ask an agent to "tell the session called Mealie that the schema changed" and it uses the `ronpi_message` tool (installed by `node src/install.ts`, along with a short `messaging` skill). The text arrives in the other session as a user message labelled `[from <name> (<id>)]`, shown as "from <name>" in the transcript; an idle session is started to read it. Agents are told to do this only when you ask. `/name` with no argument shows the session's name and id.
 
 Sessions opened in plain pi appear in the list too. With the `ronpi-presence`
 extension (installed by `node src/install.ts`) they are marked as live in pi;

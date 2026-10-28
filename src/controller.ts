@@ -22,7 +22,11 @@ import {
   VStack,
   type EditorTheme,
 } from "@earendil-works/pi-tui";
-import { BashExecutionComponent, SessionManager } from "@earendil-works/pi-coding-agent";
+import { loadLineage, type Lineage } from "./lineage.ts";
+import { bannerText, childCost, relationOf } from "./session-tree.ts";
+import { uniqueName } from "./session-id.ts";
+import { loadAgents } from "./agents.ts";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { DIALOG_METHODS, HISTORY_FILE, KEY_LOG, SOCK } from "./config.ts";
 import { type DialogRequest, DialogPanel, isTextDialog } from "./dialogs.ts";
 
@@ -42,6 +46,7 @@ import { SwitcherActions } from "./switcher-actions.ts";
 import { ensureDaemon, killServer } from "./lifecycle.ts";
 import { selectListTheme } from "./pi-theme.ts";
 import {
+  displayName,
   sessionKey,
   type LocalSession,
 } from "./session-list.ts";
@@ -56,7 +61,7 @@ import { ClipboardTerminal } from "./clipboard-terminal.ts";
 import { InfoPanel } from "./info-panel.ts";
 import { type McpServer, parseMcpStatus } from "./mcp.ts";
 import type { ToolRun } from "./tool-run.ts";
-import { assertTruecolor, dim, OSC_RESET_BG, OSC_SET_BG } from "./theme.ts";
+import { accent, assertTruecolor, dim, OSC_RESET_BG, OSC_SET_BG, streaming } from "./theme.ts";
 import { Switcher, } from "./switcher.ts";
 import {
   applyEvent,
@@ -92,6 +97,11 @@ class Controller {
   switcherLayout: VStack;
   scroll: ScrollView;
   statusLine = new Text("", 0, 0);
+  /** "FORK of X" above the chat box while viewing a child session; empty otherwise. */
+  banner = new Text("", 0, 0);
+  /** Viewing an agent-started session: its chat box gets the accent border. */
+  private childBorder = false;
+  private lineageCache: { at: number; data: Lineage } = { at: 0, data: {} };
   activityLine = new ActivityLine();
   dialogPanel = new DialogPanel();
   infoPanel = new InfoPanel();
@@ -150,6 +160,13 @@ class Controller {
     this.scroll = new ScrollView(this.chatRoot, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" });
     this.editor = new InputEditor(this.tui, editorTheme, { paddingX: 1 });
     this.editor.setAutocompleteMaxVisible(autocompleteMaxVisible());
+    // looked up at every redraw: a leading `!` (a shell command, not a message) turns the border to the warning colour as it is typed
+    this.editor.borderColor = (s) => {
+      if (!this.switching.isOpen && /^\s*!/.test(this.editor.getText())) {
+        return streaming(s);
+      }
+      return this.childBorder ? accent(s) : dim(s);
+    };
     this.editor.setAutocompleteProvider(
       new CommandAutocomplete(() => ({
         switcher: this.switching.isOpen,
@@ -159,6 +176,7 @@ class Controller {
           models: () => this.modelNames(),
           groups: () => this.switching.groups.groups,
           mcpServers: () => this.mcpServers(),
+          agents: () => loadAgents(process.cwd()).agents,
         },
       })),
     );
@@ -178,6 +196,7 @@ class Controller {
       { component: this.dialogPanel, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       { component: this.infoPanel, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       { component: this.choicePanel, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
+      { component: this.banner, basis: "auto", grow: 0, shrink: 0, minSize: 0 },
       // never compress the dock: a shrunken editor was the "cut off" bug
       { component: dock, basis: "auto", grow: 0, shrink: 0, minSize: 4 },
     ]);
@@ -677,7 +696,8 @@ class Controller {
       }
     }
     const command = text.trim();
-    if (command.length > 1 && command.startsWith("/")) {
+    // a `!command` is remembered too (up-arrow), even when it cannot run yet
+    if (command.length > 1 && (command.startsWith("/") || (command.startsWith("!") && !this.switching.isOpen))) {
       recordCommand(HISTORY_FILE, command);
       this.editor.addToHistory(command);
     }
@@ -741,15 +761,19 @@ class Controller {
     }
   }
 
-  startBash(key: string, command: string): BashExecutionComponent {
-    const view = this.viewFor(key);
-    const component = new BashExecutionComponent(command, this.tui, false, 1);
-    this.addItem(view, key, { kind: "bash", component });
-    if (key === this.viewing) {
-      this.scroll.scrollToEnd();
-      this.tui.requestRender();
+  uniqueSessionName(wanted: string, selfKey?: string): string {
+    const taken: string[] = [];
+    for (const m of this.sessions.values()) {
+      if (m.sessionName && this.keyFor(m) !== selfKey) {
+        taken.push(m.sessionName);
+      }
     }
-    return component;
+    for (const [key, info] of this.local) {
+      if (info.name && key !== selfKey) {
+        taken.push(info.name);
+      }
+    }
+    return uniqueName(wanted, taken);
   }
 
   dropEcho(key: string, text: string): void {
@@ -839,7 +863,8 @@ class Controller {
     const key = this.viewing;
     if (!this.switching.isOpen && key && fs.existsSync(key)) {
       try {
-        prompts = rewindTargets(key);
+        // `!command` runs are in the command log already (as typed); their results in the file are not history
+        prompts = rewindTargets(key).filter((t) => !t.local);
       } catch {
         // unreadable file: commands only
       }
@@ -907,6 +932,26 @@ class Controller {
     }, 4000);
   }
 
+  forgetLineage(): void {
+    this.lineageCache = { at: 0, data: {} };
+    this.renderChrome();
+  }
+
+  /** lineage.json, re-read at most every two seconds (the status line renders often). */
+  private lineage(): Lineage {
+    if (Date.now() - this.lineageCache.at > 2000) {
+      this.lineageCache = { at: Date.now(), data: loadLineage() };
+    }
+    return this.lineageCache.data;
+  }
+
+  /** Display name of the session with this UUID, when we know it. */
+  nameOfSession(uuid: string): string | undefined {
+    const live = [...this.sessions.values()].find((m) => m.sessionId === uuid);
+    const file = [...this.local.values()].find((l) => l.id === uuid);
+    return live?.sessionName ?? file?.name ?? (file ? displayName(live, file) : undefined);
+  }
+
   renderChrome(): void {
     this.syncActivity();
     this.dialogPanel.sync(this.viewing ? this.views.get(this.viewing)?.dialog : undefined);
@@ -916,7 +961,17 @@ class Controller {
     this.switcher.counts = { running: stats.running, waiting: stats.waiting };
     this.switcher.budget = { cost: stats.cost, tokens: stats.tokens };
     this.switcher.height = this.tui.terminal.rows || 24;
+    const meta = key ? this.metaForPath(key) : undefined;
+    const lineage = this.lineage();
+    const uuid = meta?.sessionId ?? (key ? this.local.get(key)?.id : undefined);
+    const rel = relationOf(lineage, uuid);
+    const parentName = rel ? this.nameOfSession(rel.parentId) ?? rel.parentName : undefined;
+    this.banner.setText(rel && parentName && !this.switching.isOpen ? accent(truncateToWidth(` ${bannerText(rel, parentName)}`, width)) : "");
+    this.childBorder = !!rel && !this.switching.isOpen;
+    const costOf = (id: string): number => [...this.sessions.values()].find((m) => m.sessionId === id)?.cost ?? 0;
     const status = buildStatusLine({
+      relation: rel && parentName ? { kind: rel.kind, parentName } : undefined,
+      childCost: childCost(lineage, uuid, costOf),
       switcherOpen: this.switching.isOpen,
       selectedName: this.switcher.current()?.name,
       viewing: key,

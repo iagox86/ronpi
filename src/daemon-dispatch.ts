@@ -29,6 +29,8 @@ import {
   handleRewind,
   handleUiResponse,
 } from "./daemon-handlers-ops.ts";
+import { handleMessage } from "./daemon-handlers-messages.ts";
+import { handleResolve } from "./daemon-resolve.ts";
 import type { ClientCommand } from "./shared.ts";
 
 export async function dispatch(ctx: DaemonContext, cmd: ClientCommand, socket: net.Socket, res: Responder): Promise<void> {
@@ -63,6 +65,10 @@ export async function dispatch(ctx: DaemonContext, cmd: ClientCommand, socket: n
       return handleClearQueue(ctx, cmd, res);
     case "commands":
       return handleCommands(ctx, cmd, res);
+    case "message":
+      return handleMessage(ctx, cmd, res);
+    case "resolve":
+      return handleResolve(ctx, cmd, res);
     case "mcp_status":
       return handleMcpStatus(ctx, cmd, res);
     case "model":

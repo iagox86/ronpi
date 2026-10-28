@@ -3,6 +3,7 @@
 import * as fs from "node:fs";
 import type * as net from "node:net";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { findAgent } from "./agents.ts";
 import { TRASH_DIR } from "./config.ts";
 import type { Cmd, DaemonContext, Responder } from "./daemon-context.ts";
 import { sendHistory } from "./daemon-history.ts";
@@ -78,6 +79,7 @@ export async function handleSpawn(
   socket: net.Socket,
   res: Responder,
 ): Promise<void> {
+  const agent = cmd.agent ? findAgent(cmd.agent, cmd.cwd) : undefined;
   const existing = cmd.sessionFile
     ? ctx.registry.byFile(cmd.sessionFile)
     : undefined;
@@ -98,7 +100,7 @@ export async function handleSpawn(
     // Respond as soon as the session is registered (startChild has already
     // broadcast it as spawning) so the controller can open it immediately;
     // prompts arriving before the child is up wait on s.starting.
-    const starting = ctx.children.start(s, { sessionFile: cmd.sessionFile, name: cmd.name }).then(async () => {
+    const starting = ctx.children.start(s, { sessionFile: cmd.sessionFile, name: cmd.name, agent }).then(async () => {
       if (cmd.name && !s.sessionName) {
         await s.child!.setSessionName(cmd.name);
         await ctx.children.refreshMeta(s);
@@ -117,7 +119,7 @@ export async function handleSpawn(
     if (cmd.ready) {
       await starting;
     }
-    res(true, undefined, { sessionId: s.id });
+    res(true, undefined, { sessionId: s.id, uuid: s.sessionId });
     return;
   }
   if (cmd.ready) {

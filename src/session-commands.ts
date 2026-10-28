@@ -4,6 +4,8 @@ import * as path from "node:path";
 import { type Invocation, parseCommandLine } from "./cli.ts";
 import { SESSION_COMMANDS, type SessionCommandName } from "./commands.ts";
 import { fmtTokens } from "./format.ts";
+import { detachFromParent, loadLineage } from "./lineage.ts";
+import { relationOf } from "./session-tree.ts";
 import { addMcpServer, MCP_ACTIONS, mcpConfigFile, mcpEntry } from "./mcp.ts";
 import { forkName, placeFork } from "./fork-placement.ts";
 import { loadGroups, saveGroups, withParked } from "./groups.ts";
@@ -65,6 +67,8 @@ export class SessionCommands {
       quit: () => this.h.switching.open(),
       park: () => this.park(),
       abort: () => this.abort(),
+      parent: () => this.parent(),
+      detach: () => this.detach(),
       name: rename,
       rename,
       reload: () => this.reload(),
@@ -118,7 +122,7 @@ export class SessionCommands {
    * (after a controller or daemon restart, or stopped) is started first, so
    * commands work without sending a throwaway message; says why when it cannot.
    */
-  private async liveMeta(): Promise<SessionMeta | undefined> {
+  async liveMeta(): Promise<SessionMeta | undefined> {
     let meta = this.viewedMeta();
     if (meta?.attachedElsewhere) {
       this.h.notify("view-only: this session is attached in another controller");
@@ -174,7 +178,7 @@ export class SessionCommands {
   private async rename(name: string): Promise<void> {
     const meta = this.viewedMeta();
     if (!name) {
-      this.h.notify(meta?.sessionName ? `name: ${meta.sessionName}` : "unnamed - /name <name> to set one");
+      this.h.notify(meta?.sessionName ? `name: ${meta.sessionName}${meta.sessionId ? ` (id ${meta.sessionId})` : ""}` : "unnamed - /name <name> to set one");
       return;
     }
     const key = this.h.viewing;
@@ -183,8 +187,9 @@ export class SessionCommands {
       return;
     }
     try {
-      await this.h.request(meta ? { type: "rename", session: meta.id, name } : { type: "rename", path: key!, name });
-      this.h.notify(`renamed to ${name}`);
+      const unique = this.h.uniqueSessionName(name, key ?? undefined);
+      await this.h.request(meta ? { type: "rename", session: meta.id, name: unique } : { type: "rename", path: key!, name: unique });
+      this.h.notify(unique === name ? `renamed to ${name}` : `renamed to ${unique} (${name} is taken)`);
     } catch (err) {
       this.fail("rename", err);
     }
@@ -254,7 +259,7 @@ export class SessionCommands {
         path: key,
         cwd,
         fork: true,
-        name: name ?? forkName(parentName),
+        name: this.h.uniqueSessionName(name ?? forkName(parentName)),
         parentName,
       })) as { sessionId?: number; sessionUuid?: string };
       if (typeof r?.sessionId !== "number") {
@@ -363,6 +368,35 @@ export class SessionCommands {
       this.h.tui.requestRender();
     } catch (err) {
       this.fail("mcp", err);
+    }
+  }
+
+  /** /detach: forget who this session was forked from. */
+  private detach(): void {
+    const meta = this.viewedMeta();
+    const key = this.h.viewing;
+    const uuid = meta?.sessionId ?? (key ? this.h.local.get(key)?.id : undefined);
+    const parent = uuid ? detachFromParent(uuid) : undefined;
+    if (!parent) {
+      this.h.notify("this session was not started by an agent - nothing to detach");
+      return;
+    }
+    this.h.forgetLineage();
+    this.h.notify(`detached from ${parent.name} - it is a session of its own now`);
+  }
+
+  /** /parent: open the session this one came from. */
+  private async parent(): Promise<void> {
+    const meta = this.viewedMeta();
+    const key = this.h.viewing;
+    const uuid = meta?.sessionId ?? (key ? this.h.local.get(key)?.id : undefined);
+    const rel = relationOf(loadLineage(), uuid);
+    if (!rel) {
+      this.h.notify("this session was not started by an agent");
+      return;
+    }
+    if (!(await this.h.switching.openSession(rel.parentId))) {
+      this.h.notify(`parent ${rel.parentName} is not in the list (deleted?)`);
     }
   }
 

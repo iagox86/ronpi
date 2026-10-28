@@ -11,6 +11,8 @@ import { prettyError } from "./error-format.ts";
 import { toolDefinitionFor } from "./tool-defs.ts";
 import { type ToolCall, ToolRun } from "./tool-run.ts";
 import type { DialogRequest } from "./dialogs.ts";
+import { parseLocalCommand } from "./local-command.ts";
+import { displayText } from "./received.ts";
 import { messageText, oneLineFlat } from "./format.ts";
 import { mdTheme } from "./pi-theme.ts";
 import { attention, dim } from "./theme.ts";
@@ -241,7 +243,7 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
         if (echoed !== -1) {
           view.echoes.splice(echoed, 1);
         } else {
-          env.addItem({ kind: "user", component: new UserMessage(messageText(m), mdTheme, 1) });
+          env.addItem(userItem(messageText(m), env.tui));
         }
       } else if (m?.role === "assistant") {
         env.addItem(assistantItem(m as Record<string, unknown>));
@@ -269,7 +271,8 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
       if (m?.role === "assistant" || m?.role === "user") {
         effects.messageEnded = true;
         if (messageText(m).trim()) {
-          effects.summary = oneLineFlat(messageText(m), 80);
+          const local = parseLocalCommand(messageText(m));
+          effects.summary = oneLineFlat(local ? `$ ${local.command}` : messageText(m), 80);
         }
       }
       if (m?.role === "assistant") {
@@ -348,6 +351,15 @@ interface BashExecutionMessage {
   excludeFromContext?: boolean;
 }
 
+/** A user message as shown: a `!command` result as a command block, a message from another session labelled, anything else as typed. */
+function userItem(text: string, tui: TuiAltScreen): UserItem | BashItem {
+  const local = parseLocalCommand(text);
+  if (local) {
+    return bashItem(local, tui);
+  }
+  return { kind: "user", component: new UserMessage(displayText(text), mdTheme, 1) };
+}
+
 /** A finished `!command` replayed from the session. */
 function bashItem(m: BashExecutionMessage, tui: TuiAltScreen): BashItem {
   const component = new BashExecutionComponent(m.command, tui, m.excludeFromContext === true, 1);
@@ -387,7 +399,7 @@ export function itemsFromMessages(messages: unknown[], tui: TuiAltScreen, cwd: s
     } else if (m.role === "bashExecution") {
       items.push(bashItem(m as unknown as BashExecutionMessage, tui));
     } else if (m.role === "user") {
-      items.push({ kind: "user", component: new UserMessage(messageText(m), mdTheme, 1) });
+      items.push(userItem(messageText(m), tui));
     } else if (m.role === "assistant") {
       items.push(assistantItem(m as Record<string, unknown>));
     } else if (m.role === "toolResult") {

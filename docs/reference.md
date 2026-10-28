@@ -71,11 +71,8 @@ Session view (chat):
   message, the session is cut back to before it and the text returns to the
   editor (conversation only, file edits are not undone; the removed part is
   kept in the trash)
-- `!command` - run a shell command (pi's own `!`): the command and output appear in the transcript
-  (collapsed to a preview; `ctrl-o` expands) and, as pi records them in the session, the model sees them
-  on its next turn. `esc` stops a running one (`abort_bash`). Needs a live, idle session attached to you.
-  Limits: pi's RPC gives a command 30s to answer; `!!` (exclude from context) is not reachable over RPC
-  (`RpcClient.bash` takes no flag). Code: `SessionActions.bang`, daemon `handleBash`/`handleAbortBash`, `BashItem` in `transcript.ts`.
+- `!command` - (the chat box border turns yellow while the text starts with `!`) run a shell command in the session's directory. The daemon runs it itself (`local-command.ts`, bash in its own process group, output merged and cleaned of colour codes, start and end kept past ~24k characters, 10 minute limit) and hands the agent the result at once as an ordinary prompt: a `<local-command-caveat>` saying the user ran it, then `<local-command>cmd</local-command><local-command-output exit="N">...</local-command-output>`. That starts a turn, or queues behind the running one. pi's own `bash` RPC is not used because it only shows the model the output with the user's next message. The transcript recognises the tags (live and on replay) and draws the usual command block; the switcher summary shows `$ cmd`. `esc` stops it (`abort_bash`); one command at a time per session; refused while compacting. `!!` is not offered. Code: `SessionActions.bang`, daemon `handleBash`/`handleAbortBash`, `userItem` in `transcript.ts`.
+- Viewing a subagent: an accent-coloured editor border, a banner line above it ("SUBAGENT of X - /parent jumps to the parent") and `SUBAGENT of X` in the status line; the status line also shows `+$ children` for what the sessions below it have spent. `/parent` opens the parent; `/detach` (here or on the highlighted row in the switcher) removes the link both ways. The session is top-level again, and on its next start it is no longer told who its parent was.
 - `ctrl-o` - expand/collapse tool runs (collapsed: one summary line per run, "5 tool calls: bash x2, read, grep, +2 more" - the first three tool names, then a count)
 - `ctrl-t` - show/hide thinking (starts from pi's `hideThinkingBlock`)
 - mouse wheel scrolls (speed from pi's `fullscreenWheelScrollLines`); the
@@ -101,6 +98,7 @@ request/response):
 - `up`/`down` select, `enter`/`right` open, `esc` cancels a typed command
   (no-op otherwise), `left` no-op
 - `left`/`right`/`enter` on a group header fold/unfold it (`left` folds, `right` unfolds, `enter` toggles; remembered across runs; dragging a session into a folded group unfolds it): a folded group shows `▸`, hides its sessions and gives a one-line summary (count, working/idle, newest age); a filter unfolds everything while it is on
+- Sessions an agent started (subagents) hang under their parent; copies you make yourself with `/fork` or `/adopt` do not (they stay recorded in `lineage.json`, but are ordinary sessions): indented with `└`, in the parent's group, and the parent row says `N children, M working, K parked`. `left` on an open parent folds its children (`▸`), `right` on a folded one unfolds it, `left` on a child jumps to its parent; folds are remembered with the group folds. `shift+up`/`down` on a parent moves it with everything below it (a child cannot be moved alone). `/park` on a child hides it under its parent (`/filter` shows it again); deleting a parent leaves its children listed on their own. The tree comes from `lineage.json` (`session-tree.ts` builds it).
 - `shift+up`/`shift+down` move the highlighted session or group (crossing a
   header moves the session between groups; persisted to groups.json)
 - `ctrl-n` new session (controller's cwd), `ctrl-k` stop the highlighted
@@ -112,7 +110,7 @@ request/response):
   session with that as its first message
 - `/` completes commands (popup, tab); the list comes from `commands.ts`, so
   new commands appear automatically
-- the bottom chat box doubles as the switcher command line: `/new [-n name] [-C dir]` `/stop` `/delete [-y]` `/park [-u]` (session name and age are coloured by recency - bold white under a day, light grey under 3 days, grey under a week, then dark grey; `/park` forces the muted colour until the session is used again, `-u` clears it; inside a session `/park` also stops it (if idle) and goes back to the list) `/ungroup` `/filter [-r] [words]` (show only matching sessions - name, summary, group, model or directory, all words must match; `-r` takes one regex; no text clears)
+- the bottom chat box doubles as the switcher command line: `/new [-n name] [-C dir] [-a agent]` (start as an agent profile) `/agents` `/stop` `/delete [-y]` `/park [-u]` (session name and age are coloured by recency - bold white under a day, light grey under 3 days, grey under a week, then dark grey; `/park` forces the muted colour until the session is used again, `-u` clears it; inside a session `/park` also stops it (if idle) and goes back to the list) `/ungroup` `/filter [-r] [words]` (show only matching sessions - name, summary, group, model or directory, all words must match; `-r` takes one regex; no text clears)
   `/rename <name>` `/group <name>` `/adopt` `/kill-daemon` `/quit` `/exit`
   `/help` `/summarize` `/restore [words]` (pick a deleted session from the trash to bring back,
   with its group and summary; a single match is restored directly)
@@ -165,6 +163,18 @@ and respawned sessions without a restart; running sessions keep the values
 they started with, and the switcher status line says how many are behind
 (by file mtime). Bad values are ignored and reported there too.
 
+## Messages between sessions
+
+`ronpi_message({to, text})` (pi extension `pi/extensions/ronpi-agents.ts`, children only) asks the daemon (`message` command, `daemon-handlers-messages.ts`) to deliver `text` to `to`: a UUID, UUID prefix, `#number` or name (`daemon-resolve.ts` finds it, in the daemon's sessions first, then session files on disk). The target gets a user message `[from NAME (uuid)]: text` (`received.ts`); an inactive session is started for it; a busy one queues it as steering; a compacting one holds it with the other held messages. Delivering does not take the target's input attach. Refused: unknown or ambiguous target, itself, a session open in another pi process, empty text. The caller gets "delivered", not a reply; a reply is a message the other way. Received messages are shown as "from NAME" and are not offered as rewind points. `message` connections are treated like presence heartbeats (no controller sync).
+
+## Waking sleeping sessions
+
+A session that was stopped, or not started since ronpi restarted, has no pi process. Commands that need one (`/model`, `/compact`, `/clear`, `/mcp list`, `/reload`, `!command`) start it themselves through `SessionCommands.liveMeta()`; no message is needed. Commands that do not (`/name`, `/park`, `/fork`, `/parent`, `/detach`, `/why`, `/feedback`, `/abort`) leave it asleep, and ones that send a prompt (`/init`, `/mcp reconnect`) wake it through the ordinary prompt path. The wake is per command, not a framework flag, because most commands should not start a process; the rule for new commands is in AGENTS.md.
+
+## Session ids and names
+
+A session's address is its UUID (pi's session id). ronpi picks it before pi starts (`--session-id`) for new sessions and reads it from the file for resumed ones, and tells the child as `RONPI_SESSION_ID` in its environment (not set for a fork, whose id pi chooses; an extension can ask pi). The daemon command `resolve` turns a UUID, UUID prefix, `#number` or name into a session, falling back to the files on disk when the daemon does not hold it. Names are made unique when you set them (`/rename`, `/new -n`, `/fork`): a taken name gets ` #2`, ` #3`; names that pi or another program wrote can still collide, and `resolve` then reports the match as ambiguous.
+
 ## Env
 
 - `RONPI_SOCK` - socket path (default `$XDG_RUNTIME_DIR/ronpi.sock`; the
@@ -206,6 +216,11 @@ Daemon side:
   (prompt, spawn, adopt, attach, delete, rename), `daemon-handlers-ops.ts` (model, compact, reload, clear,
   rewind, dialogs); handlers get a `DaemonContext` (`daemon-context.ts`) - no module-level mutable state
 - `presence.ts` - sessions open in external pi processes (heartbeat/pid/ghost pruning)
+- `agents.ts` (agent profile files: parse, load, launch arguments), `session-agents.ts` (profile saved per session), `agents-completion.ts` (`/new -a` completion, `/agents` panel); the shipped profiles are in `../agents/`, see `agents/README.md`
+- `local-command.ts` (`!command`: run it, clean/trim the output, the tagged message the agent receives and its parser)
+- `received.ts` (label on messages between sessions), `daemon-handlers-messages.ts` / `daemon-resolve.ts` (deliver / find a session)
+- `session-tree.ts` - parent/child rows: nesting, folding, hiding parked children, the banner and cost rollup helpers
+- `session-id.ts` - addressing and naming: `resolveSession` (UUID, UUID prefix of 8+ characters, `#number`, or name, in that order; several matches are reported as ambiguous), `uniqueName` (` #2` suffixes)
 - `trash.ts` - delete-to-trash with manifest; `rewind.ts` - cut a session file back to before a user message (tail to trash)
 - `settings.ts` - ronpi settings file, layered with `RONPI_*` env, re-read at every child spawn
 - `config.ts`, `log.ts` - env-derived paths, daemon log

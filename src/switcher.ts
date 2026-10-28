@@ -9,6 +9,7 @@ import { appendFileSync } from "node:fs";
 import { Container, truncateToWidth, type Focusable } from "@earendil-works/pi-tui";
 import { fmtTokens, oneLine } from "./format.ts";
 import { groupTldr } from "./session-list.ts";
+import { childNote, visibleRows } from "./session-tree.ts";
 import {
   attention,
   byAge,
@@ -44,6 +45,12 @@ export interface SwitcherSession {
   model?: string;
   /** Live in an external pi process: [pi] prefix + dimmed until selected. */
   muted?: boolean;
+  /** Tree fields (session-tree.ts): set when the list is arranged under parents. */
+  depth?: number;
+  parentId?: string;
+  descendants?: number;
+  descendantsWorking?: number;
+  descendantsParked?: number;
   /** First user message, shown in the description column when idle-ish. */
   description?: string;
 }
@@ -110,9 +117,11 @@ export class Switcher extends Container implements Focusable {
       }
       const collapsed = !this.filterNote && this.collapsed.has(title) && (list?.length ?? 0) > 0;
       rows.push({ kind: "header", title, count: list?.length ?? 0, collapsed, tldr: collapsed ? groupTldr(list ?? []) : "" });
+      // hidden sessions (group folded, a parent folded, a parked child) stay in `ordered`
+      // - their order and group still count - but get no row
+      const shown = collapsed ? new Set<SwitcherSession>() : new Set(visibleRows(list ?? [], this.collapsed, !!this.filterNote));
       for (const s of list ?? []) {
-        // hidden sessions stay in `ordered` (their order and group still count) but get no row
-        if (!collapsed) {
+        if (shown.has(s)) {
           rows.push({ kind: "session", s });
         }
         ordered.push(s);
@@ -143,6 +152,18 @@ export class Switcher extends Container implements Focusable {
     let at = rows.findIndex((r) => r.kind === "session" && r.s.key === this.selectedKey);
     if (at === -1) {
       const hidden = ordered.find((s) => s.key === this.selectedKey);
+      // a folded parent stands in for the child that vanished into it
+      let cover = hidden?.parentId;
+      while (hidden && cover) {
+        const parent = ordered.find((s) => s.sessionId === cover);
+        const row = parent ? rows.findIndex((r) => r.kind === "session" && r.s === parent) : -1;
+        if (parent && row !== -1) {
+          this.selectedKey = parent.key;
+          this.selRow = row;
+          return;
+        }
+        cover = parent?.parentId;
+      }
       if (hidden) {
         // its group was collapsed: the header stands in for it
         const title = hidden.group ?? "(ungrouped)";
@@ -156,6 +177,17 @@ export class Switcher extends Container implements Focusable {
       this.selectedKey = at === -1 ? null : (rows[at] as { s: SwitcherSession }).s.key;
     }
     this.selRow = Math.max(0, at);
+  }
+
+  /** Move the highlight to the session with this UUID, if it has a row. */
+  selectSessionId(uuid: string): void {
+    const at = this.rows.findIndex((r) => r.kind === "session" && r.s.sessionId === uuid);
+    const row = this.rows[at];
+    if (row?.kind === "session") {
+      this.selRow = at;
+      this.selectedKey = row.s.key;
+      this.selectedHeader = null;
+    }
   }
 
   /** Select the entry that follows `key` in display order (or the previous
@@ -252,7 +284,7 @@ export class Switcher extends Container implements Focusable {
     // summary first, then model. Age always stays.
     let maxName = 0;
     for (const s of this.sessions) {
-      maxName = Math.max(maxName, visibleLen(`${MARKERS[s.state]} ${s.name}`) + 3);
+      maxName = Math.max(maxName, visibleLen(`${MARKERS[s.state]} ${this.treePrefix(s)}${s.name}`) + 3);
     }
     const nameWidth = Math.max(18, maxName + 1);
     const hasModel = this.sessions.some((s) => s.model);
@@ -313,7 +345,7 @@ export class Switcher extends Container implements Focusable {
       const isSel = s.key === this.selectedKey;
       const marker = s.note === "waiting on permission" ? attention("!") : s.state === "streaming" ? streamingStyle(spinnerFrame(Date.now())) : MARKERS[s.state];
       const markerText = isSel ? marker : dim(marker);
-      const displayName = s.muted ? `[pi] ${oneLine(s.name)}` : oneLine(s.name);
+      const displayName = this.treePrefix(s) + (s.muted ? `[pi] ${oneLine(s.name)}` : oneLine(s.name));
       const bodyCell = truncateToWidth(displayName, nameWidth - 3).padEnd(nameWidth - 3);
       // recency colours; the selected row keeps its accent, external ones stay dim
       const body = isSel ? bodyCell : s.muted ? dim(bodyCell) : byAge(s.ageMs, bodyCell);
@@ -345,7 +377,22 @@ export class Switcher extends Container implements Focusable {
     return lines.slice(0, height).map((line) => paintLine(line, width));
   }
 
+  /** Indent and fold arrow in front of a name: children hang under their parent, parents show whether they are open. */
+  private treePrefix(s: SwitcherSession): string {
+    const depth = s.depth ?? 0;
+    const branch = depth > 0 ? `${"  ".repeat(depth - 1)}\u2514 ` : "";
+    const hasKids = (s.descendants ?? 0) > 0;
+    const folded = hasKids && !this.filterNote && s.sessionId !== undefined && this.collapsed.has(s.sessionId);
+    return branch + (hasKids ? (folded ? "\u25b8 " : "\u25be ") : "");
+  }
+
   private descriptionFor(s: SwitcherSession): string {
+    const kids = childNote(s);
+    const own = this.ownDescription(s);
+    return kids ? (own ? `${kids} - ${own}` : kids) : own;
+  }
+
+  private ownDescription(s: SwitcherSession): string {
     if (s.note === "waiting on permission" || s.note === "view-only") {
       return s.note;
     }

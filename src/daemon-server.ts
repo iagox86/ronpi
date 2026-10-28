@@ -52,7 +52,8 @@ export function createServer(ctx: DaemonContext): net.Server {
           log(`bad client line: ${err}`);
           continue;
         }
-        if (cmd.type === "external_register" && !ctx.hub.isController(socket)) {
+        // one-shot callers (presence heartbeats, the agents extension) are not controllers: no sync, no attaches
+        if ((cmd.type === "external_register" || cmd.type === "message") && !ctx.hub.isController(socket)) {
           ctx.hub.addPresenceOnly(socket);
         } else if (!ctx.hub.isKnown(socket)) {
           syncController(ctx, socket);

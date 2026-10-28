@@ -69,6 +69,8 @@ export interface SessionMeta {
   /** Lifetime token/cost rollup tracked by the daemon. */
   tokens?: number;
   cost?: number;
+  /** Agent profile the session was started as, when it was. */
+  agent?: string;
   /** Whether the current model takes images; undefined when pi did not say. */
   acceptsImages?: boolean;
   /** True iff THIS receiving controller holds the exclusive input attach. */
@@ -113,11 +115,15 @@ type ClientCommandBody =
   | { type: "clear_queue"; session: number }
   /** The text pi's /mcp prints (servers and their states), for listing and completion. */
   | { type: "mcp_status"; session: number }
+  /** Deliver a message to another session (UUID, UUID prefix, #number or name). `from` is the sender's UUID, for the label. */
+  | { type: "message"; id?: string; to: string; text: string; from?: string }
+  /** Find a session from a UUID, UUID prefix, `#number` or name; the response is {uuid, name, file, id?} (id = daemon number when the daemon holds it). */
+  | { type: "resolve"; id?: string; query: string }
   /** pi's slash commands (extensions, skills, prompt templates). Without a
    * live session the daemon answers from the last list any child reported. */
   | { type: "commands"; id?: string; session?: number }
   /** `ready`: answer only once the child is up (for callers about to command it). */
-  | { type: "spawn"; id?: string; cwd: string; sessionFile?: string; name?: string; ready?: boolean }
+  | { type: "spawn"; id?: string; cwd: string; sessionFile?: string; name?: string; agent?: string; ready?: boolean }
   | { type: "deactivate"; id?: string; session: number }
   /** Deactivate if live, then move the session file to the trash dir. */
   | { type: "delete"; id?: string; session?: number; path?: string }
