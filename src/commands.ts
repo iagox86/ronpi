@@ -81,6 +81,14 @@ export const SWITCHER_COMMANDS = [
     },
   },
   {
+    name: "comment",
+    description: "keep a note to yourself about the highlighted session (hidden, but found by the filter)",
+    help: "Stores a longer note about why the session exists and where it stands. It is not drawn in the list; /filter and ctrl-f search it. With no text the current comment is put in the box to edit; /comment -c removes it.\nExamples:\n  /comment waiting on the vendor, retry the import after friday\n  /comment -c",
+    build: (cmd) => {
+      cmd.option("-c, --clear", "remove the comment").argument("[text...]", "the note (leave out to edit the current one)");
+    },
+  },
+  {
     name: "filter",
     description: "show only matching sessions until cleared (no text clears; ctrl-f filters as you type)",
     help: "Narrows the list until cleared; folds are ignored while a filter is on, and parked subagents show again. Run /filter with no text, or press esc, to clear.\nExamples:\n  /filter mealie\n  /filter -r \"mealie|freecad\"",
@@ -125,6 +133,24 @@ export type SwitcherCommandName = (typeof SWITCHER_COMMANDS)[number]["name"];
 
 /** Handled by ronpi inside a session; everything else goes to pi. */
 export const SESSION_COMMANDS = [
+  {
+    name: "btw",
+    description: "ask a side question about this session; the answer pops up and the session never sees it",
+    help: "Asks a copy of this session (it has read the whole conversation but has no tools) one question in the background, so you can keep working. The answer opens in a panel: c copies it, s saves it to a file, any other key closes. Nothing is added to the session and its own model is not interrupted. Uses the session's model unless -m is given.\nExamples:\n  /btw why did you choose sqlite over a json file?\n  /btw -m litellm/gemma4:12b what is left to do?",
+    build: (cmd) => {
+      cmd
+        .option("-m, --model <model>", "model to ask, provider/id (default: this session's model)")
+        .argument("<question...>", "the question");
+    },
+  },
+  {
+    name: "comment",
+    description: "keep a note to yourself about this session (hidden, but found by the switcher filter)",
+    help: "Stores a longer note about why the session exists and where it stands. It is not drawn in the list; the switcher's /filter and ctrl-f search it. With no text the current comment is shown; /comment -c removes it.\nExamples:\n  /comment waiting on the vendor, retry the import after friday\n  /comment -c",
+    build: (cmd) => {
+      cmd.option("-c, --clear", "remove the comment").argument("[text...]", "the note (leave out to show the current one)");
+    },
+  },
   { name: "exit", description: "leave ronpi (sessions keep running)",
     help: "Closes ronpi only. The daemon and every running session keep going; start ronpi again to reattach." },
   { name: "quit", description: "back to the session list",

@@ -57,6 +57,8 @@ export interface Host {
   /** Undo echoPrompt when the send failed. */
   dropEcho(key: string, text: string): void;
   notify(message: string): void;
+  /** Put text on the clipboard (and the primary selection); true or an error message. */
+  copyText(text: string): Promise<boolean | string>;
   renderChrome(): void;
   dispose(): void;
 }

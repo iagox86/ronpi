@@ -263,6 +263,23 @@ describe("daemon: lifecycle", () => {
     assert.ok(!after.some((m) => m.type === "event" && m.event?.type === "message_start"), "no message enters the conversation");
   });
 
+  it("sends the waiting dialog again when asked, and forgets it once pi has timed it out", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "/ask" });
+    await c.waitFor((m) => m.type === "ui_request" && m.request?.id === "ask-1");
+    const pending = (m: Msg) => m.type === "sessions" && m.sessions?.some((x: { id: number; pendingDialog: boolean }) => x.id === sessionId && x.pendingDialog);
+    await c.waitFor(pending);
+    const seen = c.messages.filter((m: Msg) => m.type === "ui_request").length;
+    await c.request({ type: "attach", session: sessionId });
+    await c.waitFor(() => c.messages.filter((m: Msg) => m.type === "ui_request").length > seen);
+    const cleared = (m: Msg) => m.type === "sessions" && m.sessions?.some((x: { id: number; pendingDialog: boolean }) => x.id === sessionId && !x.pendingDialog);
+    const mark = c.messages.length;
+    await c.waitFor((m) => cleared(m) && c.messages.indexOf(m) >= mark);
+  });
+
   it("runs a !command, tells the agent the result at once, and can stop a long one", async () => {
     harness = await startDaemon();
     const c = await harness.connect();

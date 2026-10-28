@@ -10,9 +10,9 @@ export interface Filter {
   testGroup(name: string): boolean;
 }
 
-/** What a query is matched against: everything the row shows, plus its directory. */
+/** What a query is matched against: everything the row shows, plus its directory and comment. */
 function haystack(s: SwitcherSession): string {
-  return [s.name, s.description, s.group, s.model, s.cwd, s.note].filter(Boolean).join(" ");
+  return [s.name, s.description, s.group, s.model, s.cwd, s.note, s.comment].filter(Boolean).join(" ");
 }
 
 /**

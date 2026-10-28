@@ -35,6 +35,8 @@ export interface SwitcherSession {
   sessionId?: string;
   cwd?: string;
   note?: string;
+  /** The /comment text: not drawn, only searched by the filter. */
+  comment?: string;
   /** Preformatted age of the last request/response, e.g. "30s", "2h". */
   age?: string;
   /** The same age in ms, for colouring; undefined when never used. */

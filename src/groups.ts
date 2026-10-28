@@ -20,6 +20,8 @@ export interface GroupsFile {
   collapsed?: string[];
   /** Sessions parked with /park: session UUID -> when (ms). They show in the oldest colour until used again. */
   parked?: Record<string, number>;
+  /** Notes to self by session UUID (/comment): never shown on a row, but searched by the switcher filter. */
+  comments?: Record<string, string>;
   /** One-line summaries by session UUID (written by /summarize). */
   summaries?: Record<string, { text: string; messages: number; at: string; model: string }>;
 }
@@ -116,6 +118,18 @@ export function withParked(data: GroupsFile, sessionId: string, park: boolean, n
     delete marks[sessionId];
   }
   return marks;
+}
+
+/** Set a session's comment (empty text removes it); returns a new map, leaving `data.comments` untouched. */
+export function withComment(data: GroupsFile, sessionId: string, text: string): Record<string, string> {
+  const comments = { ...data.comments };
+  const trimmed = text.trim();
+  if (trimmed) {
+    comments[sessionId] = trimmed;
+  } else {
+    delete comments[sessionId];
+  }
+  return comments;
 }
 
 /** How long a park mark for a session that no longer exists is kept (a trash restore brings the session back). */

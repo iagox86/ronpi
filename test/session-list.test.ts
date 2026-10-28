@@ -300,3 +300,12 @@ describe("groupTldr", () => {
     assert.equal(groupTldr([]), "empty");
   });
 });
+
+describe("session comments", () => {
+  it("reach the row by session id but do not replace the description", () => {
+    const groups: GroupsFile = { groups: [], assignments: {}, comments: { "uuid-/a.jsonl": "remind me why" } };
+    const [row] = build({ files: [local("/a.jsonl")], groups });
+    assert.equal(row?.comment, "remind me why");
+    assert.notEqual(row?.description, "remind me why");
+  });
+});

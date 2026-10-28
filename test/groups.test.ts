@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { groupsFile, isParked, PARK_KEEP_MS, pruneStale, loadGroups, resolveGroup, saveGroups, withParked } from "../src/groups.ts";
+import { groupsFile, isParked, PARK_KEEP_MS, pruneStale, loadGroups, resolveGroup, saveGroups, withComment, withParked } from "../src/groups.ts";
 
 let dir: string;
 const saved = { data: process.env.XDG_DATA_HOME, agent: process.env.PI_CODING_AGENT_DIR };
@@ -137,5 +137,21 @@ describe("legacy park marks", () => {
     const onDisk = JSON.parse(fs.readFileSync(groupsFile(), "utf8"));
     assert.deepEqual(onDisk.parked, { s: 5 });
     assert.equal("done" in onDisk, false);
+  });
+});
+
+describe("withComment", () => {
+  it("sets, replaces and removes a comment without touching the original map", () => {
+    const data = { groups: [], assignments: {}, comments: { a: "old" } };
+    const set = withComment(data, "b", "  waiting on the vendor  ");
+    assert.deepEqual(set, { a: "old", b: "waiting on the vendor" });
+    assert.deepEqual(data.comments, { a: "old" });
+    assert.deepEqual(withComment({ ...data, comments: set }, "a", ""), { b: "waiting on the vendor" });
+  });
+
+  it("survives pruning of stale sessions", () => {
+    const data = { groups: [], assignments: {}, comments: { gone: "keep me" } };
+    pruneStale(data, new Set(), Date.now());
+    assert.equal(data.comments.gone, "keep me");
   });
 });

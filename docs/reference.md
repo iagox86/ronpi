@@ -110,7 +110,7 @@ request/response):
   session with that as its first message
 - `/` completes commands (popup, tab); the list comes from `commands.ts`, so
   new commands appear automatically
-- the bottom chat box doubles as the switcher command line: `/new [-n name] [-C dir] [-a agent]` (start as an agent profile) `/agents` `/stop` `/delete [-y]` `/park [-u]` (session name and age are coloured by recency - bold white under a day, light grey under 3 days, grey under a week, then dark grey; `/park` forces the muted colour until the session is used again, `-u` clears it; inside a session `/park` also stops it (if idle) and goes back to the list) `/ungroup` `/filter [-r] [words]` (show only matching sessions - name, summary, group, model or directory, all words must match; `-r` takes one regex; no text clears)
+- the bottom chat box doubles as the switcher command line: `/new [-n name] [-C dir] [-a agent]` (start as an agent profile) `/agents` `/stop` `/delete [-y]` `/park [-u]` (session name and age are coloured by recency - bold white under a day, light grey under 3 days, grey under a week, then dark grey; `/park` forces the muted colour until the session is used again, `-u` clears it; inside a session `/park` also stops it (if idle) and goes back to the list) `/ungroup` `/comment [-c] [text]` (a hidden note per session, stored by UUID in `session-groups.json` `comments`, searched by the filter, never pruned) `/filter [-r] [words]` (show only matching sessions - name, summary, group, model, directory or comment, all words must match; `-r` takes one regex; no text clears)
   `/rename <name>` `/group <name>` `/adopt` `/kill-daemon` `/quit` `/exit`
   `/help` `/summarize` `/restore [words]` (pick a deleted session from the trash to bring back,
   with its group and summary; a single match is restored directly)
@@ -167,9 +167,19 @@ they started with, and the switcher status line says how many are behind
 
 `ronpi_message({to, text})` (pi extension `pi/extensions/ronpi-agents.ts`, children only) asks the daemon (`message` command, `daemon-handlers-messages.ts`) to deliver `text` to `to`: a UUID, UUID prefix, `#number` or name (`daemon-resolve.ts` finds it, in the daemon's sessions first, then session files on disk). The target gets a user message `[from NAME (uuid)]: text` (`received.ts`); an inactive session is started for it; a busy one queues it as steering; a compacting one holds it with the other held messages. Delivering does not take the target's input attach. Refused: unknown or ambiguous target, itself, a session open in another pi process, empty text. The caller gets "delivered", not a reply; a reply is a message the other way. Received messages are shown as "from NAME" and are not offered as rewind points. `message` connections are treated like presence heartbeats (no controller sync).
 
+## Side questions and mouse clicks
+
+`/btw` (`btw.ts`) copies the session file to a temp dir and runs `pi --print --session <copy> --no-tools --no-extensions --no-skills --no-prompt-templates --no-context-files [--model m] <prompt>`; the prompt (`btwPrompt`) says there are no tools and nobody to answer follow-ups. The copy is deleted afterwards, so the session file is never touched and a sleeping session stays asleep. The answer goes to the `InfoPanel` with actions (`PanelAction`: `c` copies via `Host.copyText`, `s` writes `btw-<time>.md` under `$XDG_DATA_HOME/ronpi/btw/`). Not verified against a real model with tool-call history and `--no-tools` (some providers may reject tool calls without tool definitions; the error is shown).
+
+pi-tui turns a press and release on one cell into a `click` that pi's thinking blocks and tool output toggle on. `click-guard.ts` wraps the screen's private `dispatchMouseToLayout` so only `clickCount >= 2` clicks reach the transcript (`RONPI_CLICK=single` disables the guard). Presses, drags, the wheel and text selection are untouched.
+
+## Dialogs that go stale
+
+A permission dialog is held by the daemon (`pendingDialog`, `lastDialog`) until answered. It is also dropped when the turn settles (`agent_settled`) and when the dialog's `timeout` passes (pi resolves such a dialog itself and says nothing). The controller drops its open dialog when the session list says none is pending, asks the daemon again (`attach`, which resends the waiting dialog) when the list says one is pending for us and none is open, and keeps an open dialog when the history reply replaces the view (the daemon sends the dialog just before the history).
+
 ## Waking sleeping sessions
 
-A session that was stopped, or not started since ronpi restarted, has no pi process. Commands that need one (`/model`, `/compact`, `/clear`, `/mcp list`, `/reload`, `!command`) start it themselves through `SessionCommands.liveMeta()`; no message is needed. Commands that do not (`/name`, `/park`, `/fork`, `/parent`, `/detach`, `/why`, `/feedback`, `/abort`) leave it asleep, and ones that send a prompt (`/init`, `/mcp reconnect`) wake it through the ordinary prompt path. The wake is per command, not a framework flag, because most commands should not start a process; the rule for new commands is in AGENTS.md.
+A session that was stopped, or not started since ronpi restarted, has no pi process. Commands that need one (`/model`, `/compact`, `/clear`, `/mcp list`, `/reload`, `!command`) start it themselves through `SessionCommands.liveMeta()`; no message is needed. Commands that do not (`/name`, `/park`, `/comment`, `/btw`, `/fork`, `/parent`, `/detach`, `/why`, `/feedback`, `/abort`) leave it asleep, and ones that send a prompt (`/init`, `/mcp reconnect`) wake it through the ordinary prompt path. The wake is per command, not a framework flag, because most commands should not start a process; the rule for new commands is in AGENTS.md.
 
 ## Session ids and names
 
@@ -220,6 +230,7 @@ Daemon side:
 - `local-command.ts` (`!command`: run it, clean/trim the output, the tagged message the agent receives and its parser)
 - `received.ts` (label on messages between sessions), `daemon-handlers-messages.ts` / `daemon-resolve.ts` (deliver / find a session)
 - `mcp.ts` / `mcp-doctor.ts` - /mcp: parse pi's status, add/remove servers, and the /mcp status troubleshooting report
+- `btw.ts` - /btw: ask a throwaway copy of the session one question; `click-guard.ts` - only double clicks reach the transcript
 - `session-tree.ts` - parent/child rows: nesting, folding, hiding parked children, the banner and cost rollup helpers
 - `session-id.ts` - addressing and naming: `resolveSession` (UUID, UUID prefix of 8+ characters, `#number`, or name, in that order; several matches are reported as ambiguous), `uniqueName` (` #2` suffixes)
 - `trash.ts` - delete-to-trash with manifest; `rewind.ts` - cut a session file back to before a user message (tail to trash)

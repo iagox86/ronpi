@@ -253,6 +253,27 @@ export class ChildManager {
     return true;
   }
 
+  /** pi settles a dialog with a `timeout` by itself and says nothing, so the record is dropped then too. */
+  private expireDialog(s: DaemonSession, dialog: Record<string, unknown>): void {
+    const timeout = Number(dialog.timeout);
+    if (!(timeout > 0)) {
+      return;
+    }
+    setTimeout(() => {
+      if (s.lastDialog === dialog) {
+        this.clearDialog(s);
+      }
+    }, timeout + 1000).unref();
+  }
+
+  private clearDialog(s: DaemonSession): void {
+    if (s.pendingDialog) {
+      s.pendingDialog = false;
+      s.lastDialog = undefined;
+      this.hub.broadcastSessions();
+    }
+  }
+
   private onEvent(s: DaemonSession, event: Record<string, unknown>): void {
     const type = event.type as string;
     if (type === "extension_ui_request") {
@@ -268,6 +289,7 @@ export class ChildManager {
         s.pendingDialog = true;
         s.lastDialog = event;
         this.hub.broadcastSessions();
+        this.expireDialog(s, event);
       }
       // Dialogs go to the attached controller; fire-and-forget records and
       // unattached dialogs broadcast so somebody can pick them up.
@@ -297,6 +319,8 @@ export class ChildManager {
       this.hub.broadcastSessions();
     } else if (type === "agent_settled") {
       s.streaming = false;
+      // no tool can still be asking once the turn is over
+      this.clearDialog(s);
       void this.refreshMeta(s).then(() => this.hub.broadcastSessions());
     }
   }

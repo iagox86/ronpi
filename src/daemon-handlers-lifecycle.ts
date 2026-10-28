@@ -188,6 +188,10 @@ export async function handleAttach(
 ): Promise<void> {
   const s = ctx.registry.live(cmd.session);
   if (s.attachedTo === socket) {
+    // asked again: the controller may have missed the dialog that is waiting
+    if (s.pendingDialog && s.lastDialog) {
+      ctx.hub.send(socket, { type: "ui_request", session: s.id, request: s.lastDialog });
+    }
     res(true);
     return;
   }

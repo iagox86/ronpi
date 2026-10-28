@@ -12,7 +12,7 @@ import { Key, matchesKey } from "@earendil-works/pi-tui";
 import { type Invocation, listing, parseCommandLine } from "./cli.ts";
 import { SWITCHER_COMMANDS, type SwitcherCommandName } from "./commands.ts";
 import type { Host } from "./host.ts";
-import { loadGroups, pruneStale, resolveGroup, saveGroups, type GroupsFile, withParked } from "./groups.ts";
+import { loadGroups, pruneStale, resolveGroup, saveGroups, type GroupsFile, withComment, withParked } from "./groups.ts";
 import { compileFilter, type Filter } from "./session-filter.ts";
 import { loadSettings } from "./settings.ts";
 import { DEFAULT_INTERVAL_MINUTES, needsResummary, type SummaryEntry, summarizeFile, summaryModel, transcriptOf, autoSummaryFailure } from "./summarize.ts";
@@ -641,6 +641,21 @@ export class SwitcherActions {
         saveGroups(this.groups);
         this.refresh();
         this.h.switcher.hint = undo ? `${t.name} unparked` : `${t.name} parked (using it again unparks it)`;
+      }),
+      comment: needsTarget("comment", async (t, arg, call) => {
+        if (!t.sessionId) {
+          this.h.switcher.hint = "comment: session has no id yet";
+          return;
+        }
+        if (!arg && call.opts.clear !== true) {
+          this.h.editor.setText(`/comment ${t.comment ?? ""}`);
+          this.h.switcher.hint = `comment: ${t.name} - edit the note and press enter`;
+          return;
+        }
+        this.groups.comments = withComment(this.groups, t.sessionId, call.opts.clear === true ? "" : arg);
+        saveGroups(this.groups);
+        this.refresh();
+        this.h.switcher.hint = call.opts.clear === true ? `${t.name}: comment removed` : `${t.name}: comment saved (searchable with /filter)`;
       }),
       detach: needsTarget("detach", async (t) => {
         const parent = t.sessionId ? detachFromParent(t.sessionId) : undefined;

@@ -9,10 +9,12 @@ import { relationOf } from "./session-tree.ts";
 import { probeEntry, parseStatusDetailed, readConfigs, statusReport } from "./mcp-doctor.ts";
 import { addMcpServer, MCP_ACTIONS, mcpConfigFile, mcpEntry, removeMcpServer } from "./mcp.ts";
 import { forkName, placeFork } from "./fork-placement.ts";
-import { loadGroups, saveGroups, withParked } from "./groups.ts";
+import { loadGroups, saveGroups, withComment, withParked } from "./groups.ts";
 import type { Host } from "./host.ts";
 import { displayName } from "./session-list.ts";
 import { runFeedback } from "./feedback-command.ts";
+import { askBtw, saveBtw } from "./btw.ts";
+import { loadSettings, resolveChildConfig } from "./settings.ts";
 import { explainLastThinking } from "./why.ts";
 import { newView } from "./transcript.ts";
 import type { SessionMeta } from "./shared.ts";
@@ -67,6 +69,8 @@ export class SessionCommands {
       exit: () => this.h.dispose(),
       quit: () => this.h.switching.open(),
       park: () => this.park(),
+      btw: (c) => this.btw(c.args.join(" "), c.opts.model as string | undefined),
+      comment: (c) => this.comment(c.args.join(" "), c.opts.clear === true),
       help: () => {
         this.h.infoPanel.show(listing(SESSION_COMMANDS));
         this.h.tui.requestRender();
@@ -86,6 +90,28 @@ export class SessionCommands {
       compact: (c) => this.compact(c.args.join(" ")),
       mcp: (c) => this.mcp(c.args[0], c.args[1], c.args.slice(2)),
     };
+  }
+
+  /**
+   * Show, set (`text`) or remove (`clear`) the viewed session's comment. Only
+   * ronpi's own state: does not wake the session.
+   */
+  private comment(text: string, clear: boolean): void {
+    const meta = this.viewedMeta();
+    const sessionId = meta?.sessionId ?? (this.h.viewing ? this.h.local.get(this.h.viewing)?.id : undefined);
+    if (!sessionId) {
+      this.h.notify("nothing to comment on yet - send a message first");
+      return;
+    }
+    const groups = loadGroups();
+    if (!clear && !text.trim()) {
+      const current = groups.comments?.[sessionId];
+      this.h.notify(current ? `comment: ${current}` : "no comment - /comment <text> to set one");
+      return;
+    }
+    groups.comments = withComment(groups, sessionId, clear ? "" : text);
+    saveGroups(groups);
+    this.h.notify(clear ? "comment removed" : "comment saved");
   }
 
   /** Mark the viewed session parked, stop its process unless it is busy, and return to the switcher. */
@@ -326,6 +352,32 @@ export class SessionCommands {
       this.h.notify("cleared - same session, empty conversation (old contents moved to trash)");
     } catch (err) {
       this.fail("clear", err);
+    }
+  }
+
+  /**
+   * /btw: a copy of the session answers one question without tools while the
+   * user carries on. Reads the session file only, so a sleeping session stays asleep.
+   */
+  private async btw(question: string, model: string | undefined): Promise<void> {
+    const key = this.h.viewing;
+    if (!key?.startsWith("/")) {
+      this.h.notify("nothing to ask about yet - send a message first");
+      return;
+    }
+    const meta = this.viewedMeta();
+    const asked = model ?? (meta?.model.includes("/") ? meta.model : undefined);
+    try {
+      this.h.notify("btw: asking...");
+      const answer = await askBtw({ piCli: resolveChildConfig(loadSettings().settings).piCli, file: key, question, model: asked, cwd: meta?.cwd });
+      this.h.notify("");
+      this.h.infoPanel.show(`btw: ${question}\n\n${answer}`, [
+        { key: "c", label: "copies", run: () => void this.h.copyText(answer).then((r) => this.h.notify(r === true ? "btw: answer copied" : `btw: copy failed (${r})`)) },
+        { key: "s", label: "saves to a file", run: () => this.h.notify(`btw: saved to ${saveBtw(question, answer)}`) },
+      ]);
+      this.h.tui.requestRender();
+    } catch (err) {
+      this.fail("btw", err);
     }
   }
 

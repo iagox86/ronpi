@@ -7,6 +7,14 @@ import type { SwitcherSession } from "../src/switcher.ts";
 
 const row = (over: Partial<SwitcherSession>): SwitcherSession => ({ key: "/a", name: "n", state: "idle", ...over });
 
+describe("session filter on comments", () => {
+  it("finds a session by its hidden comment", () => {
+    const f = compileFilter("vendor friday", false);
+    assert.ok(f?.test(row({ name: "import", comment: "waiting on the vendor, retry friday" })));
+    assert.equal(f?.test(row({ name: "import" })), false);
+  });
+});
+
 describe("session filter", () => {
   const login = row({ name: "Login work", description: "fixing the auth bug", group: "Work", model: "glm-5.3", cwd: "/src/webapp" });
   const notes = row({ name: "Meeting notes", description: "weekly sync", cwd: "/home/ron/notes" });

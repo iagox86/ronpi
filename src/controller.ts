@@ -40,6 +40,7 @@ import { HistorySearch } from "./history-search.ts";
 import { settingsMtime } from "./settings.ts";
 import { loadCommands, mergeHistory, recordCommand, trimCommands } from "./history.ts";
 import { rewindTargets } from "./rewind.ts";
+import { guardClicks } from "./click-guard.ts";
 import { autocompleteMaxVisible, hideThinkingBlock, wheelScrollLines } from "./pi-settings.ts";
 import { SessionActions } from "./session-actions.ts";
 import { SwitcherActions } from "./switcher-actions.ts";
@@ -153,10 +154,12 @@ class Controller {
   constructor() {
     this.switching = new SwitcherActions(this);
     this.session = new SessionActions(this);
-    this.tui = new TuiAltScreen(new ClipboardTerminal(() => this.onMiddleClick()), true, undefined, {
-      wheelScrollLines: wheelScrollLines(),
-      copySelection: (text) => this.copySelection(text),
-    });
+    this.tui = guardClicks(
+      new TuiAltScreen(new ClipboardTerminal(() => this.onMiddleClick()), true, undefined, {
+        wheelScrollLines: wheelScrollLines(),
+        copySelection: (text) => this.copySelection(text),
+      }),
+    );
     this.scroll = new ScrollView(this.chatRoot, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" });
     this.editor = new InputEditor(this.tui, editorTheme, { paddingX: 1 });
     this.editor.setAutocompleteMaxVisible(autocompleteMaxVisible());
@@ -398,10 +401,29 @@ class Controller {
       }
       this.switching.close();
     }
+    for (const meta of metas) {
+      this.syncDialog(meta);
+    }
     if (this.switching.isOpen) {
       this.switching.refresh();
     }
     this.renderChrome();
+  }
+
+  /**
+   * Keep the open dialog in step with the daemon's record of it: one the child
+   * has settled itself (timeout, abort, turn over) is dropped, and one the
+   * daemon holds for us but we never saw (it arrived before we knew the
+   * session) is asked for again.
+   */
+  private syncDialog(meta: SessionMeta): void {
+    const key = this.keyFor(meta);
+    const view = this.views.get(key);
+    if (!meta.pendingDialog && view?.dialog) {
+      view.dialog = undefined;
+    } else if (meta.pendingDialog && meta.attachedToYou && !view?.dialog) {
+      this.send({ type: "attach", session: meta.id });
+    }
   }
 
   private onHistory(sessionId: number, messages: unknown[]): void {
@@ -416,6 +438,8 @@ class Controller {
       // keep live activity if events raced ahead of the history reply
       activity: old?.activity,
       queue: old?.queue ?? [],
+      // the daemon sends a pending dialog just before the history; replacing the view must not lose it
+      dialog: old?.dialog,
     };
     this.views.set(key, fresh);
     // prompts sent but not yet echoed by pi are not in the child's history
@@ -535,6 +559,10 @@ class Controller {
   }
 
   /** Text selected in ronpi goes to the clipboard and the primary selection, so ctrl-v and middle click both get it. */
+  copyText(text: string): Promise<boolean | string> {
+    return this.copySelection(text);
+  }
+
   private async copySelection(text: string): Promise<boolean | string> {
     if (!this.clipboard.available) {
       this.tui.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
@@ -644,6 +672,10 @@ class Controller {
       return handled;
     }
     if (this.infoPanel.isOpen) {
+      if (this.infoPanel.act(data)) {
+        this.tui.requestRender();
+        return true;
+      }
       // any key dismisses command output; esc/enter are only for that
       this.infoPanel.close();
       this.tui.requestRender();
