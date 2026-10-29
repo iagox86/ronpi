@@ -23,6 +23,7 @@ export const TRASH_DIR = process.env.RONPI_TRASH ?? path.join(DATA_DIR, "ronpi",
 export const HISTORY_FILE = process.env.RONPI_HISTORY ?? path.join(DATA_DIR, "ronpi", "history.jsonl");
 export const LINEAGE_FILE = process.env.RONPI_LINEAGE ?? path.join(DATA_DIR, "ronpi", "lineage.json");
 export const SESSION_AGENTS_FILE = process.env.RONPI_SESSION_AGENTS ?? path.join(DATA_DIR, "ronpi", "session-agents.json");
+export const HANDLED_FILE = process.env.RONPI_HANDLED ?? path.join(DATA_DIR, "ronpi", "handled-files.json");
 export const FEEDBACK_FILE = process.env.RONPI_FEEDBACK ?? path.join(DATA_DIR, "ronpi", "feedback.jsonl");
 export const LOG = process.env.RONPI_LOG ?? path.join(import.meta.dirname, "daemon.log");
 

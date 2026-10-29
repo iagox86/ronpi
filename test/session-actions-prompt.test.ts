@@ -74,4 +74,32 @@ describe("prompt fork-confirm flow", () => {
     // echo again before the request; no retraction (the delivery happened)
     assert.deepEqual(fh.sequence.slice(3), ["echo", "request"]);
   });
+
+  it("sends once and keeps the echo when enter is pressed again while the session is still starting", async () => {
+    const fh = fakeHost([{}]);
+    let release: (v: unknown) => void = () => {};
+    const slow = new Promise((resolve) => {
+      release = resolve;
+    });
+    const baseRequest = (fh.host as unknown as { request: (c: Record<string, unknown>) => Promise<unknown> }).request;
+    (fh.host as unknown as { request: unknown }).request = (cmd: Record<string, unknown>) => {
+      void baseRequest(cmd);
+      return slow;
+    };
+    const sa = new SessionActions(fh.host);
+
+    const first = sa.prompt("hello there");
+    // same text again, then different text typed meanwhile, while the first request is unanswered
+    assert.equal(await sa.prompt("hello there"), false);
+    assert.equal(await sa.prompt("something else"), false);
+    assert.equal(fh.requests.length, 1, "only the first enter reaches the daemon");
+    assert.ok(!fh.sequence.includes("drop"), "the first send's echo is not retracted");
+    assert.equal(fh.editorText(), "something else", "text typed meanwhile is kept, not sent");
+
+    release({});
+    assert.equal(await first, true);
+    // once answered, the next prompt goes through
+    assert.equal(await sa.prompt("next"), true);
+    assert.equal(fh.requests.length, 2);
+  });
 });

@@ -19,6 +19,8 @@ const BANG_TIMEOUT_MS = 11 * 60_000;
 export class SessionActions {
   /** Armed: prompting a recently-modified external session (fork warning). */
   armedFork: string | null = null;
+  /** Prompts sent to sleeping sessions (by file) whose answer is still pending, with the text sent. */
+  private readonly startingPrompts = new Map<string, string>();
   /** Session whose `!command` is running, so esc can stop it. */
   private bangSession: number | undefined;
 
@@ -450,6 +452,22 @@ export class SessionActions {
     }
     const sent = message || (images.length > 0 ? "(see the attached image)" : message);
     const echo = !text.startsWith("/") && !meta?.streaming;
+    // A session with no live child starts on its first prompt, which takes seconds and answers
+    // only then. Another enter meanwhile would be a second delivery (or fail on "spawn in
+    // progress" and retract the first one's echo), so one prompt per file is in flight at a time.
+    const starting = !meta;
+    if (starting) {
+      if (this.startingPrompts.has(key)) {
+        if (this.startingPrompts.get(key) === sent) {
+          this.h.notify("already sending that - the session is still starting");
+        } else {
+          this.giveBack([message, ...images.map((image) => this.h.attachments.put(image))].join(" "));
+          this.h.notify("the session is still starting - your new text is kept, send it in a moment");
+        }
+        return false;
+      }
+      this.startingPrompts.set(key, sent);
+    }
     try {
       if (meta) {
         if (echo) {
@@ -511,6 +529,10 @@ export class SessionActions {
       // give the images back, under fresh markers, so the message can be sent again
       this.giveBack([message, ...images.map((image) => this.h.attachments.put(image))].join(" "));
       return false;
+    } finally {
+      if (starting) {
+        this.startingPrompts.delete(key);
+      }
     }
   }
 }

@@ -9,6 +9,7 @@ import type { Cmd, DaemonContext, Responder } from "./daemon-context.ts";
 import { sendHistory } from "./daemon-history.ts";
 import type { DaemonSession } from "./daemon-session.ts";
 import { forkNote, recordFork, sessionIdOfFile } from "./lineage.ts";
+import { wasHandled } from "./handled-files.ts";
 import { log } from "./log.ts";
 import { restoreTrashedSession, trashSessionFile } from "./trash.ts";
 
@@ -46,7 +47,8 @@ export async function handlePrompt(
       } catch {
         // stat failure: treat as old
       }
-      if (Date.now() - mtimeMs < 60_000 && !cmd.confirmFork) {
+      // a file ronpi ran before a daemon restart is its own, however fresh its mtime
+      if (Date.now() - mtimeMs < 60_000 && !cmd.confirmFork && !wasHandled(cmd.sessionFile)) {
         res(true, undefined, { confirmFork: true, ageMs: Math.round(Date.now() - mtimeMs) });
         return;
       }

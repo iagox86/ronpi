@@ -7,6 +7,7 @@ import type { ClientHub } from "./daemon-hub.ts";
 import type { DaemonSession } from "./daemon-session.ts";
 import { randomUUID } from "node:crypto";
 import { type AgentProfile, profileArgs } from "./agents.ts";
+import { recordHandled } from "./handled-files.ts";
 import { historyOf } from "./daemon-history.ts";
 import { RONPI_TOOLS } from "./required.ts";
 import { lineageArgs, sessionIdOfFile } from "./lineage.ts";
@@ -147,6 +148,13 @@ export class ChildManager {
       await this.detectBridge(s);
       if (opts.agent && s.sessionId) {
         saveSessionAgent(s.sessionId, opts.agent);
+      }
+      if (s.sessionFile) {
+        try {
+          recordHandled(s.sessionFile);
+        } catch (err) {
+          log(`could not record ${s.sessionFile} as handled: ${err instanceof Error ? err.message : err}`);
+        }
       }
       log(`session ${s.id} child started (file=${s.sessionFile ?? "new"})`);
     } finally {

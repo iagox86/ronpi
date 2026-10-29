@@ -326,6 +326,19 @@ describe("daemon: lifecycle", () => {
     assert.equal((r3 as { confirmFork?: boolean }).confirmFork, undefined);
   });
 
+  it("does not ask about a fresh session file that ronpi ran before a daemon restart", async () => {
+    const handled = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-handled-")), "handled.json");
+    harness = await startDaemon({ RONPI_HANDLED: handled });
+    const c = await harness.connect();
+    const file = path.join(harness.dir, "was-ours.jsonl");
+    fs.writeFileSync(file, `${JSON.stringify({ type: "session", id: "ours" })}\n`);
+    fs.writeFileSync(handled, JSON.stringify([file]));
+    const r = await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "hello" });
+    assert.equal((r as { confirmFork?: boolean }).confirmFork, undefined, "a file ronpi ran before is its own");
+    await c.waitFor((m) => m.type === "history");
+    assert.ok(JSON.parse(fs.readFileSync(handled, "utf8")).includes(file));
+  });
+
   it("serves pi's slash commands, and the last list once the child is gone", async () => {
     harness = await startDaemon();
     const c = await harness.connect();
