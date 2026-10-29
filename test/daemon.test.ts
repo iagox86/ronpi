@@ -179,6 +179,140 @@ describe("daemon: lifecycle", () => {
     assert.equal(fs.readFileSync(file, "utf8").includes("queued message"), false);
   });
 
+  it("re-syncs a stale queue strip once pi reports nothing pending (#47)", async () => {
+    // queue_update is fire-and-forget, so a lost removal event would leave a
+    // controller showing "queued" lines forever. With the drop flag fake-pi
+    // delivers the message but withholds the empty-queue update; the daemon must
+    // reconcile against pi at settle and announce the cleared queue itself.
+    harness = await startDaemon({ FAKE_PI_SLOW: "1", FAKE_PI_STEP_MS: "150", FAKE_PI_DROP_QUEUE_REMOVAL: "1" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "running" });
+    await c.request({ type: "prompt", session: sessionId, message: "queued message" });
+    await c.waitFor((m) => m.type === "event" && m.event?.type === "queue_update" && m.event.steering.length === 1);
+    await c.waitFor(isSettled);
+
+    // the reconcile runs just behind agent_settled (async refreshMeta); earlier empty
+    // updates from spawn-time refreshMeta don't count
+    await c.waitFor(() => {
+      const settled = c.messages.findIndex(isSettled);
+      return c.messages.some(
+        (m, i) =>
+          i > settled &&
+          m.type === "event" &&
+          m.event?.type === "queue_update" &&
+          m.session === sessionId &&
+          m.event.steering.length === 0,
+      );
+    }, 5000);
+  });
+
+  it("delivers messages from other sessions through the session bridge, as custom entries with a self-clearing strip", async () => {
+    // A child that offers /ronpi-inject gets the message as that command, never through pi's
+    // steering queue. Mid-run it lands as an appended custom entry at the turn boundary, and
+    // the strip shows it pending until the daemon sees that append.
+    harness = await startDaemon({ FAKE_PI_SLOW: "1", FAKE_PI_STEP_MS: "150", FAKE_PI_BRIDGE: "1" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "running" });
+    const r = await c.request({ type: "message", to: `#${sessionId}`, text: "bridged hello" });
+    assert.equal((r as { via?: string }).via, "bridge");
+
+    const pendingAt = c.messages.findIndex(
+      (m) => m.type === "event" && m.event?.type === "queue_update" && m.session === sessionId && m.event.steering.length === 1,
+    );
+    assert.ok(pendingAt !== -1, "the strip never showed the message pending");
+    await c.waitFor(() =>
+      c.messages.some(
+        (m, i) => i > pendingAt && m.type === "event" && m.event?.type === "queue_update" && m.session === sessionId && m.event.steering.length === 0,
+      ),
+    );
+    assert.ok(c.messages.some((m) => m.type === "event" && m.event?.type === "entry_appended"), "controllers must see the appended entry to draw it");
+
+    await c.waitFor(isSettled);
+    const file = c.sessions().find((s) => s.id === sessionId)?.sessionFile as string;
+    const entries = fs
+      .readFileSync(file, "utf8")
+      .split("\n")
+      .filter((l) => l)
+      .map((l) => JSON.parse(l) as { type?: string; customType?: string; content?: unknown; message?: { role?: string; content?: unknown } });
+    const injected = entries.find((e) => e.type === "custom_message" && e.customType === "ronpi-inject");
+    assert.ok(injected, "no custom_message entry for the bridged message");
+    assert.ok(JSON.stringify(injected.content).includes("bridged hello"));
+    const asUserPrompt = entries.some((e) => e.type === "message" && e.message?.role === "user" && JSON.stringify(e.message.content).includes("bridged hello"));
+    assert.equal(asUserPrompt, false);
+  });
+
+  it("says so when a session stops before a bridged message reached its transcript", async () => {
+    harness = await startDaemon({ FAKE_PI_SLOW: "1", FAKE_PI_STEP_MS: "300", FAKE_PI_BRIDGE: "1" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "running" });
+    await c.request({ type: "message", to: `#${sessionId}`, text: "will be lost" });
+    await c.request({ type: "deactivate", session: sessionId });
+    const gone = await c.waitFor((m) => m.type === "exited" && m.session === sessionId);
+    assert.match(String(gone.reason), /1 message from other sessions did not arrive.*will be lost/);
+  });
+
+  it("starts an idle session's turn with a bridged message, and confirms it", async () => {
+    harness = await startDaemon({ FAKE_PI_BRIDGE: "1" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const r = await c.request({ type: "message", to: `#${sessionId}`, text: "wake up via bridge" });
+    assert.equal((r as { via?: string }).via, "bridge");
+    await c.waitFor((m) => m.type === "event" && m.session === sessionId && m.event?.type === "message_end" && m.event.message?.customType === "ronpi-inject");
+    await c.waitFor(isSettled);
+    const meta = c.sessions().find((s) => s.id === sessionId);
+    assert.equal(meta?.sessionBridge, true);
+  });
+
+  it("falls back to steering, with the session marked as lacking the bridge, when the child does not offer it", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const r = await c.request({ type: "message", to: `#${sessionId}`, text: "plain hello" });
+    assert.equal((r as { via?: string }).via, "legacy");
+    assert.equal(c.sessions().find((s) => s.id === sessionId)?.sessionBridge, false);
+  });
+
+  it("hands a message to pi's steering queue when the bridge reports it could not deliver", async () => {
+    harness = await startDaemon({ FAKE_PI_BRIDGE: "1", FAKE_PI_BRIDGE_FAIL: "1" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "message", to: `#${sessionId}`, text: "rescued" });
+    await c.waitFor((m) => m.type === "event" && m.session === sessionId && m.event?.type === "message_start" && JSON.stringify(m.event.message).includes("rescued"));
+  });
+
+  it("confirms before touching a brand-new recently-modified session file, then proceeds once confirmed", async () => {
+    // A file this daemon has never handled may belong to a presence-less
+    // external pi (undetectable); a fresh mtime is the signal, and the
+    // daemon must not touch the file until the user confirms. Files it has
+    // handled before are its own and never confirm, whatever their mtime.
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const file = path.join(harness.dir, "fresh-session.jsonl");
+    fs.writeFileSync(file, `${JSON.stringify({ type: "session", id: "fresh" })}\n`);
+    const r = await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "hello" });
+    assert.equal((r as { confirmFork?: boolean }).confirmFork, true);
+    assert.ok(c.sessions().every((s) => s.sessionFile !== file));
+
+    await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "hello", confirmFork: true });
+    await c.waitFor((m) => m.type === "history");
+    const s = c.sessions().find((x) => x.sessionFile === file);
+    assert.ok(s, "confirmed prompt should register and start the session");
+
+    // now the daemon owns it: recent mtime or not, no confirm
+    fs.appendFileSync(file, "\n");
+    const r3 = await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "again" });
+    assert.equal((r3 as { confirmFork?: boolean }).confirmFork, undefined);
+  });
+
   it("serves pi's slash commands, and the last list once the child is gone", async () => {
     harness = await startDaemon();
     const c = await harness.connect();
@@ -511,6 +645,44 @@ describe("daemon: lifecycle", () => {
     assert.ok(argv().includes("--tools"), "the respawn kept the tool limits");
     assert.ok(!argv().includes("--thinking"), "but did not reset the model settings of an existing session");
     assert.equal(c.sessions().find((x) => x.id === sessionId)?.agent, "explore");
+  });
+
+  it("adds ronpi's tools to the loadout on every start and resume, unless a profile owns the tool list", async () => {
+    harness = await startDaemon({ RONPI_AGENTS_DIR: path.join(os.tmpdir(), "ronpi-no-user-agents") });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const argv = (): string[] => {
+      const f = c.sessions().find((x) => x.id === sessionId)?.sessionFile;
+      return JSON.parse(fs.readFileSync(`${f}.argv.json`, "utf8")) as string[];
+    };
+    const tools = (): string | undefined => argv()[argv().indexOf("--tools") + 1];
+    assert.equal(tools(), "+ronpi_message,+ronpi_usage");
+    await c.request({ type: "prompt", session: sessionId, message: "hi" });
+    await c.waitFor(isSettled);
+    await c.request({ type: "reload", session: sessionId });
+    assert.equal(tools(), "+ronpi_message,+ronpi_usage", "a /reload resume passes them again");
+
+    const explore = await c.request({ type: "spawn", cwd: harness.dir, agent: "explore" });
+    await c.waitFor((m) => m.type === "history" && m.session === explore.sessionId);
+    const f = c.sessions().find((x) => x.id === explore.sessionId)?.sessionFile;
+    const eargv = JSON.parse(fs.readFileSync(`${f}.argv.json`, "utf8")) as string[];
+    assert.equal(eargv.filter((a) => a === "--tools").length, 1, "a profile's own --tools is not mixed with modifiers");
+  });
+
+  it("reports how many messages pi holds when a run settles, and replays history on a resync request", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "hi" });
+    await c.waitFor(isSettled);
+    const digest = await c.waitFor((m) => m.type === "digest" && m.session === sessionId);
+    assert.equal(digest.streaming, false);
+    assert.ok((digest.messages as number) >= 2, "the prompt and the reply");
+    const history = c.waitFor((m) => m.type === "history" && m.session === sessionId && (m.messages as unknown[]).length === digest.messages);
+    await c.request({ type: "resync", session: sessionId });
+    await history;
   });
 
   it("refuses to start an unknown agent and names the ones it has", async () => {

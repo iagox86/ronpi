@@ -28,6 +28,9 @@ import { uniqueName } from "./session-id.ts";
 import { loadAgents } from "./agents.ts";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { DIALOG_METHODS, HISTORY_FILE, KEY_LOG, SOCK } from "./config.ts";
+
+/** Reconnect tries (backoff 0.5s doubling to 5s) before the controller gives up and exits. */
+const RECONNECT_ATTEMPTS = 20;
 import { type DialogRequest, DialogPanel, isTextDialog } from "./dialogs.ts";
 
 // How long a reason typed on the select waits for the chained input dialog.
@@ -52,7 +55,11 @@ import {
   type LocalSession,
 } from "./session-list.ts";
 import { type ClientCommand, type DaemonMessage, type DistributiveOmit, encodeLine, LineSplitter, type SessionMeta } from "./shared.ts";
-import { buildStatusLine, fleetStats, settingsNotice } from "./status.ts";
+import { drifted } from "./drift.ts";
+import { agentDir } from "./install.ts";
+import { auditRequired, describeProblems } from "./required.ts";
+import { clearTransient, viewFromHistory } from "./resync.ts";
+import { buildStatusLine, fleetStats, bridgeNotice, settingsNotice } from "./status.ts";
 import { ActivityLine } from "./activity.ts";
 import { Dimmed } from "./components.ts";
 import { ChoicePanel } from "./choice-panel.ts";
@@ -118,7 +125,7 @@ class Controller {
   private activityTimer?: ReturnType<typeof setInterval>;
   editor: InputEditor;
   switcher = new Switcher();
-  socket!: net.Socket;
+  socket?: net.Socket;
 
   /** Daemon-known sessions by daemon id. */
   sessions = new Map<number, SessionMeta>();
@@ -144,7 +151,15 @@ class Controller {
   private commandsFor: string | null = null;
   /** Editor text from before ctrl-r, restored on cancel. */
   private searchDraft = "";
+  /** The daemon's initial session list has arrived (false while connecting or reconnecting). */
   private sessionsLoaded = false;
+  /** The daemon socket is down and a reconnect is under way (the editor stays usable). */
+  private daemonDown = false;
+  /** Views still to be replaced by the daemon's replay after a reconnect. */
+  private staleViews = new Set<string>();
+  private disposing = false;
+  /** Required ronpi resources missing from the pi agent dir; re-checked with the session list. */
+  private resourceNotice = "";
   private reqSeq = 0;
   private responses = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private flash = "";
@@ -287,7 +302,11 @@ class Controller {
             done();
           }
         });
-        socket.on("close", () => this.daemonLost());
+        socket.on("close", () => {
+          if (this.socket === socket) {
+            this.daemonLost();
+          }
+        });
         socket.on("error", () => {});
       });
       socket.once("error", (err) => {
@@ -296,12 +315,48 @@ class Controller {
     });
   }
 
+  /** The socket closed: keep the UI and the editor text, and reconnect with backoff. */
   daemonLost(): void {
-    process.stdout.write("\nronpi daemon disconnected; exiting.\n");
+    if (this.disposing || this.daemonDown) {
+      return;
+    }
+    this.daemonDown = true;
+    this.socket = undefined;
+    for (const [key, view] of this.views) {
+      clearTransient(view);
+      this.staleViews.add(key);
+    }
+    for (const [id, pending] of this.responses) {
+      this.responses.delete(id);
+      pending.reject(new Error("daemon connection lost"));
+    }
+    this.syncActivity(true);
+    this.renderChrome();
+    void this.reconnect();
+  }
+
+  private async reconnect(): Promise<void> {
+    let delay = 500;
+    for (let attempt = 1; attempt <= RECONNECT_ATTEMPTS && !this.disposing; attempt++) {
+      try {
+        await ensureDaemon();
+        this.sessionsLoaded = false;
+        await this.connect();
+        this.daemonDown = false;
+        this.renderChrome();
+        this.notify("reconnected to the ronpi daemon");
+        return;
+      } catch {
+        await new Promise((r) => setTimeout(r, delay));
+        delay = Math.min(delay * 2, 5000);
+      }
+    }
+    process.stdout.write("\nronpi daemon disconnected and did not come back; exiting.\n");
     this.dispose();
   }
 
   dispose(): void {
+    this.disposing = true;
     process.stdout.write(OSC_RESET_BG);
     try {
       this.tui.stop();
@@ -313,7 +368,13 @@ class Controller {
   }
 
   send(msg: Record<string, unknown>): void {
-    this.socket?.write(encodeLine(msg));
+    if (!this.socket) {
+      if (this.daemonDown) {
+        this.notify("daemon is not connected - reconnecting");
+      }
+      return;
+    }
+    this.socket.write(encodeLine(msg));
   }
 
   /** Send a command with response correlation. */
@@ -346,13 +407,20 @@ class Controller {
         }
         return;
       }
+      case "digest": {
+        const key = this.keyById(msg.session);
+        if (key && drifted(this.views.get(key)?.messages, msg)) {
+          this.send({ type: "resync", session: msg.session });
+        }
+        return;
+      }
       case "ui_request":
         this.onUiRequest(msg.session, msg.request as unknown as DialogRequest);
         return;
       case "exited": {
         const meta = this.sessions.get(msg.session);
         if (meta && this.keyFor(meta) === this.viewing) {
-          this.notify("child exited");
+          this.notify(msg.reason ? `child exited - ${msg.reason}` : "child exited");
         }
         return;
       }
@@ -432,21 +500,9 @@ class Controller {
       return;
     }
     const old = this.views.get(key);
-    const fresh: SessionView = {
-      ...newView(),
-      items: itemsFromMessages(messages, this.tui, this.metaForPath(key)?.cwd ?? ""),
-      // keep live activity if events raced ahead of the history reply
-      activity: old?.activity,
-      queue: old?.queue ?? [],
-      // the daemon sends a pending dialog just before the history; replacing the view must not lose it
-      dialog: old?.dialog,
-    };
+    const items = itemsFromMessages(messages, this.tui, this.metaForPath(key)?.cwd ?? "");
+    const fresh = viewFromHistory(old, items, this.staleViews.delete(key), messages.length);
     this.views.set(key, fresh);
-    // prompts sent but not yet echoed by pi are not in the child's history
-    for (const echo of old?.echoes ?? []) {
-      fresh.echoes.push(echo);
-      fresh.items.push(echo.item);
-    }
     if (key === this.viewing) {
       this.rebuildChat();
     }
@@ -636,6 +692,7 @@ class Controller {
   }
 
   async loadLocal(): Promise<void> {
+    this.resourceNotice = describeProblems(auditRequired(agentDir())) ?? "";
     try {
       const infos = await SessionManager.listAll();
       this.local.clear();
@@ -1019,7 +1076,7 @@ class Controller {
       activity: key ? this.views.get(key)?.activity?.label : undefined,
       width,
       // a clipboard problem is worth a standing note while the switcher is up; it is not an error
-      notice: settingsNotice(this.sessions.values(), settingsMtime()) || (this.clipboard.problem ? `clipboard: ${this.clipboard.problem}` : ""),
+      notice: (this.daemonDown ? "daemon connection lost - reconnecting (your input is kept)" : "") || this.resourceNotice || settingsNotice(this.sessions.values(), settingsMtime()) || bridgeNotice(this.sessions.values()) || (this.clipboard.problem ? `clipboard: ${this.clipboard.problem}` : ""),
     });
     this.statusLine.setText(truncateToWidth(status, width));
     this.tui.requestRender();

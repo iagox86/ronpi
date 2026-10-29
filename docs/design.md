@@ -113,6 +113,27 @@ Steps, each independently shippable, in order:
    timer, runs while the switcher is open and any session streams); Esc on a
    working session clear_queue's, restores queued text above the editor draft
    (pi's behavior), then aborts - verified an abort alone would deliver them.
+   TICKET #47 (2026-10-28): the strip kept showing steered messages after the
+   agent processed them (messaging-test incident, session 8). Post-mortem:
+   repeated repros against real pi 1.3.0 (labeled + plain steers, mid-tool and
+   mid-stream timing, full daemon, real controller TUI) all clear correctly -
+   pi's exact-match removal at message_start is sound and ronpi's relay is
+   faithful, so the incident's one-shot loss was never reproduced. The defect
+   that made it permanent is real, though: queue_update is fire-and-forget with
+   no replay and pi exposes no read-only way to get the queued texts back, so a
+   single lost update stuck the strip forever. FIX: refreshMeta (every agent_settled and
+   child start) reads pi's pendingMessageCount and re-announces an empty queue
+   when it is zero (held compaction messages are the daemon's own and keep
+   their announce). Fake pi: FAKE_PI_DROP_QUEUE_REMOVAL=1 withholds the
+   removal update to regression-test the reconcile. Daemon log now records
+   queue_update counts. Still open / parked: what dropped the event in the
+   incident (watch for it recurring - the log line above will show it); pi's
+   exit race where a steer arriving between the run's final queue drain and
+   _isAgentRunActive=false is stranded until the next prompt (pi-side, benign:
+   the strip is honest and the next run delivers it); ronpi pins
+   pi-coding-agent 1.4.0 in package.json while node_modules holds 1.3.0
+   (installed 2026-10-18) - run npm install and re-verify the queue paths on
+   1.4.0.
 4. (BUILT 2026-10-22; per-item expand PARKED - not useful without mouse selection: tool-run.ts groups consecutive tool
    calls into one collapsed summary line, ctrl-o toggles all sessions; ctrl-t
    toggles thinking, starting from pi's hideThinkingBlock setting. Step 5: pi's
@@ -903,3 +924,164 @@ Bigger goals - design-arounds, not scheduled:
 - Memory per child unmeasured; cap + lazy deactivation mitigates.
 - Exclusive-attach semantics can surprise (controller died while attached:
   daemon must release the lock).
+
+## Session bridge (designed + built 2026-10-29; #16/#52/#47 successor)
+
+Replace text-labeled `prompt(..., "steer")` injection of messages from other
+sessions with a pi extension ("the bridge") that owns a per-session,
+id-tracked injection queue, with graceful fallback to the legacy path.
+Implements the #52 "option B" direction (authoritative state + events as
+invalidation) on the write and queue-read paths, and fixes #16's pains
+(history pollution, naming side effects, delivery that can strand) without
+a pi fork. Only messages FROM OTHER SESSIONS use it: the user's own prompts
+(including ones held during a compaction) stay ordinary user messages, so
+rewind, naming and history behave as before.
+
+Revised after review the same day: the first version held a second,
+persistent socket per pi process (registry by session file, reconnect timer,
+pid matching). It was replaced by the command route below, which uses the
+pipe the daemon already has to each child and removes the whole class of
+"which process is this" bugs (a stray pi opening the same file stealing the
+bridge, a changed session file after /clear, a dead socket).
+
+### Verified pi facts (spiked 2026-10-29, pi 1.3.0 installed / 1.4.0 pinned)
+
+- An RPC `prompt` whose message names a registered extension command is
+  handled immediately even during streaming; the command text never becomes a
+  user prompt. The handler receives the raw argument string. `get_commands`
+  lists the command (how the daemon detects the bridge).
+- `pi.sendMessage({customType, content, display, details},
+  {triggerTurn: true})` from a handler starts a run; over RPC the message
+  streams as `message_start`/`message_end` with `role: "custom"`,
+  `customType` and `details` intact. Checked against the real pi through the
+  real daemon, not just the fake.
+- `turn_end` and `agent_before_settle` handlers return
+  `BoundaryResult {entries?, continue?}`; entries may be `custom_message`
+  drafts and `continue: true` buys one more provider request with them in
+  context. Entries appended this way are NOT announced as `message_*` events:
+  pi emits `entry_appended {entry}` instead (with `details.id` intact), so
+  the daemon and the controller handle both shapes.
+- `ctx.ui.setStatus(key, text)` reaches the daemon as an
+  `extension_ui_request` (the channel ronpi-usage already uses).
+- pi documents that a steer's queued state "is not guaranteed to remain"
+  (rpc-commands.md) - the loss #47 hit is acknowledged upstream.
+
+### Protocol
+
+No new sockets or client commands.
+
+- daemon -> bridge: `prompt("/ronpi-inject {"id": "b7", "text": "<labeled
+  body>"}")` over the child's RPC pipe. `text` is the formatReceived-labeled
+  body, so the model sees what it always has and the controller renders the
+  "from" row by parsing it.
+- bridge -> daemon: `setStatus("ronpi-bridge", {v:1, kind, ...})` with kind
+  `injected {id}`, `failed {id, error}` or `requeued {ids}`. Only failures
+  and recoveries need it; the append itself is seen directly (below).
+- Confirmation: the daemon acks an inject when pi announces the append
+  (`entry_appended`, or `message_end` with `role: "custom"`, carrying the id).
+  The `injected` status is a second, redundant route.
+
+### Delivery (extension, pi/extensions/ronpi-session-bridge.ts)
+
+`InjectQueue` holds `pending` (waiting for a chance) and `inflight` (handed to
+pi, not yet seen in the transcript). Busy state is tracked from
+agent_start/agent_settled.
+
+1. idle: move one pending message to inflight and
+   `sendMessage(custom ronpi-inject, {triggerTurn: true})`; a throw reports
+   `failed`.
+2. mid-run: `turn_end` returns all pending messages as custom_message entries
+   with `continue: true`; they move to inflight.
+3. end-of-run: `agent_before_settle` does the same, closing the exit race that
+   stranded steers (#47).
+4. Confirmation from the transcript: at `turn_start` inflight ids found in the
+   session branch are reported `injected`; at `agent_settled` those still
+   missing (an abort between the hook and the append) go back to the front of
+   `pending` (reported `requeued`) and are delivered on the next chance. Never
+   requeued mid-run, when the append may just be late.
+5. Aborted turns hand nothing over; messages stay pending, like queued
+   steering. `session_shutdown` drops the queue (the process is going away).
+
+### Daemon
+
+`daemon-bridge.ts`: `BridgeTracker` (per daemon session id: injects handed
+over and not yet confirmed, unique ids, the warn-once set), `injectedId`,
+`parseBridgeReport`. `daemon-handlers-bridge.ts`: `deliverToSession` sends the
+inject command when `s.sessionBridge` is true, else steers (warning once in the
+log). `ChildManager.detectBridge` looks for the command in `get_commands` at
+start and caches it as `s.sessionBridge` (shown in the session meta).
+Failures: a refused command, or a `failed` report, hands the text to pi's
+steering queue so it is not lost. A child that goes away with unconfirmed
+injects broadcasts `exited` with a reason naming them, and the controller shows
+it, so the sender's "delivered" is never silently untrue. The #47 refreshMeta
+re-sync keeps held and bridge-pending texts in the strip.
+
+### Visibility
+
+A running session without the extension has `sessionBridge: false`; the
+switcher notice line says how many and how to fix it (`bridgeNotice`:
+`node src/install.ts`, restart them). It was log-only in the first version.
+
+### Controller rendering
+
+`ronpi-inject` custom messages render as "from NAME" rows: `message_start`
+(idle delivery), `entry_appended` (boundary delivery) and `itemsFromMessages`
+(replay) each have a branch; rewind excludes them like received labels.
+
+### Known limits
+
+- A message held during compaction (from another session) is delivered through
+  the bridge on release; the user's own held prompts are not.
+- A session whose first input is such a message has no user message to name it
+  by; it shows as an unnamed session until it has one.
+- Images are never part of an inject (messages between sessions are text).
+
+### Deliberately out of scope
+
+Follow-up-mode injection, injecting into external (non-daemon) pi
+processes, per-message delivery receipts surfaced in the UI, and the
+#52 full snapshot-epoch transport (this is its write/queue half; the
+read half is below).
+
+## Display state: events invalidate, snapshots reconcile (#52 read half; 2026-10-29)
+
+Problem: a controller's view is built by patching it with events. Whatever an
+event stream misses (a controller not attached, a daemon restart, a boundary
+entry that arrives as `entry_appended` instead of `message_start/end`) leaves
+the view wrong until something replaces it. The rule: **events are hints that
+update the view cheaply; a snapshot of pi's own state is the truth, and a view
+is replaced from a snapshot whenever the two may differ.**
+
+What is snapshotted: the transcript, via the existing `history` message
+(`historyOf`: pi's `get_messages`, or the session file after a compaction).
+Everything else already has a pull path: session metadata (`sessions`
+broadcast, rebuilt from `get_state` by `refreshMeta`), the queue strip (the
+`pendingMessageCount` re-sync at settle/start), dialogs (the daemon's
+`pendingDialog`, resent on attach). Not snapshotted: scroll position, expanded
+state, the editor.
+
+When re-syncs run:
+
+1. **Connect / reconnect**: the daemon's initial sync (history for every live
+   child); the controller replaces each view and drops its transient state.
+2. **Settle (drift check)**: `digest {messages}` after every run; a settled
+   view whose seen-message count differs asks for `resync`. Never judged
+   while streaming: events are in flight and a snapshot would race them.
+3. **After operations that rewrite the transcript** (compact, clear, rewind,
+   reload): the handler sends history, as before.
+
+How the two event shapes reconcile: both are only ever *added* to the view by
+`applyEvent` and both count as one message in `messagesAdded` (`message_end`
+for user/assistant/toolResult/custom, `entry_appended` for custom messages), so
+the count equals what `get_messages` holds regardless of which shape carried
+the message. Assistant streaming is bound to the item its own `message_start`
+opened (`view.streaming`): update/end events never fall back to "the last
+assistant item", which is what drew thinking above newer output (#49) when a
+start was missed. A message_end with no open item becomes a new item at the
+end.
+
+Known gaps: `bashExecution` messages have no message event, so `!command`
+costs one false-alarm replay; the check is a count, so a same-count content
+difference is not caught (a hash of roles + timestamps would be the next step);
+metadata and the strip are reconciled by their own checks, not by the digest;
+the data-driven item model (no TUI components in state) stays parked.

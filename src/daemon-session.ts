@@ -13,6 +13,8 @@ export interface DaemonSession {
   /** Settings-file mtime (null = no file) and problems when the child started. */
   settingsMtime?: number | null;
   settingsProblem?: string;
+  /** The child answered get_commands with the session bridge's inject command. */
+  sessionBridge?: boolean;
   /** Socket holding the exclusive input attach; undefined = nobody. */
   attachedTo?: net.Socket;
   sessionId?: string;
@@ -47,6 +49,8 @@ export interface DaemonSession {
 export interface HeldPrompt {
   text: string;
   images?: PromptImage[];
+  /** A message from another session (delivered through the session bridge when released); the rest are the user's own prompts and stay user messages. */
+  injected?: boolean;
 }
 
 export type LiveSession = DaemonSession & { child: RpcClient };

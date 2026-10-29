@@ -1,6 +1,7 @@
 // What every command handler works with: the daemon's collaborators, passed
 // explicitly instead of read from module-level state.
 import type * as net from "node:net";
+import type { BridgeTracker } from "./daemon-bridge.ts";
 import type { ChildManager } from "./daemon-children.ts";
 import type { ClientHub } from "./daemon-hub.ts";
 import type { SessionRegistry } from "./daemon-session.ts";
@@ -13,6 +14,8 @@ export interface DaemonContext {
   children: ChildManager;
   /** Session files currently open in EXTERNAL pi processes (presence extension). */
   presence: Presence;
+  /** Injects handed to session bridges and not yet seen in a transcript. */
+  bridges: BridgeTracker;
   shutdown(): void;
 }
 

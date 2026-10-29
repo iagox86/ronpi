@@ -5,6 +5,7 @@ import type * as net from "node:net";
 import { compactAndWait } from "./compact-wait.ts";
 import { TRASH_DIR } from "./config.ts";
 import { type Cmd, type DaemonContext, requireNotInPi, type Responder } from "./daemon-context.ts";
+import { deliverToSession } from "./daemon-handlers-bridge.ts";
 import { sendHistory } from "./daemon-history.ts";
 import { type DaemonSession, type HeldPrompt, requireIdle } from "./daemon-session.ts";
 import { formatLocalCommand, type LocalResult, runLocal } from "./local-command.ts";
@@ -107,12 +108,16 @@ export async function handleModel(
 /** Send what was typed during a compaction, now that pi accepts prompts again. */
 async function releaseHeld(ctx: DaemonContext, s: DaemonSession, held: HeldPrompt[]): Promise<void> {
   ctx.hub.announceQueue(s.id, []);
-  for (const { text, images } of held) {
+  for (const { text, images, injected } of held) {
     try {
       if (!s.child) {
         throw new Error("the session stopped before the message could be sent");
       }
-      await s.child.prompt(text, images, "steer");
+      if (injected) {
+        await deliverToSession(ctx, s, text);
+      } else {
+        await s.child.prompt(text, images, "steer");
+      }
     } catch (err) {
       log(`session ${s.id}: message held during compaction was not delivered: ${err}`);
     }

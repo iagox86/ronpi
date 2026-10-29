@@ -33,6 +33,22 @@ export async function handlePrompt(
     }
     s = ctx.registry.byFile(cmd.sessionFile);
     if (!s) {
+      // A file this daemon has never handled may be open in an external,
+      // presence-less pi process - undetectable directly, but a very recent
+      // mtime is a strong signal. Continuing would branch the conversation
+      // (pi's tree keeps both sides), so ask once before touching the file.
+      // Files the daemon has handled before are its own: no confirm, whatever
+      // their mtime (a resume makes them look freshly written).
+      let mtimeMs = 0;
+      try {
+        mtimeMs = fs.statSync(cmd.sessionFile).mtimeMs;
+      } catch {
+        // stat failure: treat as old
+      }
+      if (Date.now() - mtimeMs < 60_000 && !cmd.confirmFork) {
+        res(true, undefined, { confirmFork: true, ageMs: Math.round(Date.now() - mtimeMs) });
+        return;
+      }
       s = ctx.registry.create(cmd.cwd, cmd.sessionFile);
       log(`session ${s.id} registered from file ${cmd.sessionFile}`);
     }
@@ -177,6 +193,14 @@ export async function handleRename(
   } else {
     throw new Error("rename requires a session or path");
   }
+  res(true);
+}
+
+/** Replace one controller's view of a live session with its current history. Needs a running child; changes nothing in the session. */
+export async function handleResync(ctx: DaemonContext, cmd: Cmd<"resync">, socket: net.Socket, res: Responder): Promise<void> {
+  const s = ctx.registry.live(cmd.session);
+  log(`session ${s.id}: controller asked for a resync (its view drifted from pi's message count)`);
+  await sendHistory(ctx, socket, s);
   res(true);
 }
 

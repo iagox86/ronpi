@@ -101,6 +101,21 @@ describe("applyEvent", () => {
     assert.equal(items[0].kind, "assistant");
   });
 
+  it("never rewrites an older assistant item for a message whose start was missed", () => {
+    const items: Item[] = [];
+    const view = newView();
+    const asst = (text: string) => ({ role: "assistant", content: [{ type: "thinking", thinking: text }] });
+    applyEvent(view, { type: "message_start", message: asst("") }, env(items));
+    applyEvent(view, { type: "message_end", message: asst("first") }, env(items));
+    view.items.push(...items);
+    // the next message started while no controller listened: only updates and the end arrive
+    applyEvent(view, { type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "x" } }, env(items));
+    applyEvent(view, { type: "message_end", message: asst("second") }, env(items));
+    assert.equal(items.length, 2, "the second message is its own item, after the first");
+    assert.equal(((items[0] as AssistantItem).partial.content[0] as { thinking: string }).thinking, "first");
+    assert.equal(((items[1] as AssistantItem).partial.content[0] as { thinking: string }).thinking, "second");
+  });
+
   it("leaves plain provider errors to pi's own assistant component", () => {
     const items: Item[] = [];
     const view = newView();

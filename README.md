@@ -90,7 +90,7 @@ Anything else starting with `/` goes to pi (its skills and prompt templates).
 
 `!command` in a session (the chat box border turns yellow while you type it) runs a shell command in the session's directory and shows the output. The agent gets the command and output immediately, as a message wrapped in `<local-command>` tags with a note that you ran it yourself, so it reacts right away (or queues it behind its current turn). `esc` stops a running command; a command is stopped after 10 minutes; very long output is cut to its start and end. It needs a running session. `!!` is not supported.
 
-Sessions can message each other: ask an agent to "tell the session called Mealie that the schema changed" and it uses the `ronpi_message` tool (installed by `node src/install.ts`, along with a short `messaging` skill). The text arrives in the other session as a user message labelled `[from <name> (<id>)]`, shown as "from <name>" in the transcript; an idle session is started to read it. Agents are told to do this only when you ask. `/name` with no argument shows the session's name and id.
+Sessions can message each other: ask an agent to "tell the session called Mealie that the schema changed" and it uses the `ronpi_message` tool (installed by `node src/install.ts`, along with a short `messaging` skill). The text arrives in the other session labelled `[from <name> (<id>)]` and shown as "from <name>" in the transcript; an idle session is started to read it. Delivered messages ride ronpi's session bridge when the receiving session has it (see `docs/reference.md`), so they cannot strand in pi's steering queue; otherwise they fall back to plain steering. Agents are told to do this only when you ask. If the daemon goes away the controller keeps its screen and your typed text, reconnects on its own and redraws every session from the daemon; the status area names any ronpi extension or skill that is not installed. `/name` with no argument shows the session's name and id.
 
 Sessions opened in plain pi appear in the list too. With the `ronpi-presence`
 extension (installed by `node src/install.ts`) they are marked as live in pi;
@@ -115,7 +115,7 @@ Layout:
 - `ronpi.ts` - entry point
 - `src/` - daemon and controller source (see "Code layout" in docs/reference.md)
 - `test/` - tests and the fake-pi fixture
-- `pi/` - what ronpi installs into pi: extensions (presence, usage, cache warning) and the theme
+- `pi/` - what ronpi installs into pi: extensions (presence, usage, cache warning, session bridge) and the theme
 - `docs/` - `reference.md` (keys, semantics, env), `design.md` (architecture, findings, backlog),
   `requirements.md`, `permission-dialogs.md`
 - `AGENTS.md` - instructions for coding agents working in this repo

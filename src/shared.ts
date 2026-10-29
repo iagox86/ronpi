@@ -58,6 +58,8 @@ export interface SessionMeta {
   settingsProblem?: string;
   /** The session file is open in an external pi process (presence ext). */
   externallyLive?: boolean;
+  /** The child has the session bridge extension (inter-session messages skip pi's steering queue). */
+  sessionBridge?: boolean;
   /** Upstream provider id of the current model (e.g. "zai-coding-cn", "litellm"). */
   provider?: string;
   thinkingLevel?: string;
@@ -105,6 +107,8 @@ type ClientCommandBody =
       cwd?: string;
       /** Optional display name for a newly spawned child. */
       name?: string;
+      /** Continue on a possibly-external branch after the daemon flagged a fork risk. */
+      confirmFork?: boolean;
     }
   | { type: "abort"; session: number }
   /** Run a shell command in the session's cwd; pi records it so the model sees it on the next turn. The response is pi's BashResult. */
@@ -159,7 +163,9 @@ type ClientCommandBody =
   | { type: "reload"; id?: string; session: number }
   /** Controller announce: classifies the connection as a controller (not a
    * presence heartbeat) and requests the current session list. */
-  | { type: "list" };
+  | { type: "list" }
+  /** Send this controller the session's current history again (drift cure). */
+  | { type: "resync"; id?: string; session: number };
 
 // daemon -> controller
 export type DaemonMessage =
@@ -168,6 +174,8 @@ export type DaemonMessage =
   | { type: "history"; session: number; messages: unknown[] }
   | { type: "ui_request"; session: number; request: Record<string, unknown> }
   | { type: "exited"; session: number; reason?: string }
+  /** How many messages pi holds, sent when a run settles; a controller whose count differs asks to resync. */
+  | { type: "digest"; session: number; messages: number; streaming: boolean }
   | { type: "response"; id: string; ok: boolean; error?: string; data?: unknown };
 
 export function encodeLine(obj: unknown): string {

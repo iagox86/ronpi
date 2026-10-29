@@ -16,14 +16,17 @@
 // this env, including pi settings/auth/extensions.)
 import * as fs from "node:fs";
 import { PID_FILE, SOCK } from "./config.ts";
+import { BridgeTracker } from "./daemon-bridge.ts";
 import { ChildManager } from "./daemon-children.ts";
 import type { DaemonContext } from "./daemon-context.ts";
 import { ClientHub } from "./daemon-hub.ts";
 import { sessionMetas } from "./daemon-meta.ts";
 import { createServer } from "./daemon-server.ts";
 import { SessionRegistry } from "./daemon-session.ts";
+import { agentDir } from "./install.ts";
 import { log } from "./log.ts";
 import { Presence } from "./presence.ts";
+import { auditRequired, describeProblems } from "./required.ts";
 import type { UsageReport } from "./shared.ts";
 
 /** Wire the daemon's collaborators together; `shutdown` is late-bound because they need each other first. */
@@ -32,7 +35,9 @@ function createContext(shutdown: () => void): DaemonContext {
   const presence = new Presence();
   const usage = new Map<string, UsageReport>();
   const hub = new ClientHub((socket) => sessionMetas(registry, presence, usage, socket));
-  return { registry, hub, children: new ChildManager(hub, usage), presence, shutdown };
+  const bridges = new BridgeTracker();
+  const children = new ChildManager(hub, usage, bridges);
+  return { registry, hub, children, presence, bridges, shutdown };
 }
 
 async function main(): Promise<void> {
@@ -81,6 +86,11 @@ async function main(): Promise<void> {
   fs.chmodSync(SOCK, 0o600);
   fs.writeFileSync(PID_FILE, `${process.pid}\n`, { mode: 0o600 });
   log(`listening on ${SOCK} (pid ${process.pid})`);
+  // Warn only: linking files into the pi agent dir unasked would be a surprise.
+  const missing = describeProblems(auditRequired(agentDir()));
+  if (missing) {
+    log(`WARNING: ${missing}`);
+  }
 
   // Prune external presence registrations whose pi exited, whose session
   // file was deleted (e.g. via pi's resume picker), or that stopped
