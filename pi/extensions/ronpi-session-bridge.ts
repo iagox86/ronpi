@@ -17,7 +17,7 @@ interface Ctx {
   ui: { setStatus(key: string, text: string | undefined): void };
 }
 interface Pi {
-  on(event: string, handler: (event: any, ctx: Ctx) => unknown): unknown;
+  on(event: string, handler: (event: unknown, ctx: Ctx) => unknown): unknown;
   registerCommand(name: string, options: { description?: string; handler: (args: string, ctx: Ctx) => Promise<void> }): void;
   sendMessage(message: { customType: string; content: string; display: boolean; details: unknown }, options?: { triggerTurn?: boolean }): Promise<void>;
 }
@@ -194,8 +194,8 @@ export default function (pi: Pi) {
   pi.on("agent_start", () => {
     busy = true;
   });
-  pi.on("turn_end", (state) => atBoundary(state));
-  pi.on("agent_before_settle", (state) => atBoundary(state));
+  pi.on("turn_end", (event) => atBoundary(event as { outcome?: string }));
+  pi.on("agent_before_settle", (event) => atBoundary(event as { outcome?: string }));
   pi.on("turn_start", (_event, ctx) => {
     settle(ctx, false);
   });

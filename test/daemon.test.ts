@@ -302,7 +302,7 @@ describe("daemon: lifecycle", () => {
     assert.equal((r as { confirmFork?: boolean }).confirmFork, true);
     assert.ok(c.sessions().every((s) => s.sessionFile !== file));
 
-    const r2 = await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "hello", confirmFork: true });
+    await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "hello", confirmFork: true });
     await c.waitFor((m) => m.type === "history");
     const s = c.sessions().find((x) => x.sessionFile === file);
     assert.ok(s, "confirmed prompt should register and start the session");
