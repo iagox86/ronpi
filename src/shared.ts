@@ -161,7 +161,9 @@ type ClientCommandBody =
   | { type: "reload"; id?: string; session: number }
   /** Controller announce: classifies the connection as a controller (not a
    * presence heartbeat) and requests the current session list. */
-  | { type: "list" };
+  | { type: "list" }
+  /** Send this controller the session's current history again (drift cure). */
+  | { type: "resync"; id?: string; session: number };
 
 // daemon -> controller
 export type DaemonMessage =
@@ -170,6 +172,8 @@ export type DaemonMessage =
   | { type: "history"; session: number; messages: unknown[] }
   | { type: "ui_request"; session: number; request: Record<string, unknown> }
   | { type: "exited"; session: number; reason?: string }
+  /** How many messages pi holds, sent when a run settles; a controller whose count differs asks to resync. */
+  | { type: "digest"; session: number; messages: number; streaming: boolean }
   | { type: "response"; id: string; ok: boolean; error?: string; data?: unknown };
 
 export function encodeLine(obj: unknown): string {

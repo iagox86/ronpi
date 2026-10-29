@@ -5,6 +5,7 @@ import type { DaemonContext, Responder } from "./daemon-context.ts";
 import {
   handleAdopt,
   handleAttach,
+  handleResync,
   handleDeactivate,
   handleDelete,
   handleDetach,
@@ -43,6 +44,8 @@ export async function dispatch(ctx: DaemonContext, cmd: ClientCommand, socket: n
       return handleAdopt(ctx, cmd, socket, res);
     case "attach":
       return handleAttach(ctx, cmd, socket, res);
+    case "resync":
+      return handleResync(ctx, cmd, socket, res);
     case "detach":
       return handleDetach(ctx, cmd, socket, res);
     case "deactivate":

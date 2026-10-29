@@ -229,6 +229,7 @@ Daemon side:
 - `agents.ts` (agent profile files: parse, load, launch arguments), `session-agents.ts` (profile saved per session), `agents-completion.ts` (`/new -a` completion, `/agents` panel); the shipped profiles are in `../agents/`, see `agents/README.md`
 - `local-command.ts` (`!command`: run it, clean/trim the output, the tagged message the agent receives and its parser)
 - `received.ts` (label on messages between sessions), `daemon-handlers-messages.ts` / `daemon-resolve.ts` (deliver / find a session), `daemon-bridge.ts` + `daemon-handlers-bridge.ts` (session bridge: inject tracking, routing, confirmation)
+- `resync.ts` (what a view keeps when history is replayed; a replay after a reconnect keeps nothing transient), `drift.ts` (message counts and the digest check), `required.ts` (the ronpi pi resources that must be linked, the `--tools +name` modifiers for their tools, the startup audit)
 - `mcp.ts` / `mcp-doctor.ts` - /mcp: parse pi's status, add/remove servers, and the /mcp status troubleshooting report
 - `btw.ts` - /btw: ask a throwaway copy of the session one question; `click-guard.ts` - only double clicks reach the transcript
 - `session-tree.ts` - parent/child rows: nesting, folding, hiding parked children, the banner and cost rollup helpers
@@ -366,3 +367,10 @@ z.ai returns for your key by hand (this sends the key to z.ai's own host):
 
 Providers without an adapter (ollama, plain OpenAI-compatible hosts) show
 nothing. See design.md (in this folder) for the adapters, their sources and what is unverified.
+
+## Reconnect, resync and drift
+
+- **Daemon connection lost.** The controller no longer exits. It keeps the screen and the editor text (nothing typed is sent or dropped), shows "daemon connection lost - reconnecting" in the notice line, and retries with backoff (0.5s doubling to 5s, 20 tries; each try starts a daemon if none is running). On reconnect the daemon's initial sync replays every live session's history; each view is then replaced outright, so activity, queue strip, dialogs and unechoed prompts from before the loss are dropped. After the tries run out it exits as before. Requests in flight fail with "daemon connection lost".
+- **Drift check.** When a run settles the daemon broadcasts `digest {session, messages, streaming}`, the number of messages a history replay would hold. A controller counts the messages it has seen (the replay's length plus `message_end` / appended custom entries since); if a settled session's counts differ it sends `resync {session}` and the daemon replays that session's history to it alone. A false alarm (a `!command` result, which has no message event) costs one replay.
+- **Tools after /reload.** Every child without a profile tool list is started with `--tools +ronpi_message,+ronpi_usage` (from `required.ts`), so a resume, which restores the tool list recorded in the transcript, still declares the tools of extensions installed since. A profile that lists tools owns its loadout.
+- **Required resources audit.** At daemon start (log) and on the controller's 10-second refresh (notice line) the pi agent dir is checked for the extensions and skill in `required.ts`; anything missing or a dangling link is named with the fix (`node src/install.ts`, restart affected sessions). It never links anything itself.

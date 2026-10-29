@@ -6,6 +6,7 @@ import { Text, type TuiAltScreen } from "@earendil-works/pi-tui";
 import { BashExecutionComponent, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { AssistantMessage, CompactionRow, UserMessage } from "./components.ts";
 import { type ActivityState, reduceActivity } from "./activity.ts";
+import { messagesAdded } from "./drift.ts";
 import { binaryReadDisplay } from "./binary-view.ts";
 import { prettyError } from "./error-format.ts";
 import { toolDefinitionFor } from "./tool-defs.ts";
@@ -112,6 +113,14 @@ export interface SessionView extends ActivityState {
   echoes: Array<{ text: string; item: UserItem }>;
   /** The "working" spinner was started by a sent prompt, not by anything pi reported (yet). */
   echoActivity?: boolean;
+  /**
+   * The assistant item the open message_start made. Updates and the message_end
+   * apply to this item only: anchoring them on "the last assistant item in the list"
+   * rewrote an older item (above newer output) whenever a message_start was missed.
+   */
+  streaming?: AssistantItem;
+  /** Transcript messages seen (history length plus message events since); see drift.ts. */
+  messages?: number;
 }
 
 export function newView(): SessionView {
@@ -142,16 +151,6 @@ export function dropEcho(view: SessionView, text: string): boolean {
     view.activity = undefined;
   }
   return true;
-}
-
-export function lastAssistant(view: SessionView): AssistantItem | undefined {
-  for (let i = view.items.length - 1; i >= 0; i--) {
-    const item = view.items[i];
-    if (item.kind === "assistant") {
-      return item;
-    }
-  }
-  return undefined;
 }
 
 function assistantItem(message: Record<string, unknown>): AssistantItem {
@@ -238,6 +237,9 @@ function isInject(m: { role?: string; customType?: string } | undefined): m is {
 export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: EventEnv): EventEffects {
   const effects: EventEffects = {};
   reduceActivity(view, ev, Date.now());
+  if (view.messages !== undefined) {
+    view.messages += messagesAdded(ev);
+  }
   view.echoActivity = false; // whatever the spinner shows now is pi's
   switch (ev.type as string) {
     case "entry_appended": {
@@ -262,12 +264,15 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
           env.addItem(userItem(messageText(m), env.tui));
         }
       } else if (m?.role === "assistant") {
-        env.addItem(assistantItem(m as Record<string, unknown>));
+        const item = assistantItem(m as Record<string, unknown>);
+        view.streaming = item;
+        env.addItem(item);
       }
       break;
     }
     case "message_update": {
-      const item = lastAssistant(view);
+      // no open message (attached mid-message): updates are deltas only, message_end brings the whole message
+      const item = view.streaming;
       if (item) {
         applyDelta(item, ev.assistantMessageEvent as Record<string, unknown>);
         item.component.updateContent(item.partial as never, true);
@@ -292,7 +297,8 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
         }
       }
       if (m?.role === "assistant") {
-        const item = lastAssistant(view);
+        const item = view.streaming;
+        view.streaming = undefined;
         if (item) {
           item.partial = m as AssistantItem["partial"];
           item.component.updateContent(item.partial as never, false);

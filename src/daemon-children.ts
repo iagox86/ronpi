@@ -7,6 +7,8 @@ import type { ClientHub } from "./daemon-hub.ts";
 import type { DaemonSession } from "./daemon-session.ts";
 import { randomUUID } from "node:crypto";
 import { type AgentProfile, profileArgs } from "./agents.ts";
+import { historyOf } from "./daemon-history.ts";
+import { RONPI_TOOLS } from "./required.ts";
 import { lineageArgs, sessionIdOfFile } from "./lineage.ts";
 import { profileOfSession, saveSessionAgent } from "./session-agents.ts";
 import { log } from "./log.ts";
@@ -122,6 +124,12 @@ export class ChildManager {
       s.agent = agent;
       if (agent) {
         args.push(...profileArgs(agent, { isNew }));
+      }
+      // A resume restores the tool list recorded in the transcript, so tools of extensions
+      // installed since never reach the model. +name entries join them to that loadout. A
+      // profile that lists tools owns the loadout (pi forbids mixing the two forms).
+      if (!agent?.tools) {
+        args.push("--tools", RONPI_TOOLS.join(","));
       }
       if (isNew && cfg.thinking && !agent?.thinking) {
         args.push("--thinking", cfg.thinking);
@@ -415,6 +423,20 @@ export class ChildManager {
       // no tool can still be asking once the turn is over
       this.clearDialog(s);
       void this.refreshMeta(s).then(() => this.hub.broadcastSessions());
+      void this.announceDigest(s);
+    }
+  }
+
+  /** Tell controllers how many messages pi holds so one that drifted can ask for a resync. */
+  private async announceDigest(s: DaemonSession): Promise<void> {
+    try {
+      // counted the way a history replay is built, so a resync always lands on the same number
+      const messages = s.child ? (await historyOf(s)).length : undefined;
+      if (messages !== undefined) {
+        this.hub.broadcast({ type: "digest", session: s.id, messages, streaming: s.streaming });
+      }
+    } catch (err) {
+      log(`session ${s.id}: digest failed: ${err instanceof Error ? err.message : err}`);
     }
   }
 }

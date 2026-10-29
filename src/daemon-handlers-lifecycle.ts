@@ -180,6 +180,14 @@ export async function handleRename(
   res(true);
 }
 
+/** Replace one controller's view of a live session with its current history. Needs a running child; changes nothing in the session. */
+export async function handleResync(ctx: DaemonContext, cmd: Cmd<"resync">, socket: net.Socket, res: Responder): Promise<void> {
+  const s = ctx.registry.live(cmd.session);
+  log(`session ${s.id}: controller asked for a resync (its view drifted from pi's message count)`);
+  await sendHistory(ctx, socket, s);
+  res(true);
+}
+
 export async function handleAttach(
   ctx: DaemonContext,
   cmd: Cmd<"attach">,

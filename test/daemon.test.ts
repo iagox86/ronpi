@@ -623,6 +623,44 @@ describe("daemon: lifecycle", () => {
     assert.equal(c.sessions().find((x) => x.id === sessionId)?.agent, "explore");
   });
 
+  it("adds ronpi's tools to the loadout on every start and resume, unless a profile owns the tool list", async () => {
+    harness = await startDaemon({ RONPI_AGENTS_DIR: path.join(os.tmpdir(), "ronpi-no-user-agents") });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const argv = (): string[] => {
+      const f = c.sessions().find((x) => x.id === sessionId)?.sessionFile;
+      return JSON.parse(fs.readFileSync(`${f}.argv.json`, "utf8")) as string[];
+    };
+    const tools = (): string | undefined => argv()[argv().indexOf("--tools") + 1];
+    assert.equal(tools(), "+ronpi_message,+ronpi_usage");
+    await c.request({ type: "prompt", session: sessionId, message: "hi" });
+    await c.waitFor(isSettled);
+    await c.request({ type: "reload", session: sessionId });
+    assert.equal(tools(), "+ronpi_message,+ronpi_usage", "a /reload resume passes them again");
+
+    const explore = await c.request({ type: "spawn", cwd: harness.dir, agent: "explore" });
+    await c.waitFor((m) => m.type === "history" && m.session === explore.sessionId);
+    const f = c.sessions().find((x) => x.id === explore.sessionId)?.sessionFile;
+    const eargv = JSON.parse(fs.readFileSync(`${f}.argv.json`, "utf8")) as string[];
+    assert.equal(eargv.filter((a) => a === "--tools").length, 1, "a profile's own --tools is not mixed with modifiers");
+  });
+
+  it("reports how many messages pi holds when a run settles, and replays history on a resync request", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "hi" });
+    await c.waitFor(isSettled);
+    const digest = await c.waitFor((m) => m.type === "digest" && m.session === sessionId);
+    assert.equal(digest.streaming, false);
+    assert.ok((digest.messages as number) >= 2, "the prompt and the reply");
+    const history = c.waitFor((m) => m.type === "history" && m.session === sessionId && (m.messages as unknown[]).length === digest.messages);
+    await c.request({ type: "resync", session: sessionId });
+    await history;
+  });
+
   it("refuses to start an unknown agent and names the ones it has", async () => {
     harness = await startDaemon({ RONPI_AGENTS_DIR: path.join(os.tmpdir(), "ronpi-no-user-agents") });
     const c = await harness.connect();

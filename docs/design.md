@@ -1040,4 +1040,48 @@ switcher notice line says how many and how to fix it (`bridgeNotice`:
 
 Follow-up-mode injection, injecting into external (non-daemon) pi
 processes, per-message delivery receipts surfaced in the UI, and the
-#52 full snapshot-epoch transport (this is its write/queue half).
+#52 full snapshot-epoch transport (this is its write/queue half; the
+read half is below).
+
+## Display state: events invalidate, snapshots reconcile (#52 read half; 2026-10-29)
+
+Problem: a controller's view is built by patching it with events. Whatever an
+event stream misses (a controller not attached, a daemon restart, a boundary
+entry that arrives as `entry_appended` instead of `message_start/end`) leaves
+the view wrong until something replaces it. The rule: **events are hints that
+update the view cheaply; a snapshot of pi's own state is the truth, and a view
+is replaced from a snapshot whenever the two may differ.**
+
+What is snapshotted: the transcript, via the existing `history` message
+(`historyOf`: pi's `get_messages`, or the session file after a compaction).
+Everything else already has a pull path: session metadata (`sessions`
+broadcast, rebuilt from `get_state` by `refreshMeta`), the queue strip (the
+`pendingMessageCount` re-sync at settle/start), dialogs (the daemon's
+`pendingDialog`, resent on attach). Not snapshotted: scroll position, expanded
+state, the editor.
+
+When re-syncs run:
+
+1. **Connect / reconnect**: the daemon's initial sync (history for every live
+   child); the controller replaces each view and drops its transient state.
+2. **Settle (drift check)**: `digest {messages}` after every run; a settled
+   view whose seen-message count differs asks for `resync`. Never judged
+   while streaming: events are in flight and a snapshot would race them.
+3. **After operations that rewrite the transcript** (compact, clear, rewind,
+   reload): the handler sends history, as before.
+
+How the two event shapes reconcile: both are only ever *added* to the view by
+`applyEvent` and both count as one message in `messagesAdded` (`message_end`
+for user/assistant/toolResult/custom, `entry_appended` for custom messages), so
+the count equals what `get_messages` holds regardless of which shape carried
+the message. Assistant streaming is bound to the item its own `message_start`
+opened (`view.streaming`): update/end events never fall back to "the last
+assistant item", which is what drew thinking above newer output (#49) when a
+start was missed. A message_end with no open item becomes a new item at the
+end.
+
+Known gaps: `bashExecution` messages have no message event, so `!command`
+costs one false-alarm replay; the check is a count, so a same-count content
+difference is not caught (a hash of roles + timestamps would be the next step);
+metadata and the strip are reconciled by their own checks, not by the digest;
+the data-driven item model (no TUI components in state) stays parked.

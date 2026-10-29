@@ -23,8 +23,10 @@ import { ClientHub } from "./daemon-hub.ts";
 import { sessionMetas } from "./daemon-meta.ts";
 import { createServer } from "./daemon-server.ts";
 import { SessionRegistry } from "./daemon-session.ts";
+import { agentDir } from "./install.ts";
 import { log } from "./log.ts";
 import { Presence } from "./presence.ts";
+import { auditRequired, describeProblems } from "./required.ts";
 import type { UsageReport } from "./shared.ts";
 
 /** Wire the daemon's collaborators together; `shutdown` is late-bound because they need each other first. */
@@ -84,6 +86,11 @@ async function main(): Promise<void> {
   fs.chmodSync(SOCK, 0o600);
   fs.writeFileSync(PID_FILE, `${process.pid}\n`, { mode: 0o600 });
   log(`listening on ${SOCK} (pid ${process.pid})`);
+  // Warn only: linking files into the pi agent dir unasked would be a surprise.
+  const missing = describeProblems(auditRequired(agentDir()));
+  if (missing) {
+    log(`WARNING: ${missing}`);
+  }
 
   // Prune external presence registrations whose pi exited, whose session
   // file was deleted (e.g. via pi's resume picker), or that stopped
