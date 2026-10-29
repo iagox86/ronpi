@@ -51,18 +51,19 @@ export async function handleBash(ctx: DaemonContext, cmd: Cmd<"bash">, res: Resp
   if (child) {
     // pi names a new session after its first entry; for a bang that is the
     // <local-command> wrapper, so name it after the command itself instead.
-    // pi's get_state messageCount includes the system message it injects at
-    // spawn (and a rewind to the start leaves exactly that one on the path),
-    // so 0 or 1 means no real exchange yet. A named session is left alone.
-    if (!s.sessionName && s.messageCount <= 1) {
-      log(`bang-first naming: setting name for session ${s.id} (#19)`);
-      await child.setSessionName(oneLineFlat(cmd.command, 40));
-      await ctx.children.refreshMeta(s);
-      ctx.hub.broadcastSessions();
-    } else {
-      log(
-        `bang-first naming skipped for session ${s.id}: sessionName=${JSON.stringify(s.sessionName)} messageCount=${s.messageCount}`,
-      );
+    // Rename only when nothing real has been said yet: no user message on
+    // the active path (a rewind to the start removes it, and pi's own
+    // system message does not count). A named session is left alone.
+    if (!s.sessionName) {
+      const messages = (await child.getMessages()) as Array<{ role?: string }>;
+      if (messages.some((m) => m.role === "user")) {
+        log(`bang-first naming skipped for session ${s.id}: a user message already exists`);
+      } else {
+        log(`bang-first naming: setting name for session ${s.id} (#19)`);
+        await child.setSessionName(oneLineFlat(cmd.command, 40));
+        await ctx.children.refreshMeta(s);
+        ctx.hub.broadcastSessions();
+      }
     }
     await child.prompt(text, undefined, "steer");
   }
