@@ -52,9 +52,14 @@ export async function handleBash(ctx: DaemonContext, cmd: Cmd<"bash">, res: Resp
     // pi names a new session after its first entry; for a bang that is the
     // <local-command> wrapper, so name it after the command itself instead.
     if (!s.sessionName && s.messageCount === 0) {
+      log(`bang-first naming: setting name for session ${s.id} (#19)`);
       await child.setSessionName(oneLineFlat(cmd.command, 40));
       await ctx.children.refreshMeta(s);
       ctx.hub.broadcastSessions();
+    } else {
+      log(
+        `bang-first naming skipped for session ${s.id}: sessionName=${JSON.stringify(s.sessionName)} messageCount=${s.messageCount}`,
+      );
     }
     await child.prompt(text, undefined, "steer");
   }
