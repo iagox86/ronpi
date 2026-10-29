@@ -302,10 +302,13 @@ describe("daemon: lifecycle", () => {
     assert.equal((r as { confirmFork?: boolean }).confirmFork, true);
     assert.ok(c.sessions().every((s) => s.sessionFile !== file));
 
-    await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "hello", confirmFork: true });
+    const r2 = await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "hello", confirmFork: true });
     await c.waitFor((m) => m.type === "history");
     const s = c.sessions().find((x) => x.sessionFile === file);
     assert.ok(s, "confirmed prompt should register and start the session");
+    // exactly one delivery: the confirmed prompt, nothing else
+    const entries = fs.readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.equal(entries.filter((e) => e.message?.role === "user").length, 1, "one user entry after one confirmed prompt");
 
     // now the daemon owns it: recent mtime or not, no confirm
     fs.appendFileSync(file, "\n");

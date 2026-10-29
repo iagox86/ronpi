@@ -28,6 +28,7 @@ export async function handlePrompt(
     if (!cmd.cwd) {
       throw new Error("prompt for an untracked session requires cwd");
     }
+    log(`prompt for file ${cmd.sessionFile} (confirmFork=${cmd.confirmFork ? "yes" : "no"})`);
     if (ctx.presence.has(cmd.sessionFile)) {
       throw new Error("session is live in another pi process - /adopt to fork it into ronpi");
     }
