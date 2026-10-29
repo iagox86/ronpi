@@ -183,6 +183,13 @@ export class ChildManager {
       s.ctxMax = state.model?.contextWindow;
       s.acceptsImages = state.model?.input ? state.model.input.includes("image") : undefined;
       s.dead = false;
+      // pi's queue_update is the only source of strip state and is not replayed, so
+      // one lost event would leave a controller showing "queued" lines forever (the
+      // #47 symptom). When pi says nothing is pending, any strip entries are stale
+      // by definition; held messages are ours, not pi's, and keep their own announce.
+      if (state.pendingMessageCount === 0 && !(s.held && s.held.length > 0)) {
+        this.hub.announceQueue(s.id, []);
+      }
       try {
         // whole-session figures from pi, so they survive a daemon restart (our own running sums would not)
         const stats = await s.child.getSessionStats();
@@ -313,6 +320,11 @@ export class ChildManager {
       log(
         `session ${s.id} event: ${type}${type === "message_end" ? ` stop=${(event.message as { stopReason?: string })?.stopReason}` : ""}`,
       );
+    }
+    if (type === "queue_update") {
+      // queue events were invisible here, which is exactly where a stuck strip hides
+      const steering = (event.steering as string[] | undefined) ?? [];
+      log(`session ${s.id} event: queue_update steering=${steering.length}`);
     }
     if (type === "agent_start") {
       s.streaming = true;

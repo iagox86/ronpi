@@ -337,6 +337,12 @@ right after a compaction until the model's next reply.
 Messages sent while a `/compact` is running are held by the daemon (pi itself
 refuses prompts then), shown as queued, and delivered in order when it finishes.
 
+Steering into a busy session (a typed prompt or a session-to-session message)
+queues in pi and shows on the same strip. Pi's queue updates are the only source
+of that state, so whenever the daemon refreshes a child's state it also checks
+pi's pending-message count: if pi has nothing queued, it re-announces an empty
+queue, so a strip can no longer stick on stale entries after a lost update.
+
 A compaction shows as pi's own summary row ("Compacted from N tokens", ctrl-o
 expands it). Pi keeps the whole file, so when a session is replayed from its
 file the messages the model no longer has (before the first kept entry) are

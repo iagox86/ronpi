@@ -143,7 +143,8 @@ async function slowPrompt(first) {
     }
     await slowRun(texts);
     texts = queue.splice(0, queue.length);
-    if (texts.length > 0) {
+    if (texts.length > 0 && process.env.FAKE_PI_DROP_QUEUE_REMOVAL !== "1") {
+      // with the flag set the empty-queue update is withheld, like a lost event
       queueUpdate();
     }
   }
@@ -172,6 +173,7 @@ async function handle(cmd) {
         sessionId,
         sessionName,
         messageCount: messages.length,
+        pendingMessageCount: queue.length,
       });
     case "get_messages":
       return ok(cmd.id, "get_messages", { messages });

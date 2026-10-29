@@ -113,6 +113,27 @@ Steps, each independently shippable, in order:
    timer, runs while the switcher is open and any session streams); Esc on a
    working session clear_queue's, restores queued text above the editor draft
    (pi's behavior), then aborts - verified an abort alone would deliver them.
+   TICKET #47 (2026-10-28): the strip kept showing steered messages after the
+   agent processed them (messaging-test incident, session 8). Post-mortem:
+   repeated repros against real pi 1.3.0 (labeled + plain steers, mid-tool and
+   mid-stream timing, full daemon, real controller TUI) all clear correctly -
+   pi's exact-match removal at message_start is sound and ronpi's relay is
+   faithful, so the incident's one-shot loss was never reproduced. The defect
+   that made it permanent is real, though: queue_update is fire-and-forget with
+   no replay and pi exposes no read-only way to get the queued texts back, so a
+   single lost update stuck the strip forever. FIX: refreshMeta (every agent_settled and
+   child start) reads pi's pendingMessageCount and re-announces an empty queue
+   when it is zero (held compaction messages are the daemon's own and keep
+   their announce). Fake pi: FAKE_PI_DROP_QUEUE_REMOVAL=1 withholds the
+   removal update to regression-test the reconcile. Daemon log now records
+   queue_update counts. Still open / parked: what dropped the event in the
+   incident (watch for it recurring - the log line above will show it); pi's
+   exit race where a steer arriving between the run's final queue drain and
+   _isAgentRunActive=false is stranded until the next prompt (pi-side, benign:
+   the strip is honest and the next run delivers it); ronpi pins
+   pi-coding-agent 1.4.0 in package.json while node_modules holds 1.3.0
+   (installed 2026-10-18) - run npm install and re-verify the queue paths on
+   1.4.0.
 4. (BUILT 2026-10-22; per-item expand PARKED - not useful without mouse selection: tool-run.ts groups consecutive tool
    calls into one collapsed summary line, ctrl-o toggles all sessions; ctrl-t
    toggles thinking, starting from pi's hideThinkingBlock setting. Step 5: pi's

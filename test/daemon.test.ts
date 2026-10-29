@@ -179,6 +179,35 @@ describe("daemon: lifecycle", () => {
     assert.equal(fs.readFileSync(file, "utf8").includes("queued message"), false);
   });
 
+  it("re-syncs a stale queue strip once pi reports nothing pending (#47)", async () => {
+    // queue_update is fire-and-forget, so a lost removal event would leave a
+    // controller showing "queued" lines forever. With the drop flag fake-pi
+    // delivers the message but withholds the empty-queue update; the daemon must
+    // reconcile against pi at settle and announce the cleared queue itself.
+    harness = await startDaemon({ FAKE_PI_SLOW: "1", FAKE_PI_STEP_MS: "150", FAKE_PI_DROP_QUEUE_REMOVAL: "1" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "prompt", session: sessionId, message: "running" });
+    await c.request({ type: "prompt", session: sessionId, message: "queued message" });
+    await c.waitFor((m) => m.type === "event" && m.event?.type === "queue_update" && m.event.steering.length === 1);
+    await c.waitFor(isSettled);
+
+    // the reconcile runs just behind agent_settled (async refreshMeta); earlier empty
+    // updates from spawn-time refreshMeta don't count
+    await c.waitFor(() => {
+      const settled = c.messages.findIndex(isSettled);
+      return c.messages.some(
+        (m, i) =>
+          i > settled &&
+          m.type === "event" &&
+          m.event?.type === "queue_update" &&
+          m.session === sessionId &&
+          m.event.steering.length === 0,
+      );
+    }, 5000);
+  });
+
   it("serves pi's slash commands, and the last list once the child is gone", async () => {
     harness = await startDaemon();
     const c = await harness.connect();
