@@ -306,9 +306,19 @@ describe("daemon: lifecycle", () => {
     await c.waitFor((m) => m.type === "history");
     const s = c.sessions().find((x) => x.sessionFile === file);
     assert.ok(s, "confirmed prompt should register and start the session");
-    // exactly one delivery: the confirmed prompt, nothing else
-    const entries = fs.readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
-    assert.equal(entries.filter((e) => e.message?.role === "user").length, 1, "one user entry after one confirmed prompt");
+    // exactly one delivery: the confirmed prompt, nothing else. The fake-pi
+    // writes the session file only after it processes the prompt, which can
+    // lag the daemon's history replay, so poll rather than trusting history.
+    let userEntries = 0;
+    for (let i = 0; i < 50; i++) {
+      const entries = fs.readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      userEntries = entries.filter((e) => e.message?.role === "user").length;
+      if (userEntries > 0) {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.equal(userEntries, 1, "one user entry after one confirmed prompt");
 
     // now the daemon owns it: recent mtime or not, no confirm
     fs.appendFileSync(file, "\n");

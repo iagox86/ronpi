@@ -489,13 +489,9 @@ export class SessionActions {
         if (echo) {
           this.h.echoPrompt(key, sent);
         }
-        await this.h.request({
-          type: "prompt",
-          sessionFile: key,
-          cwd: info.cwd || path.dirname(key),
-          message: sent,
-          images: images.length > 0 ? images : undefined,
-        });
+        // the request above already delivered; after a confirmed fork it only
+        // returns once the child is up, so clear the box late (below) rather
+        // than sending again
       }
       this.h.editor.addToHistory(message);
       // starting a sleeping session takes seconds: only clear the box if it still holds what was sent,
