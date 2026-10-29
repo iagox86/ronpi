@@ -107,6 +107,8 @@ type ClientCommandBody =
       cwd?: string;
       /** Optional display name for a newly spawned child. */
       name?: string;
+      /** Continue on a possibly-external branch after the daemon flagged a fork risk. */
+      confirmFork?: boolean;
     }
   | { type: "abort"; session: number }
   /** Run a shell command in the session's cwd; pi records it so the model sees it on the next turn. The response is pi's BashResult. */

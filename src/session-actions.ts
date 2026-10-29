@@ -463,23 +463,24 @@ export class SessionActions {
           return false;
         }
         // The file may be open in an external (non-daemon) pi process -
-        // undetectable directly, but a very recent mtime is a strong
-        // signal. Prompting it forks the conversation (pi's tree
-        // format keeps both branches), so confirm once. Skipped while the
-        // session list has not loaded (a fresh or reconnecting controller
-        // cannot tell daemon-owned sessions from external ones, and a
-        // daemon-owned file is exactly what a resume makes look fresh).
-        let mtimeMs = 0;
-        try {
-          mtimeMs = fs.statSync(key).mtimeMs;
-        } catch {
-          // stat failure: treat as old
-        }
-        const recent = Date.now() - mtimeMs < 60_000;
-        if (recent && this.h.sessionsLoaded && this.armedFork !== key) {
+        // undetectable from here, so the daemon decides: it refuses files a
+        // presence-covered pi holds, and flags brand-new recently-modified
+        // files (a fork risk) with a confirmFork response instead of
+        // touching them. Files it has handled before are ronpi's own and
+        // just continue, whatever their mtime (a resume makes them look
+        // freshly written).
+        const data = (await this.h.request({
+          type: "prompt",
+          sessionFile: key,
+          cwd: info.cwd || path.dirname(key),
+          message: sent,
+          images: images.length > 0 ? images : undefined,
+          confirmFork: this.armedFork === key,
+        })) as { confirmFork?: boolean; ageMs?: number } | undefined;
+        if (data?.confirmFork) {
           this.armedFork = key;
           this.h.notify(
-            `changed ${fmtAge(Date.now() - mtimeMs)} ago - may be open in another pi; enter again to continue here (the conversation may fork), esc to cancel`,
+            `changed ${fmtAge(data.ageMs ?? 0)} ago - may be open in another pi; enter again to continue here (the conversation may fork), esc to cancel`,
           );
           this.h.editor.setText(text);
           return false;

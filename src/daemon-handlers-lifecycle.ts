@@ -33,6 +33,22 @@ export async function handlePrompt(
     }
     s = ctx.registry.byFile(cmd.sessionFile);
     if (!s) {
+      // A file this daemon has never handled may be open in an external,
+      // presence-less pi process - undetectable directly, but a very recent
+      // mtime is a strong signal. Continuing would branch the conversation
+      // (pi's tree keeps both sides), so ask once before touching the file.
+      // Files the daemon has handled before are its own: no confirm, whatever
+      // their mtime (a resume makes them look freshly written).
+      let mtimeMs = 0;
+      try {
+        mtimeMs = fs.statSync(cmd.sessionFile).mtimeMs;
+      } catch {
+        // stat failure: treat as old
+      }
+      if (Date.now() - mtimeMs < 60_000 && !cmd.confirmFork) {
+        res(true, undefined, { confirmFork: true, ageMs: Math.round(Date.now() - mtimeMs) });
+        return;
+      }
       s = ctx.registry.create(cmd.cwd, cmd.sessionFile);
       log(`session ${s.id} registered from file ${cmd.sessionFile}`);
     }

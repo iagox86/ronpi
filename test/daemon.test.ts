@@ -289,6 +289,30 @@ describe("daemon: lifecycle", () => {
     await c.waitFor((m) => m.type === "event" && m.session === sessionId && m.event?.type === "message_start" && JSON.stringify(m.event.message).includes("rescued"));
   });
 
+  it("confirms before touching a brand-new recently-modified session file, then proceeds once confirmed", async () => {
+    // A file this daemon has never handled may belong to a presence-less
+    // external pi (undetectable); a fresh mtime is the signal, and the
+    // daemon must not touch the file until the user confirms. Files it has
+    // handled before are its own and never confirm, whatever their mtime.
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const file = path.join(harness.dir, "fresh-session.jsonl");
+    fs.writeFileSync(file, `${JSON.stringify({ type: "session", id: "fresh" })}\n`);
+    const r = await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "hello" });
+    assert.equal((r as { confirmFork?: boolean }).confirmFork, true);
+    assert.ok(c.sessions().every((s) => s.sessionFile !== file));
+
+    const r2 = await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "hello", confirmFork: true });
+    await c.waitFor((m) => m.type === "history");
+    const s = c.sessions().find((x) => x.sessionFile === file);
+    assert.ok(s, "confirmed prompt should register and start the session");
+
+    // now the daemon owns it: recent mtime or not, no confirm
+    fs.appendFileSync(file, "\n");
+    const r3 = await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "again" });
+    assert.equal((r3 as { confirmFork?: boolean }).confirmFork, undefined);
+  });
+
   it("serves pi's slash commands, and the last list once the child is gone", async () => {
     harness = await startDaemon();
     const c = await harness.connect();
