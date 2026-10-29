@@ -461,6 +461,32 @@ describe("daemon: lifecycle", () => {
     assert.equal(stopped.cancelled, true);
   });
 
+  it("names a session whose first message is a !command, after the command", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    await c.request({ type: "bash", session: sessionId, command: "echo hi; echo oops >&2; exit 3" });
+    await c.waitFor(
+      (m) =>
+        m.type === "sessions" &&
+        (m.sessions as Msg[]).some((s) => s.id === sessionId && s.sessionName === "echo hi; echo oops >&2; exit 3"),
+    );
+    // not pi's auto-name after the wrapper around the bash input
+    const name = c.sessions().find((s) => s.id === sessionId)?.sessionName as string;
+    assert.ok(!name.startsWith("<local-command-caveat"), `name leaked the wrapper: ${name}`);
+    assert.equal(name, "echo hi; echo oops >&2; exit 3");
+    // a later !command does not rename the session again
+    await c.request({ type: "bash", session: sessionId, command: "echo again" });
+    const named = c.sessions().find((s) => s.id === sessionId);
+    assert.equal(named?.sessionName, "echo hi; echo oops >&2; exit 3");
+    // a plain prompt still leaves the session unnamed, for the first-message fallback
+    const { sessionId: plain } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history" && m.session === plain);
+    await c.request({ type: "prompt", session: plain, message: "hello" });
+    assert.equal(c.sessions().find((s) => s.id === plain)?.sessionName, undefined);
+  });
+
   it("passes pasted images on with the prompt", async () => {
     harness = await startDaemon();
     const c = await harness.connect();

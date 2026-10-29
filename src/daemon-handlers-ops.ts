@@ -8,6 +8,7 @@ import { type Cmd, type DaemonContext, requireNotInPi, type Responder } from "./
 import { deliverToSession } from "./daemon-handlers-bridge.ts";
 import { sendHistory } from "./daemon-history.ts";
 import { type DaemonSession, type HeldPrompt, requireIdle } from "./daemon-session.ts";
+import { oneLineFlat } from "./format.ts";
 import { formatLocalCommand, type LocalResult, runLocal } from "./local-command.ts";
 import { log } from "./log.ts";
 import { matchModel, modelName } from "./model-match.ts";
@@ -48,6 +49,13 @@ export async function handleBash(ctx: DaemonContext, cmd: Cmd<"bash">, res: Resp
   const text = formatLocalCommand(cmd.command, result);
   const child = ctx.registry.get(cmd.session)?.child;
   if (child) {
+    // pi names a new session after its first entry; for a bang that is the
+    // <local-command> wrapper, so name it after the command itself instead.
+    if (!s.sessionName && s.messageCount === 0) {
+      await child.setSessionName(oneLineFlat(cmd.command, 40));
+      await ctx.children.refreshMeta(s);
+      ctx.hub.broadcastSessions();
+    }
     await child.prompt(text, undefined, "steer");
   }
   res(true, undefined, result);
