@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { KEY_LOG, TRASH_DIR } from "./config.ts";
 import { matching } from "./completion.ts";
-import { fmtAge, oneLineFlat } from "./format.ts";
+import { fmtAge, firstMessageLabel } from "./format.ts";
 import { listTrashedSessions, type TrashedSession } from "./trash.ts";
 import { log } from "./log.ts";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
@@ -258,7 +258,7 @@ export class SwitcherActions {
   private async restoreFromTrash(query: string): Promise<void> {
     const saved = loadGroups().summaries ?? {};
     const label = (t: TrashedSession): string => {
-      const title = t.name ?? (t.sessionId ? saved[t.sessionId]?.text : undefined) ?? oneLineFlat(t.firstMessage ?? "", 50);
+      const title = t.name ?? (t.sessionId ? saved[t.sessionId]?.text : undefined) ?? firstMessageLabel(t.firstMessage ?? "", 50);
       const age = t.trashedAt ? `${fmtAge(Date.now() - Date.parse(t.trashedAt))} ago` : "earlier";
       const where = path.basename(t.cwd ?? path.dirname(t.originalPath));
       return `${title || "<unnamed>"}  [deleted ${age}, ${t.messages} msgs, ${where}] ${(t.sessionId ?? "").slice(0, 8)}`;

@@ -44,6 +44,18 @@ export function lastLine(text: string, width = 90): string {
   return flat.length > width ? `...${flat.slice(-width)}` : flat;
 }
 
+/** Display label for a session's first message: a local-command wrapper
+ * (ronpi's own `!command` prompt format, see local-command.ts) renders as
+ * `$ command` - the raw text would be the whole caveat wrapper - and
+ * anything else passes through flat. Deliberately looser than
+ * parseLocalCommand: only the command block is required, so a truncated or
+ * partially-written wrapper still labels. Anchored to the start (plus an
+ * optional caveat) so text that merely mentions the tag is not mislabeled. */
+export function firstMessageLabel(text: string, width: number): string {
+  const m = /^\s*(?:<local-command-caveat>[\s\S]*?<\/local-command-caveat>\s*)?<local-command>([\s\S]*?)<\/local-command>/.exec(text);
+  return m ? oneLineFlat(`$ ${m[1]}`, width) : oneLineFlat(text, width);
+}
+
 /** Plain text of a message whose content is a string or content blocks. */
 export function messageText(m: { content?: unknown }): string {
   if (typeof m.content === "string") {

@@ -8,7 +8,6 @@ import { type Cmd, type DaemonContext, requireNotInPi, type Responder } from "./
 import { deliverToSession } from "./daemon-handlers-bridge.ts";
 import { sendHistory } from "./daemon-history.ts";
 import { type DaemonSession, type HeldPrompt, requireIdle } from "./daemon-session.ts";
-import { oneLineFlat } from "./format.ts";
 import { formatLocalCommand, type LocalResult, runLocal } from "./local-command.ts";
 import { log } from "./log.ts";
 import { matchModel, modelName } from "./model-match.ts";
@@ -49,22 +48,6 @@ export async function handleBash(ctx: DaemonContext, cmd: Cmd<"bash">, res: Resp
   const text = formatLocalCommand(cmd.command, result);
   const child = ctx.registry.get(cmd.session)?.child;
   if (child) {
-    // pi names a new session after its first entry; for a bang that is the
-    // <local-command> wrapper, so name it after the command itself instead.
-    // Rename only when nothing real has been said yet: no user message on
-    // the active path (a rewind to the start removes it, and pi's own
-    // system message does not count). A named session is left alone.
-    if (!s.sessionName) {
-      const messages = (await child.getMessages()) as Array<{ role?: string }>;
-      if (messages.some((m) => m.role === "user")) {
-        log(`bang-first naming skipped for session ${s.id}: a user message already exists`);
-      } else {
-        log(`bang-first naming: setting name for session ${s.id} (#19)`);
-        await child.setSessionName(oneLineFlat(cmd.command, 40));
-        await ctx.children.refreshMeta(s);
-        ctx.hub.broadcastSessions();
-      }
-    }
     await child.prompt(text, undefined, "steer");
   }
   res(true, undefined, result);

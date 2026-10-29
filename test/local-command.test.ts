@@ -69,3 +69,4 @@ describe("runLocal", () => {
     assert.match(r.output, /could not run bash/);
   });
 });
+

@@ -2,7 +2,7 @@
 // session files into rows, ordering them, and the group/order mutations behind
 // shift-move and group delete. No I/O, no UI - everything takes plain data.
 import * as path from "node:path";
-import { fmtAge, oneLineFlat } from "./format.ts";
+import { fmtAge, firstMessageLabel } from "./format.ts";
 import { type GroupsFile, isParked } from "./groups.ts";
 import type { SessionMeta } from "./shared.ts";
 import type { SessionState, SwitcherSession } from "./switcher.ts";
@@ -26,7 +26,7 @@ export function sessionKey(meta: SessionMeta): string {
 
 /** Explicit name, else the first message, else "<unnamed>". */
 export function displayName(meta: SessionMeta | undefined, info: LocalSession | undefined): string {
-  const first = info?.firstMessage ? oneLineFlat(info.firstMessage, 40) : undefined;
+  const first = info?.firstMessage ? firstMessageLabel(info.firstMessage, 40) : undefined;
   return meta?.sessionName ?? info?.name ?? first ?? "<unnamed>";
 }
 
@@ -60,7 +60,7 @@ export function buildSessionList(inp: ListInputs): SwitcherSession[] {
     }
     const cwd = meta?.cwd ?? info?.cwd ?? (key.startsWith("daemon:") ? key : path.dirname(key));
     const explicitName = meta?.sessionName ?? info?.name;
-    const first = info?.firstMessage ? oneLineFlat(info.firstMessage, 40) : undefined;
+    const first = info?.firstMessage ? firstMessageLabel(info.firstMessage, 40) : undefined;
     let state: SessionState = "inactive";
     if (meta?.active) {
       state = meta.streaming ? "streaming" : meta.dead ? "dead" : "idle";

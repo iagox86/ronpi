@@ -71,6 +71,11 @@ describe("displayName", () => {
     assert.equal(displayName(undefined, local("/a", { firstMessage: "first words" })), "first words");
     assert.equal(displayName(undefined, local("/a")), "<unnamed>");
   });
+
+  it("renders a bang-first first message as the command, not the wrapper", () => {
+    const wrapped = `<local-command-caveat>The user ran this.</local-command-caveat>\n<local-command>cat /etc/passwd</local-command>\n<local-command-output exit="0">root</local-command-output>`;
+    assert.equal(displayName(undefined, local("/b", { firstMessage: wrapped })), "$ cat /etc/passwd");
+  });
 });
 
 describe("buildSessionList", () => {

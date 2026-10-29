@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { fmtAge, fmtTokens, lastLine, messageText, oneLineFlat } from "../src/format.ts";
+import { fmtAge, firstMessageLabel, fmtTokens, lastLine, messageText, oneLineFlat } from "../src/format.ts";
 
 describe("fmtAge", () => {
   it("uses the largest whole unit", () => {
@@ -60,5 +60,34 @@ describe("messageText", () => {
 
   it("is empty for anything else", () => {
     assert.equal(messageText({ content: 42 }), "");
+  });
+});
+
+describe("firstMessageLabel", () => {
+  const wrapped = `<local-command-caveat>The user ran this shell command themselves.</local-command-caveat>\n<local-command>cat /etc/passwd</local-command>\n<local-command-output exit="0">root:x:0:0</local-command-output>`;
+
+  it("renders a local-command wrapper as the command", () => {
+    assert.equal(firstMessageLabel(wrapped, 100), "$ cat /etc/passwd");
+  });
+
+  it("labels a truncated wrapper that never closed", () => {
+    const truncated = `<local-command-caveat>The user ran this.</local-command-caveat>\n<local-command>ls -la</local-command>\n<local-command-output exit="0">`;
+    assert.equal(firstMessageLabel(truncated, 100), "$ ls -la");
+  });
+
+  it("passes ordinary text through flat", () => {
+    assert.equal(firstMessageLabel("hello   world\nsecond line", 100), "hello world second line");
+  });
+
+  it("does not mislabel text that merely mentions the tag", () => {
+    const mentions = `how do I make a command render as <local-command>cmd</local-command> in the transcript?`;
+    assert.equal(firstMessageLabel(mentions, 200), oneLineFlat(mentions, 200));
+  });
+
+  it("truncates like the other fallbacks", () => {
+    const long = `<local-command>echo ${"x".repeat(80)}</local-command>\n<local-command-output exit="0">ok</local-command-output>`;
+    const label = firstMessageLabel(long, 40);
+    assert.ok(label.startsWith("$ echo xxxx"));
+    assert.ok(label.endsWith("..."), "long commands truncate like oneLineFlat does");
   });
 });

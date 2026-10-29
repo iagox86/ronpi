@@ -2,7 +2,7 @@
 // messages, newest at the bottom, the selection starting on the newest.
 import type { Component } from "@earendil-works/pi-tui";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { oneLineFlat } from "./format.ts";
+import { firstMessageLabel } from "./format.ts";
 import type { RewindTarget } from "./rewind.ts";
 import { attention, dim, panel, panelInnerWidth, selected } from "./theme.ts";
 
@@ -20,7 +20,7 @@ export function pickerLines(targets: RewindTarget[], index: number, width: numbe
     lines.push(dim(`   ... ${start} earlier`));
   }
   shown.forEach((t, i) => {
-    const text = oneLineFlat(t.text, Math.max(10, width - 6)) || "(empty message)";
+    const text = firstMessageLabel(t.text, Math.max(10, width - 6)) || "(empty message)";
     const mark = t.compacted ? " [before a compaction]" : "";
     lines.push(truncateToWidth(start + i === index ? selected(` > ${text}${mark}`) : dim(`   ${text}${mark}`), width));
   });
