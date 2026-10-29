@@ -26,6 +26,7 @@ function metaFor(s: DaemonSession, socket: net.Socket, presence: Presence, usage
     pendingDialog: s.pendingDialog,
     settingsMtime: s.child ? s.settingsMtime : undefined,
     settingsProblem: s.child ? s.settingsProblem : undefined,
+    sessionBridge: s.child ? s.sessionBridge : undefined,
     agent: s.agent?.name,
     acceptsImages: s.acceptsImages,
     attachedToYou: s.attachedTo === socket,

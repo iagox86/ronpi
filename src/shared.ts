@@ -58,6 +58,8 @@ export interface SessionMeta {
   settingsProblem?: string;
   /** The session file is open in an external pi process (presence ext). */
   externallyLive?: boolean;
+  /** The child has the session bridge extension (inter-session messages skip pi's steering queue). */
+  sessionBridge?: boolean;
   /** Upstream provider id of the current model (e.g. "zai-coding-cn", "litellm"). */
   provider?: string;
   thinkingLevel?: string;

@@ -165,7 +165,7 @@ they started with, and the switcher status line says how many are behind
 
 ## Messages between sessions
 
-`ronpi_message({to, text})` (pi extension `pi/extensions/ronpi-agents.ts`, children only) asks the daemon (`message` command, `daemon-handlers-messages.ts`) to deliver `text` to `to`: a UUID, UUID prefix, `#number` or name (`daemon-resolve.ts` finds it, in the daemon's sessions first, then session files on disk). The target gets a user message `[from NAME (uuid)]: text` (`received.ts`); an inactive session is started for it; a busy one queues it as steering; a compacting one holds it with the other held messages. Delivering does not take the target's input attach. Refused: unknown or ambiguous target, itself, a session open in another pi process, empty text. The caller gets "delivered", not a reply; a reply is a message the other way. Received messages are shown as "from NAME" and are not offered as rewind points. `message` connections are treated like presence heartbeats (no controller sync).
+`ronpi_message({to, text})` (pi extension `pi/extensions/ronpi-agents.ts`, children only) asks the daemon (`message` command, `daemon-handlers-messages.ts`) to deliver `text` to `to`: a UUID, UUID prefix, `#number` or name (`daemon-resolve.ts` finds it, in the daemon's sessions first, then session files on disk). The target gets a message `[from NAME (uuid)]: text` (`received.ts`); an inactive session is started for it; a compacting one holds it with the other held messages. When the target has the session bridge extension connected (`daemon-handlers-bridge.ts`), the daemon hands the message to the bridge (`bridge_inject`) and the extension delivers it as a `ronpi-inject` custom message at a turn/settle boundary or immediately when idle - confirmed by the append, never pi's steering queue; otherwise it is queued as legacy steering (`deliverToSession`, which warns once when the bridge is missing). Delivering does not take the target's input attach. Refused: unknown or ambiguous target, itself, a session open in another pi process, empty text. The caller gets "delivered", not a reply; a reply is a message the other way. Received messages are shown as "from NAME" and are not offered as rewind points.
 
 ## Side questions and mouse clicks
 
@@ -228,7 +228,7 @@ Daemon side:
 - `presence.ts` - sessions open in external pi processes (heartbeat/pid/ghost pruning)
 - `agents.ts` (agent profile files: parse, load, launch arguments), `session-agents.ts` (profile saved per session), `agents-completion.ts` (`/new -a` completion, `/agents` panel); the shipped profiles are in `../agents/`, see `agents/README.md`
 - `local-command.ts` (`!command`: run it, clean/trim the output, the tagged message the agent receives and its parser)
-- `received.ts` (label on messages between sessions), `daemon-handlers-messages.ts` / `daemon-resolve.ts` (deliver / find a session)
+- `received.ts` (label on messages between sessions), `daemon-handlers-messages.ts` / `daemon-resolve.ts` (deliver / find a session), `daemon-bridge.ts` + `daemon-handlers-bridge.ts` (session bridge: inject tracking, routing, confirmation)
 - `mcp.ts` / `mcp-doctor.ts` - /mcp: parse pi's status, add/remove servers, and the /mcp status troubleshooting report
 - `btw.ts` - /btw: ask a throwaway copy of the session one question; `click-guard.ts` - only double clicks reach the transcript
 - `session-tree.ts` - parent/child rows: nesting, folding, hiding parked children, the banner and cost rollup helpers
@@ -342,6 +342,8 @@ queues in pi and shows on the same strip. Pi's queue updates are the only source
 of that state, so whenever the daemon refreshes a child's state it also checks
 pi's pending-message count: if pi has nothing queued, it re-announces an empty
 queue, so a strip can no longer stick on stale entries after a lost update.
+
+When a session has the session bridge extension (`pi/extensions/ronpi-session-bridge.ts`, which adds the command `/ronpi-inject`), messages from other sessions skip pi's steering queue entirely: the daemon sends the command over the child's own pipe with an id, and the extension delivers them as `ronpi-inject` custom messages - at the next turn boundary mid-run (pi announces these as `entry_appended`), at the settle boundary at the end of a run, or by starting a turn when idle (`message_end`). The daemon confirms each from that announcement, so a lost event cannot strand the message or its strip entry; the strip shows what the bridge still holds. Anything handed to pi that never reached the transcript is put back and sent again; a refused or failed inject falls back to steering; a session that stops with unconfirmed injects says so (`exited` with a reason). Only messages from other sessions take this route, not your own prompts. A session without the bridge (extension not linked: `node src/install.ts`, then restart the session) falls back to steering, is marked `sessionBridge: false`, and the switcher notice line counts such sessions. Design notes: docs/design.md, "Session bridge".
 
 A compaction shows as pi's own summary row ("Compacted from N tokens", ctrl-o
 expands it). Pi keeps the whole file, so when a session is replayed from its

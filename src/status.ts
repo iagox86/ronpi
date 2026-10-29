@@ -64,6 +64,25 @@ export function settingsNotice(metas: Iterable<SessionMeta>, currentMtime: numbe
   return problem ? `settings problem: ${problem}` : "";
 }
 
+/**
+ * Warning about running sessions started without the session bridge extension:
+ * messages from other sessions reach them through pi's lossy steering queue.
+ * Empty when every running session has it (or none is running).
+ */
+export function bridgeNotice(metas: Iterable<SessionMeta>): string {
+  let without = 0;
+  for (const m of metas) {
+    if (m.active && m.sessionBridge === false) {
+      without++;
+    }
+  }
+  if (without === 0) {
+    return "";
+  }
+  const noun = without === 1 ? "running session has" : "running sessions have";
+  return `${without} ${noun} no session bridge, so messages from other sessions can be lost - run node src/install.ts, then restart ${without === 1 ? "it" : "them"}`;
+}
+
 export interface StatusInputs {
   switcherOpen: boolean;
   /** Name of the highlighted switcher row, if any. */

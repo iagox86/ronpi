@@ -16,6 +16,7 @@
 // this env, including pi settings/auth/extensions.)
 import * as fs from "node:fs";
 import { PID_FILE, SOCK } from "./config.ts";
+import { BridgeTracker } from "./daemon-bridge.ts";
 import { ChildManager } from "./daemon-children.ts";
 import type { DaemonContext } from "./daemon-context.ts";
 import { ClientHub } from "./daemon-hub.ts";
@@ -32,7 +33,9 @@ function createContext(shutdown: () => void): DaemonContext {
   const presence = new Presence();
   const usage = new Map<string, UsageReport>();
   const hub = new ClientHub((socket) => sessionMetas(registry, presence, usage, socket));
-  return { registry, hub, children: new ChildManager(hub, usage), presence, shutdown };
+  const bridges = new BridgeTracker();
+  const children = new ChildManager(hub, usage, bridges);
+  return { registry, hub, children, presence, bridges, shutdown };
 }
 
 async function main(): Promise<void> {

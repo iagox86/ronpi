@@ -2,6 +2,7 @@
 import * as fs from "node:fs";
 import { RpcClient } from "@earendil-works/pi-coding-agent";
 import { DIALOG_METHODS } from "./config.ts";
+import { type BridgeTracker, INJECT_COMMAND, injectedId, mergedQueueTexts, parseBridgeReport } from "./daemon-bridge.ts";
 import type { ClientHub } from "./daemon-hub.ts";
 import type { DaemonSession } from "./daemon-session.ts";
 import { randomUUID } from "node:crypto";
@@ -36,10 +37,13 @@ export class ChildManager {
   private lastCommands: SlashCommand[] = [];
   /** Sessions waiting for the notice pi's /mcp prints, by daemon session id (see mcpStatus). */
   private readonly noticeTaps = new Map<number, (text: string) => void>();
+  /** Injects handed to session bridges and not yet seen in a transcript, so strip re-syncs keep them visible. */
+  private readonly bridges: BridgeTracker;
 
-  constructor(hub: ClientHub, usage: Map<string, UsageReport>) {
+  constructor(hub: ClientHub, usage: Map<string, UsageReport>, bridges: BridgeTracker) {
     this.hub = hub;
     this.usage = usage;
+    this.bridges = bridges;
   }
 
   /**
@@ -128,9 +132,11 @@ export class ChildManager {
       if (isNew && cfg.provider && !agent?.model) {
         args.push("--provider", cfg.provider);
       }
+      s.sessionBridge = undefined;
       s.child = await this.launch(s, args, cfg);
       s.dead = false;
       await this.refreshMeta(s);
+      await this.detectBridge(s);
       if (opts.agent && s.sessionId) {
         saveSessionAgent(s.sessionId, opts.agent);
       }
@@ -150,6 +156,7 @@ export class ChildManager {
     s.attachedTo = undefined;
     s.pendingDialog = false;
     s.streaming = false;
+    this.dropBridge(s, "the session was stopped");
     try {
       await child.stop();
     } catch {
@@ -185,10 +192,16 @@ export class ChildManager {
       s.dead = false;
       // pi's queue_update is the only source of strip state and is not replayed, so
       // one lost event would leave a controller showing "queued" lines forever (the
-      // #47 symptom). When pi says nothing is pending, any strip entries are stale
-      // by definition; held messages are ours, not pi's, and keep their own announce.
-      if (state.pendingMessageCount === 0 && !(s.held && s.held.length > 0)) {
-        this.hub.announceQueue(s.id, []);
+      // #47 symptom). When pi says nothing is pending, any strip entries beyond our
+      // own (compaction-held and bridge-pending) are stale by definition.
+      if (state.pendingMessageCount === 0) {
+        this.hub.announceQueue(
+          s.id,
+          [
+            ...(s.held ?? []).map((h) => h.text),
+            ...this.bridges.texts(s.id),
+          ],
+        );
       }
       try {
         // whole-session figures from pi, so they survive a daemon restart (our own running sums would not)
@@ -203,8 +216,70 @@ export class ChildManager {
     } catch (err) {
       s.dead = true;
       s.streaming = false;
+      this.dropBridge(s, "the session's process stopped answering");
       log(`session ${s.id} refreshMeta failed: ${err}`);
     }
+  }
+
+  /** Whether the child has the session bridge extension: it lists the inject command. Remembered on the session. */
+  async detectBridge(s: DaemonSession): Promise<boolean> {
+    if (!s.child) {
+      return false;
+    }
+    try {
+      const commands = await s.child.getCommands();
+      s.sessionBridge = commands.some((c) => c.name === INJECT_COMMAND);
+    } catch (err) {
+      log(`session ${s.id}: could not look for the session bridge: ${errorText(err)}`);
+      s.sessionBridge = false;
+    }
+    return s.sessionBridge === true;
+  }
+
+  /** The strip: compaction-held messages first, then injects the bridge has not confirmed yet. */
+  private announceQueue(s: DaemonSession): void {
+    this.hub.announceQueue(s.id, mergedQueueTexts((s.held ?? []).map((h) => h.text), this.bridges.texts(s.id)));
+  }
+
+  /** Injects that never reached a transcript are gone with the process: say so rather than let the sender believe they landed. */
+  private dropBridge(s: DaemonSession, why: string): void {
+    const lost = this.bridges.clear(s.id);
+    s.sessionBridge = undefined;
+    if (lost.length === 0) {
+      return;
+    }
+    const reason = `${lost.length} message${lost.length === 1 ? "" : "s"} from other sessions did not arrive (${why}): ${lost.map((p) => JSON.stringify(p.text.replace(/^\[from [^\]]*\]:\s*/, "").slice(0, 60))).join(", ")}`;
+    log(`session ${s.id}: ${reason}`);
+    this.hub.broadcast({ type: "exited", session: s.id, reason });
+    this.announceQueue(s);
+  }
+
+  /** Act on a status record from the bridge extension; true if it was one. */
+  private takeBridgeReport(s: DaemonSession, event: Record<string, unknown>): boolean {
+    const report = parseBridgeReport(event);
+    if (!report) {
+      return false;
+    }
+    switch (report.kind) {
+      case "injected":
+        this.bridges.ack(s.id, report.id);
+        this.announceQueue(s);
+        break;
+      case "failed": {
+        const lost = this.bridges.fail(s.id, report.id);
+        log(`session ${s.id}: bridge could not deliver ${report.id || "a request"}: ${report.error}`);
+        this.announceQueue(s);
+        if (lost && s.child) {
+          // it never entered the transcript: hand it to pi's own queue so it is not lost
+          s.child.prompt(lost.text, undefined, "steer").catch((err: unknown) => log(`session ${s.id}: steering fallback failed: ${errorText(err)}`));
+        }
+        break;
+      }
+      case "requeued":
+        log(`session ${s.id}: bridge put ${report.ids.join(", ")} back in its queue (not in the transcript yet)`);
+        break;
+    }
+    return true;
   }
 
   /** The slash commands the session's child offers; falls back to the newest list seen. */
@@ -284,7 +359,7 @@ export class ChildManager {
   private onEvent(s: DaemonSession, event: Record<string, unknown>): void {
     const type = event.type as string;
     if (type === "extension_ui_request") {
-      if (this.takeUsageReport(event)) {
+      if (this.takeUsageReport(event) || this.takeBridgeReport(s, event)) {
         return; // for the daemon, not for controllers
       }
       const tap = this.noticeTaps.get(s.id);
@@ -309,6 +384,12 @@ export class ChildManager {
       return;
     }
     this.hub.broadcast({ type: "event", session: s.id, event });
+    // the append itself: the transcript, not an inference, says an inject landed
+    const injected = injectedId(event);
+    if (injected !== undefined) {
+      this.bridges.ack(s.id, injected);
+      this.announceQueue(s);
+    }
     if (type === "message_end") {
       const usage = (event.message as { usage?: { totalTokens?: number; cost?: { total?: number } } } | undefined)?.usage;
       if (usage) {

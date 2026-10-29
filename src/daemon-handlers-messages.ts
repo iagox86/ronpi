@@ -5,6 +5,7 @@
 // takeover, so whoever is watching keeps their place.
 import type { Cmd, DaemonContext, Responder } from "./daemon-context.ts";
 import { findSession } from "./daemon-resolve.ts";
+import { deliverToSession } from "./daemon-handlers-bridge.ts";
 import type { DaemonSession } from "./daemon-session.ts";
 import { log } from "./log.ts";
 import { formatReceived } from "./received.ts";
@@ -44,7 +45,7 @@ export async function handleMessage(ctx: DaemonContext, cmd: Cmd<"message">, res
   }
   if (s.held) {
     // compacting: pi refuses prompts, so it waits with the others, in order
-    s.held.push({ text: body });
+    s.held.push({ text: body, injected: true });
     ctx.hub.announceQueue(s.id, s.held.map((h) => h.text));
     res(true, undefined, { delivered: true, disposition: "queued until compaction ends", to: target.name, toId: target.uuid });
     return;
@@ -57,11 +58,16 @@ export async function handleMessage(ctx: DaemonContext, cmd: Cmd<"message">, res
     ctx.hub.broadcastSessions();
   }
   const busy = s.streaming;
-  await (s.child as NonNullable<typeof s.child>).prompt(body, undefined, "steer");
-  log(`message from ${from.name} to session ${s.id} (${busy ? "queued" : "started"})`);
+  const how = await deliverToSession(ctx, s, body);
+  log(`message from ${from.name} to session ${s.id} (${how === "bridge" ? "session bridge" : "legacy steering"}; ${busy ? "queued" : "started"})`);
   res(true, undefined, {
     delivered: true,
-    disposition: busy ? "queued behind the work in progress" : "started a turn",
+    via: how,
+    disposition: busy
+      ? "queued behind the work in progress"
+      : how === "bridge"
+        ? "starting a turn"
+        : "started a turn",
     to: target.name,
     toId: target.uuid ?? s.sessionId,
   });

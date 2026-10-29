@@ -52,7 +52,7 @@ import {
   type LocalSession,
 } from "./session-list.ts";
 import { type ClientCommand, type DaemonMessage, type DistributiveOmit, encodeLine, LineSplitter, type SessionMeta } from "./shared.ts";
-import { buildStatusLine, fleetStats, settingsNotice } from "./status.ts";
+import { buildStatusLine, fleetStats, bridgeNotice, settingsNotice } from "./status.ts";
 import { ActivityLine } from "./activity.ts";
 import { Dimmed } from "./components.ts";
 import { ChoicePanel } from "./choice-panel.ts";
@@ -352,7 +352,7 @@ class Controller {
       case "exited": {
         const meta = this.sessions.get(msg.session);
         if (meta && this.keyFor(meta) === this.viewing) {
-          this.notify("child exited");
+          this.notify(msg.reason ? `child exited - ${msg.reason}` : "child exited");
         }
         return;
       }
@@ -1019,7 +1019,7 @@ class Controller {
       activity: key ? this.views.get(key)?.activity?.label : undefined,
       width,
       // a clipboard problem is worth a standing note while the switcher is up; it is not an error
-      notice: settingsNotice(this.sessions.values(), settingsMtime()) || (this.clipboard.problem ? `clipboard: ${this.clipboard.problem}` : ""),
+      notice: settingsNotice(this.sessions.values(), settingsMtime()) || bridgeNotice(this.sessions.values()) || (this.clipboard.problem ? `clipboard: ${this.clipboard.problem}` : ""),
     });
     this.statusLine.setText(truncateToWidth(status, width));
     this.tui.requestRender();

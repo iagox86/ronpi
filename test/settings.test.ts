@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { SessionMeta } from "../src/shared.ts";
 import { loadSettings, resolveChildConfig, settingsFile, settingsMtime } from "../src/settings.ts";
-import { settingsNotice } from "../src/status.ts";
+import { bridgeNotice, settingsNotice } from "../src/status.ts";
 
 const tmp = (content?: string) => {
   const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-set-")), "settings.json");
@@ -116,5 +116,20 @@ describe("switcher status line", () => {
 
   it("shows the key hints when there is no warning", () => {
     assert.match(plain(buildStatusLine(inputs)), /enter open/);
+  });
+});
+
+describe("bridgeNotice", () => {
+  it("is silent when every running session has the bridge, or has not been checked yet", () => {
+    assert.equal(bridgeNotice([meta({ sessionBridge: true }), meta({ id: 2 })]), "");
+  });
+
+  it("counts running sessions known to lack it, and says how to fix it", () => {
+    assert.match(bridgeNotice([meta({ sessionBridge: false })]), /1 running session has no session bridge.*node src\/install\.ts, then restart it/);
+    assert.match(bridgeNotice([meta({ sessionBridge: false }), meta({ id: 2, sessionBridge: false })]), /2 running sessions have no session bridge.*restart them/);
+  });
+
+  it("ignores sessions that are not running", () => {
+    assert.equal(bridgeNotice([meta({ active: false, sessionBridge: false })]), "");
   });
 });

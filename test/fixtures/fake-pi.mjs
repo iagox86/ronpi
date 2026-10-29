@@ -70,6 +70,26 @@ function persist(message) {
   lastEntryId = id;
 }
 
+// Session-bridge mode (FAKE_PI_BRIDGE=1): like the ronpi-session-bridge extension, the
+// command `/ronpi-inject {"id","text"}` appends a ronpi-inject custom message - at the
+// turn boundary while a run is in flight, or by starting a turn when idle - and reports
+// it as a ronpi-bridge status record. FAKE_PI_BRIDGE_FAIL=1 reports a failure instead.
+const bridgePending = [];
+const bridgeStatus = (r) => out({ type: "extension_ui_request", id: randomUUID(), method: "setStatus", statusKey: "ronpi-bridge", statusText: JSON.stringify({ v: 1, ...r }) });
+function persistCustom(p) {
+  const custom = { role: "custom", customType: "ronpi-inject", content: p.text, display: true, details: { id: p.id } };
+  messages.push(custom);
+  mkdirSync(dirname(sessionFile), { recursive: true });
+  if (!existsSync(sessionFile)) {
+    writeFileSync(sessionFile, `${JSON.stringify({ type: "session", id: sessionId })}\n`);
+  }
+  const id = randomUUID().slice(0, 8);
+  const entry = { type: "custom_message", id, parentId: lastEntryId, timestamp: new Date().toISOString(), customType: custom.customType, content: custom.content, display: true, details: custom.details };
+  appendFileSync(sessionFile, `${JSON.stringify(entry)}\n`);
+  lastEntryId = id;
+  return { custom, entry };
+}
+
 let streaming = false;
 let started = false;
 let aborted = false;
@@ -142,6 +162,17 @@ async function slowPrompt(first) {
       out({ type: "message_end", message: user });
     }
     await slowRun(texts);
+    if (bridgePending.length > 0 && !aborted) {
+      // a turn boundary: append everything the bridge holds, then answer it
+      const injected = bridgePending.splice(0);
+      for (const p of injected) {
+        out({ type: "entry_appended", entry: persistCustom(p).entry });
+      }
+      for (const p of injected) {
+        bridgeStatus({ kind: "injected", id: p.id });
+      }
+      await slowRun(injected.map((p) => p.text));
+    }
     texts = queue.splice(0, queue.length);
     if (texts.length > 0 && process.env.FAKE_PI_DROP_QUEUE_REMOVAL !== "1") {
       // with the flag set the empty-queue update is withheld, like a lost event
@@ -228,6 +259,7 @@ async function handle(cmd) {
         commands: [
           { name: "skill:demo", description: "A demo skill", source: "skill" },
           { name: "compact", description: "Compact the context", source: "extension" },
+          ...(process.env.FAKE_PI_BRIDGE === "1" ? [{ name: "ronpi-inject", description: "ronpi internal: deliver a message from another session", source: "extension" }] : []),
         ],
       });
     case "clear_queue": {
@@ -236,6 +268,29 @@ async function handle(cmd) {
       return ok(cmd.id, "clear_queue", { steering, followUp: [] });
     }
     case "prompt": {
+      if (cmd.message.startsWith("/ronpi-inject ")) {
+        ok(cmd.id, "prompt", { disposition: "handled" });
+        const p = JSON.parse(cmd.message.slice("/ronpi-inject ".length));
+        if (process.env.FAKE_PI_BRIDGE_FAIL === "1") {
+          return bridgeStatus({ kind: "failed", id: p.id, error: "inject refused" });
+        }
+        if (streaming) {
+          bridgePending.push(p);
+          return;
+        }
+        streaming = true;
+        out({ type: "agent_start" });
+        const { custom } = persistCustom(p);
+        out({ type: "message_start", message: custom });
+        out({ type: "message_end", message: custom });
+        bridgeStatus({ kind: "injected", id: p.id });
+        const assistant = { role: "assistant", content: [{ type: "text", text: `echo: ${p.text}` }], usage: { totalTokens: 10, cost: { total: 0.001 } }, stopReason: "stop" };
+        out({ type: "message_start", message: assistant });
+        persist(assistant);
+        out({ type: "message_end", message: assistant });
+        streaming = false;
+        return out({ type: "agent_settled" });
+      }
       if (compacting) {
         return out({ type: "response", id: cmd.id, command: "prompt", success: false, error: "Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry." });
       }
