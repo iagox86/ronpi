@@ -31,7 +31,7 @@ import { DIALOG_METHODS, HISTORY_FILE, KEY_LOG, SOCK } from "./config.ts";
 
 /** Reconnect tries (backoff 0.5s doubling to 5s) before the controller gives up and exits. */
 const RECONNECT_ATTEMPTS = 20;
-import { type DialogRequest, DialogPanel, isTextDialog } from "./dialogs.ts";
+import { type DialogRequest, DialogPanel, isTextDialog, withOrigin } from "./dialogs.ts";
 
 // How long a reason typed on the select waits for the chained input dialog.
 const REASON_FRESH_MS = 10_000;
@@ -524,7 +524,8 @@ class Controller {
           response: { type: "extension_ui_response", id: request.id, value: reason.text },
         });
       } else {
-        view.dialog = request;
+        // Name the session that is blocked, so the dialog says who is asking.
+        view.dialog = withOrigin(request, sessionId, this.sessions.get(sessionId)?.sessionName);
       }
     } else if (request && request.method === "notify") {
       this.notify(String(request.message ?? "notification"));

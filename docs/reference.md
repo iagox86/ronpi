@@ -143,7 +143,9 @@ request/response):
   read as fallback).
 - Permission dialogs: children running permissions.ts block on ask-listed
   commands; the dialog routes to the attached controller (y/n, digits for
-  select, esc cancels select). Unattached or unanswered dialogs keep the
+  select, esc cancels select). The dialog is labeled with the session that
+  raised it (e.g. "Session 3 'Worker'", id alone when unnamed) in its title
+  and the status-line hint. Unattached or unanswered dialogs keep the
   child blocked, and a fresh controller sees the pending dialog (badge `!`,
   re-sent on attach). No timeout anywhere.
 - Transcript replay renders tool calls/results from the session file,

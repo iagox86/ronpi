@@ -12,6 +12,16 @@ export interface DialogRequest {
   message?: string;
   options?: string[];
   placeholder?: string;
+  /** Which session raised the dialog, e.g. "Session 3 'Worker'"; set by the controller. */
+  origin?: string;
+}
+
+/**
+ * Label a dialog request with the session that raised it. The numeric id
+ * goes in because session names can repeat.
+ */
+export function withOrigin(d: DialogRequest, id: number, name?: string): DialogRequest {
+  return { ...d, origin: name ? `Session ${id} '${name}'` : `Session ${id}` };
 }
 
 /** Free-text dialogs: answered by typing in the input box. */
@@ -59,13 +69,14 @@ export function dialogAnswer(dialog: DialogRequest, data: string, index = 0): Re
 
 /** Status-line hint while a dialog is pending (unstyled). */
 export function dialogPrompt(d: DialogRequest): string {
+  const who = d.origin ? ` (${d.origin})` : "";
   if (d.method === "confirm") {
-    return "PERMISSION pending - y yes, n or esc no";
+    return `PERMISSION pending${who} - y yes, n or esc no`;
   }
   if (isTextDialog(d)) {
-    return "PERMISSION pending - type a reply, enter send, esc skip";
+    return `PERMISSION pending${who} - type a reply, enter send, esc skip`;
   }
-  return "PERMISSION pending - up/down choose, enter or 1-9 answer, tab reason, esc deny";
+  return `PERMISSION pending${who} - up/down choose, enter or 1-9 answer, tab reason, esc deny`;
 }
 
 /** Options that chain a free-text dialog afterwards ("No, provide reason"). */
@@ -75,7 +86,8 @@ export const takesReason = (option: string | undefined): boolean => /reason/i.te
 export function dialogLines(d: DialogRequest, index: number, width: number, reason: string | null = null): string[] {
   const out: string[] = [];
   const title = (d.title ?? d.method).split("\n");
-  out.push(attention(truncateToWidth(` ${title[0]}`, width)));
+  const head = d.origin ? `${d.origin}: ` : "";
+  out.push(attention(truncateToWidth(` ${head}${title[0]}`, width)));
   for (const line of title.slice(1)) {
     out.push(truncateToWidth(` ${line}`, width));
   }

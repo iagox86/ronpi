@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { DialogPanel, dialogAnswer, dialogLines, dialogPrompt } from "../src/dialogs.ts";
+import { DialogPanel, dialogAnswer, dialogLines, dialogPrompt, withOrigin } from "../src/dialogs.ts";
 
 const confirm = { id: "1", method: "confirm", title: "Run rm?", message: "rm -rf x" };
 const select = { id: "2", method: "select", title: "Pick", options: ["a", "b", "c"] };
@@ -87,5 +87,23 @@ describe("dialog rendering", () => {
     const panel = new DialogPanel();
     panel.sync(undefined);
     assert.deepEqual(panel.render(80), []);
+  });
+
+  it("names the session that raised the dialog, with its numeric id", () => {
+    const labeled = withOrigin(perm, 3, "Worker");
+    assert.equal(labeled.origin, "Session 3 'Worker'");
+    assert.match(dialogLines(labeled, 0, 100).join("\n"), /Session 3 'Worker': Permission Required/);
+    assert.match(dialogPrompt(labeled), /PERMISSION pending \(Session 3 'Worker'\)/);
+  });
+
+  it("falls back to the id alone for unnamed sessions", () => {
+    const labeled = withOrigin(perm, 7);
+    assert.equal(labeled.origin, "Session 7");
+    assert.match(dialogLines(labeled, 0, 100).join("\n"), /Session 7: Permission Required/);
+  });
+
+  it("leaves unlabelled dialogs unchanged", () => {
+    assert.doesNotMatch(dialogLines(perm, 0, 100).join("\n"), /Session/);
+    assert.equal(dialogPrompt(perm), "PERMISSION pending - up/down choose, enter or 1-9 answer, tab reason, esc deny");
   });
 });
