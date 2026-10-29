@@ -12,6 +12,7 @@ function fakeHost(responses: unknown[]) {
   const requests: Array<Record<string, unknown>> = [];
   const notices: string[] = [];
   const history: string[] = [];
+  const sequence: string[] = [];
   let editorText = "";
   const host = {
     viewing: KEY,
@@ -32,15 +33,20 @@ function fakeHost(responses: unknown[]) {
     notify: (message: string) => {
       notices.push(message);
     },
-    echoPrompt: () => {},
-    dropEcho: () => {},
+    echoPrompt: () => {
+      sequence.push("echo");
+    },
+    dropEcho: () => {
+      sequence.push("drop");
+    },
     metaForPath: () => undefined,
     request: (cmd: Record<string, unknown>) => {
+      sequence.push("request");
       requests.push(cmd);
       return Promise.resolve(responses.shift());
     },
   };
-  return { host: host as unknown as Host, requests, notices, history, editorText: () => editorText };
+  return { host: host as unknown as Host, requests, notices, history, sequence, editorText: () => editorText };
 }
 
 describe("prompt fork-confirm flow", () => {
@@ -55,6 +61,9 @@ describe("prompt fork-confirm flow", () => {
     assert.equal(sa.armedFork, KEY);
     assert.equal(fh.editorText(), "hello there");
     assert.match(fh.notices[0], /enter again to continue here/);
+    // the echo precedes the request and is retracted on the refusal -
+    // a late echo races pi's own user message and renders the text twice
+    assert.deepEqual(fh.sequence.slice(0, 3), ["echo", "request", "drop"]);
 
     // second enter: confirmed - and it must not fire a follow-up duplicate
     await sa.prompt("hello there");
@@ -62,5 +71,7 @@ describe("prompt fork-confirm flow", () => {
     assert.equal(fh.requests[1].confirmFork, true);
     assert.equal(sa.armedFork, null);
     assert.deepEqual(fh.history, ["hello there"]);
+    // echo again before the request; no retraction (the delivery happened)
+    assert.deepEqual(fh.sequence.slice(3), ["echo", "request"]);
   });
 });

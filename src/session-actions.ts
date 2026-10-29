@@ -469,6 +469,13 @@ export class SessionActions {
         // touching them. Files it has handled before are ronpi's own and
         // just continue, whatever their mtime (a resume makes them look
         // freshly written).
+        // Echo before sending: the confirmed request can take seconds (it
+        // returns after the child spawns), and if pi's own user message
+        // lands in that window there is no pending echo to consume, so the
+        // text would render twice. dropEcho retracts the echo on a refusal.
+        if (echo) {
+          this.h.echoPrompt(key, sent);
+        }
         const data = (await this.h.request({
           type: "prompt",
           sessionFile: key,
@@ -478,6 +485,7 @@ export class SessionActions {
           confirmFork: this.armedFork === key,
         })) as { confirmFork?: boolean; ageMs?: number } | undefined;
         if (data?.confirmFork) {
+          this.h.dropEcho(key, sent);
           this.armedFork = key;
           this.h.notify(
             `changed ${fmtAge(data.ageMs ?? 0)} ago - may be open in another pi; enter again to continue here (the conversation may fork), esc to cancel`,
@@ -486,9 +494,6 @@ export class SessionActions {
           return false;
         }
         this.armedFork = null;
-        if (echo) {
-          this.h.echoPrompt(key, sent);
-        }
         // the request above already delivered; after a confirmed fork it only
         // returns once the child is up, so clear the box late (below) rather
         // than sending again
