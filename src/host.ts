@@ -23,6 +23,8 @@ export interface Host {
   switcherLayout: VStack;
   /** Daemon-known sessions by daemon id. */
   sessions: Map<number, SessionMeta>;
+  /** The daemon's initial session list has arrived (false while connecting or reconnecting). */
+  sessionsLoaded: boolean;
   /** Sessions from the filesystem, by session file path. */
   local: Map<string, LocalSession>;
   views: Map<string, SessionView>;

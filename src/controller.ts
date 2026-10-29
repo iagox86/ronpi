@@ -151,7 +151,8 @@ class Controller {
   private commandsFor: string | null = null;
   /** Editor text from before ctrl-r, restored on cancel. */
   private searchDraft = "";
-  private sessionsLoaded = false;
+  /** The daemon's initial session list has arrived (false while connecting or reconnecting). */
+  sessionsLoaded = false;
   /** The daemon socket is down and a reconnect is under way (the editor stays usable). */
   private daemonDown = false;
   /** Views still to be replaced by the daemon's replay after a reconnect. */
