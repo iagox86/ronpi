@@ -64,7 +64,7 @@ import { ActivityLine } from "./activity.ts";
 import { Dimmed } from "./components.ts";
 import { ChoicePanel } from "./choice-panel.ts";
 import { Attachments, MAX_IMAGE_BYTES, fmtBytes } from "./attachments.ts";
-import { Clipboard, isTextType } from "./clipboard.ts";
+import { Clipboard, copyFailureMessage, isTextType } from "./clipboard.ts";
 import { ClipboardTerminal } from "./clipboard-terminal.ts";
 import { InfoPanel } from "./info-panel.ts";
 import { type McpServer, parseMcpStatus } from "./mcp.ts";
@@ -624,7 +624,8 @@ class Controller {
       this.tui.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
       return true;
     }
-    return (await this.clipboard.writeText(text, ["clipboard", "primary"])) ? true : "Copy failed (is wl-clipboard installed?)";
+    const ok = await this.clipboard.writeText(text, ["clipboard", "primary"]);
+    return ok ? true : copyFailureMessage(this.clipboard.backend);
   }
 
   /** Models the viewed live session can switch to; cached briefly since completion asks per keystroke. */

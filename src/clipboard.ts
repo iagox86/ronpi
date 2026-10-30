@@ -139,3 +139,15 @@ export class Clipboard {
     }
   }
 }
+
+/**
+ * The message for a failed copy to the system clipboard. The write can fail
+ * for several reasons (tool timeout, a bad exit, or the primary selection
+ * being refused after the clipboard write succeeded), so it does not blame
+ * the display specifically - it only points at the variable to check first.
+ */
+export function copyFailureMessage(backend: "wayland" | "x11" | undefined): string {
+  const tool = backend === "x11" ? "xclip" : "wl-clipboard";
+  const displayVar = backend === "x11" ? "DISPLAY" : "WAYLAND_DISPLAY";
+  return `Copy failed (${tool} error; check ${displayVar})`;
+}

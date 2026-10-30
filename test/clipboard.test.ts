@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { Clipboard, imageTypeOf, isTextType, onPath, type Runner } from "../src/clipboard.ts";
+import { Clipboard, copyFailureMessage, imageTypeOf, isTextType, onPath, type Runner } from "../src/clipboard.ts";
 
 const WAYLAND = { WAYLAND_DISPLAY: "wayland-0" } as NodeJS.ProcessEnv;
 
@@ -106,5 +106,13 @@ describe("clipboard types", () => {
     assert.equal(imageTypeOf(["image/jpeg", "image/png"]), "image/png");
     assert.equal(imageTypeOf(["text/html", "image/webp"]), "image/webp");
     assert.equal(imageTypeOf(["text/plain"]), undefined);
+  });
+});
+
+describe("copyFailureMessage", () => {
+  it("names the tool and points at the display variable to check first", () => {
+    assert.equal(copyFailureMessage("wayland"), "Copy failed (wl-clipboard error; check WAYLAND_DISPLAY)");
+    assert.equal(copyFailureMessage("x11"), "Copy failed (xclip error; check DISPLAY)");
+    assert.equal(copyFailureMessage(undefined), "Copy failed (wl-clipboard error; check WAYLAND_DISPLAY)");
   });
 });
