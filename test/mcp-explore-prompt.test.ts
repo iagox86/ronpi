@@ -15,11 +15,11 @@ describe("mcpExplorePrompt", () => {
     assert.match(p, /update it rather than overwriting/i);
   });
 
-  it("points at the pi agent dir's skills folder, a filesystem-safe dir name, the pi skill format, and the description frontmatter", () => {
+  it("points at the memory extension's skills folder first, a filesystem-safe dir name, the pi skill format, and the description frontmatter", () => {
     const p = mcpExplorePrompt("freecad");
-    assert.match(p, /skills\//i);
+    assert.match(p, /pi-hermes-memory\/skills/i);
+    assert.match(p, /skills\/ folder/i);
     assert.match(p, /SKILL\.md/);
-    assert.match(p, /pi agent directory/i);
     assert.match(p, /filesystem-safe/i);
     assert.match(p, /frontmatter/i);
     assert.match(p, /name/);
