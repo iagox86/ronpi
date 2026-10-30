@@ -71,7 +71,7 @@ export function arrangeTree(list: SwitcherSession[], parentOf: ReadonlyMap<strin
     }
     const below = out.slice(before);
     s.descendants = below.length;
-    s.descendantsWorking = below.filter((x) => x.state === "streaming").length;
+    s.descendantsWorking = below.filter((x) => x.state === "streaming" || x.state === "compacting").length;
     s.descendantsParked = below.filter((x) => x.parked).length;
   };
   for (const r of roots) {

@@ -91,6 +91,7 @@ describe("usage in the status bar", () => {
       provider: "zai",
       messageCount: 0,
       streaming: false,
+      compacting: false,
       dead: false,
       active: true,
       pendingDialog: false,

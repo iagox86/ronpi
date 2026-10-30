@@ -375,6 +375,32 @@ describe("daemon: lifecycle", () => {
     assert.deepEqual(r, { tokensBefore: 5000, tokensAfter: 800 });
   });
 
+  it("reports a session as compacting in the sessions broadcast while a compaction runs", async () => {
+    harness = await startDaemon({ FAKE_PI_COMPACT_MS: "600" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const compact = c.request({ type: "compact", session: sessionId });
+    await c.waitFor((m) => m.type === "sessions" && (m.sessions as Msg[]).some((s) => s.id === sessionId && s.compacting === true));
+    await compact;
+    await c.waitFor((m) => m.type === "sessions" && (m.sessions as Msg[]).some((s) => s.id === sessionId && s.compacting === false));
+  });
+
+  it("clears the compacting flag when the child is stopped mid-compaction, and keeps it clear on restart", async () => {
+    harness = await startDaemon({ FAKE_PI_COMPACT_MS: "600" });
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const compact = c.request({ type: "compact", session: sessionId }).catch(() => undefined);
+    await c.waitFor((m) => m.type === "sessions" && (m.sessions as Msg[]).some((s) => s.id === sessionId && s.compacting === true));
+    await c.request({ type: "deactivate", session: sessionId });
+    await c.waitFor((m) => m.type === "sessions" && (m.sessions as Msg[]).some((s) => s.id === sessionId && s.compacting === false));
+    // a respawn on the same session record must not resurrect the flag
+    await c.request({ type: "prompt", session: sessionId, message: "again" });
+    await c.waitFor((m) => m.type === "sessions" && (m.sessions as Msg[]).some((s) => s.id === sessionId && s.active === true && s.compacting === false));
+    await compact;
+  });
+
   it("holds messages sent during a compaction and delivers them in order afterwards", async () => {
     harness = await startDaemon({ FAKE_PI_COMPACT_MS: "600" });
     const c = await harness.connect();

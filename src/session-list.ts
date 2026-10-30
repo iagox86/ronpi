@@ -63,7 +63,8 @@ export function buildSessionList(inp: ListInputs): SwitcherSession[] {
     const first = info?.firstMessage ? firstMessageLabel(info.firstMessage, 40) : undefined;
     let state: SessionState = "inactive";
     if (meta?.active) {
-      state = meta.streaming ? "streaming" : meta.dead ? "dead" : "idle";
+      // compaction is the more specific thing happening, so it wins over streaming/idle
+      state = meta.compacting ? "compacting" : meta.streaming ? "streaming" : meta.dead ? "dead" : "idle";
     }
     const sessionId = meta?.sessionId ?? info?.id;
     const group = sessionId ? (inp.groups.assignments[sessionId] ?? undefined) : undefined;
@@ -265,6 +266,7 @@ export function groupTldr(list: SwitcherSession[]): string {
   const parts = [`${list.length} session${list.length === 1 ? "" : "s"}`];
   const states: Array<[SwitcherSession["state"], string]> = [
     ["streaming", "working"],
+    ["compacting", "compacting"],
     ["idle", "idle"],
     ["dead", "crashed"],
   ];

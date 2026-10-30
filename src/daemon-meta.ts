@@ -21,6 +21,7 @@ function metaFor(s: DaemonSession, socket: net.Socket, presence: Presence, usage
     tokens: Math.round(s.totalTokens),
     cost: Math.round(s.totalCost * 10000) / 10000,
     streaming: s.streaming,
+    compacting: s.compacting,
     dead: s.dead,
     active: s.child !== undefined,
     pendingDialog: s.pendingDialog,

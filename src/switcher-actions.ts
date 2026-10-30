@@ -163,7 +163,7 @@ export class SwitcherActions {
   }
 
   async enter(s: SwitcherSession): Promise<void> {
-    if (s.daemonId !== undefined && (s.state === "streaming" || s.state === "idle")) {
+    if (s.daemonId !== undefined && (s.state === "streaming" || s.state === "idle" || s.state === "compacting")) {
       try {
         await this.h.request({ type: "attach", session: s.daemonId, force: this.lastRefused === s.key });
         this.lastRefused = null;
@@ -212,7 +212,7 @@ export class SwitcherActions {
   /** Stop a live session's child; the file stays and it respawns on the next prompt. */
   async stop(s: SwitcherSession): Promise<void> {
     try {
-      if (s.state !== "streaming" && s.state !== "idle") {
+      if (s.state !== "streaming" && s.state !== "idle" && s.state !== "compacting") {
         this.h.switcher.hint = `${s.name} is not running`;
       } else if (s.daemonId === undefined) {
         throw new Error("no daemon session");
@@ -232,7 +232,7 @@ export class SwitcherActions {
     try {
       if (!confirmed && this.armedDelete !== s.key) {
         this.armedDelete = s.key;
-        const live = s.state === "streaming" || s.state === "idle";
+        const live = s.state === "streaming" || s.state === "idle" || s.state === "compacting";
         const kids = s.descendants ?? 0;
         const orphans = kids > 0 ? ` (its ${kids} ${kids === 1 ? "child stays" : "children stay"}, listed on their own)` : "";
         this.h.switcher.hint = `${s.name}: press ctrl-x again to ${live ? "stop it and " : ""}move to trash${orphans}`;

@@ -16,7 +16,7 @@ export interface FleetStats {
 export function fleetStats(metas: Iterable<SessionMeta>): FleetStats {
   const stats: FleetStats = { running: 0, waiting: 0, tokens: 0, cost: 0 };
   for (const m of metas) {
-    if (m.streaming) {
+    if (m.streaming || m.compacting) {
       stats.running++;
     }
     if (m.pendingDialog) {
@@ -32,7 +32,7 @@ export function stateLabel(meta: SessionMeta | undefined): "inactive" | "working
   if (!meta?.active) {
     return "inactive";
   }
-  if (meta.streaming) {
+  if (meta.streaming || meta.compacting) {
     return "working";
   }
   return meta.dead ? "crashed" : "idle";

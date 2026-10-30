@@ -105,6 +105,7 @@ export class Presence {
         sessionFile: file,
         messageCount: 0,
         streaming: false,
+        compacting: false,
         dead: false,
         pendingDialog: false,
         active: false,

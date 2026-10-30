@@ -13,6 +13,7 @@ function meta(over: Partial<SessionMeta> = {}): SessionMeta {
     model: "prov/model-x",
     messageCount: 0,
     streaming: false,
+    compacting: false,
     dead: false,
     active: true,
     pendingDialog: false,
@@ -28,10 +29,11 @@ describe("fleetStats", () => {
   it("counts running and waiting sessions and sums usage", () => {
     const result = fleetStats([
       meta({ streaming: true, tokens: 100, cost: 0.5 }),
+      meta({ compacting: true, tokens: 20, cost: 0.1 }),
       meta({ pendingDialog: true, tokens: 50, cost: 0.25 }),
       meta({}),
     ]);
-    assert.deepEqual(result, { running: 1, waiting: 1, tokens: 150, cost: 0.75 });
+    assert.deepEqual(result, { running: 2, waiting: 1, tokens: 170, cost: 0.85 });
   });
 });
 
@@ -40,6 +42,7 @@ describe("stateLabel", () => {
     assert.equal(stateLabel(undefined), "inactive");
     assert.equal(stateLabel(meta({ active: false })), "inactive");
     assert.equal(stateLabel(meta({ streaming: true })), "working");
+    assert.equal(stateLabel(meta({ compacting: true })), "working");
     assert.equal(stateLabel(meta({ dead: true })), "crashed");
     assert.equal(stateLabel(meta()), "idle");
   });

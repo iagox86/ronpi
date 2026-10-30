@@ -71,4 +71,14 @@ describe("switcher group folding", () => {
     assert.match(strip(line), /\u25be Empty/);
     assert.ok(line.includes("\x1b[1m"), "header should be bold");
   });
+
+  it("marks a compacting session with c and a compacting summary", () => {
+    const sw = new Switcher();
+    sw.sessions = [session("k", undefined, "compacting")];
+    sw.refresh();
+    const lines = sw.render(100).map(strip);
+    const row = lines.find((l) => l.startsWith("c  k")) ?? "";
+    assert.ok(row, `no row with the c marker: ${JSON.stringify(lines)}`);
+    assert.match(row, /compacting/);
+  });
 });

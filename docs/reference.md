@@ -94,7 +94,9 @@ quiet table of name | age | model | summary under dim group headers, the
 name column always fully expanded, selection shown by brightness only;
 header carries aggregate token/cost rollups tracked by the daemon; "age"
 is time since the session file was last written - pi appends on every
-request/response):
+request/response). Row marker: an animated spinner while streaming, `c`
+while compacting, `·` idle, `-` inactive, `x` crashed; a compacting row's
+summary column says `compacting`:
 - `up`/`down` select, `enter`/`right` open, `esc` cancels a typed command
   (no-op otherwise), `left` no-op
 - `left`/`right`/`enter` on a group header fold/unfold it (`left` folds, `right` unfolds, `enter` toggles; remembered across runs; dragging a session into a folded group unfolds it): a folded group shows `▸`, hides its sessions and gives a one-line summary (count, working/idle, newest age); a filter unfolds everything while it is on

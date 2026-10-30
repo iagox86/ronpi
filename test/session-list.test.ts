@@ -37,6 +37,7 @@ function meta(over: Partial<SessionMeta> = {}): SessionMeta {
     model: "prov/model-x",
     messageCount: 0,
     streaming: false,
+    compacting: false,
     dead: false,
     active: true,
     pendingDialog: false,
@@ -101,6 +102,13 @@ describe("buildSessionList", () => {
     const rows = build({ daemon: [meta({ sessionFile: "/a", dead: true })], files: [local("/a")] });
     assert.equal(rows[0].state, "dead");
     assert.match(rows[0].note ?? "", /crashed/);
+  });
+
+  it("shows a compacting session as compacting, winning over streaming", () => {
+    const rows = build({ daemon: [meta({ sessionFile: "/a", compacting: true })], files: [local("/a")] });
+    assert.equal(rows[0].state, "compacting");
+    const busy = build({ daemon: [meta({ sessionFile: "/a", compacting: true, streaming: true })], files: [local("/a")] });
+    assert.equal(busy[0].state, "compacting");
   });
 
   it("tags sessions live in another pi as muted with an adopt note", () => {
@@ -298,6 +306,10 @@ describe("groupTldr", () => {
   it("counts sessions, what they are doing, and the newest age", () => {
     const text = groupTldr([row("idle", "3h", 3 * 3600_000), row("streaming", "5m", 300_000), row("inactive", "9d", 9 * 86_400_000)]);
     assert.equal(text, "3 sessions - 1 working - 1 idle - newest 5m");
+  });
+
+  it("counts a compacting session as compacting", () => {
+    assert.equal(groupTldr([row("compacting", "5m", 300_000), row("idle", "3h", 3 * 3600_000)]), "2 sessions - 1 compacting - 1 idle - newest 5m");
   });
 
   it("speaks of a single session in the singular and leaves out empty parts", () => {

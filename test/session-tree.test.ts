@@ -24,10 +24,10 @@ describe("arrangeTree", () => {
   });
 
   it("counts working and parked descendants", () => {
-    const list = [row("a"), row("k1", { state: "streaming" }), row("k2", { parked: true })];
-    const [a] = arrangeTree(list, new Map([["k1", "a"], ["k2", "a"]]));
-    assert.deepEqual([a?.descendantsWorking, a?.descendantsParked], [1, 1]);
-    assert.equal(childNote(a as SwitcherSession), "2 children, 1 working, 1 parked");
+    const list = [row("a"), row("k1", { state: "streaming" }), row("k2", { parked: true }), row("k3", { state: "compacting" })];
+    const [a] = arrangeTree(list, new Map([["k1", "a"], ["k2", "a"], ["k3", "a"]]));
+    assert.deepEqual([a?.descendantsWorking, a?.descendantsParked], [2, 1]);
+    assert.equal(childNote(a as SwitcherSession), "3 children, 2 working, 1 parked");
     assert.equal(childNote(row("solo")), "");
   });
 
@@ -167,7 +167,7 @@ describe("switcher tree rows", () => {
 });
 
 describe("status line for a child", () => {
-  const meta = { id: 1, cwd: "/", model: "m/x", messageCount: 0, streaming: false, dead: false, active: true, pendingDialog: false, attachedToYou: true, attachedElsewhere: false, sessionName: "kid" };
+  const meta = { id: 1, cwd: "/", model: "m/x", messageCount: 0, streaming: false, compacting: false, dead: false, active: true, pendingDialog: false, attachedToYou: true, attachedElsewhere: false, sessionName: "kid" };
   it("says whose child it is and what its own children cost", () => {
     const line = strip(
       buildStatusLine({

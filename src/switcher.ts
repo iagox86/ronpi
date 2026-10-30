@@ -21,7 +21,7 @@ import {
   streaming as streamingStyle,
 } from "./theme.ts";
 
-export type SessionState = "streaming" | "idle" | "inactive" | "dead";
+export type SessionState = "streaming" | "idle" | "inactive" | "dead" | "compacting";
 
 export interface SwitcherSession {
   /** Canonical key: absolute session file path (or daemon:N before flush). */
@@ -62,6 +62,7 @@ const MARKERS: Record<SessionState, string> = {
   idle: "·",
   inactive: "-",
   dead: "x",
+  compacting: "c",
 };
 
 const DESC_MIN = 20;
@@ -400,6 +401,9 @@ export class Switcher extends Container implements Focusable {
     }
     if (s.state === "dead") {
       return "crashed - prompt respawns";
+    }
+    if (s.state === "compacting") {
+      return "compacting";
     }
     const desc = oneLine(s.description ?? "");
     if (desc) {

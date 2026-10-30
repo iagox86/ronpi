@@ -28,6 +28,8 @@ export interface DaemonSession {
   totalTokens: number;
   totalCost: number;
   streaming: boolean;
+  /** A compaction is running in the child (manual ones run outside any agent run). */
+  compacting: boolean;
   dead: boolean;
   pendingDialog: boolean;
   /** A spawn is in flight; prompts arriving meanwhile wait on `starting`. */
@@ -90,6 +92,7 @@ export class SessionRegistry {
       totalTokens: 0,
       totalCost: 0,
       streaming: false,
+      compacting: false,
       dead: false,
       pendingDialog: false,
       spawning: false,

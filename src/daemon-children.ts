@@ -172,6 +172,7 @@ export class ChildManager {
     s.attachedTo = undefined;
     s.pendingDialog = false;
     s.streaming = false;
+    s.compacting = false;
     this.dropBridge(s, "the session was stopped");
     try {
       await child.stop();
@@ -232,6 +233,7 @@ export class ChildManager {
     } catch (err) {
       s.dead = true;
       s.streaming = false;
+      s.compacting = false;
       this.dropBridge(s, "the session's process stopped answering");
       log(`session ${s.id} refreshMeta failed: ${err}`);
     }
@@ -432,6 +434,13 @@ export class ChildManager {
       this.clearDialog(s);
       void this.refreshMeta(s).then(() => this.hub.broadcastSessions());
       void this.announceDigest(s);
+    } else if (type === "compaction_start") {
+      s.compacting = true;
+      this.hub.broadcastSessions();
+    } else if (type === "compaction_end") {
+      // a manual compaction runs outside any agent run, so agent_settled would not clear it
+      s.compacting = false;
+      this.hub.broadcastSessions();
     }
   }
 

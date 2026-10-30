@@ -47,6 +47,8 @@ export interface SessionMeta {
   sessionFile?: string;
   messageCount: number;
   streaming: boolean;
+  /** A compaction is running (pi's compaction_start/end). */
+  compacting: boolean;
   /** Child crashed or exited unexpectedly; session can be respawned. */
   dead: boolean;
   /** False when the child has been deactivated (session is file-only). */

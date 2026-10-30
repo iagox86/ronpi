@@ -236,8 +236,10 @@ async function handle(cmd) {
       return ok(cmd.id, "set_thinking_level", null);
     case "compact":
       compacting = true;
+      out({ type: "compaction_start", reason: "manual" });
       await sleep(Number(process.env.FAKE_PI_COMPACT_MS ?? 0));
       compacting = false;
+      out({ type: "compaction_end", reason: "manual", result: { tokensBefore: 5000, estimatedTokensAfter: 800 }, aborted: false, willRetry: false });
       return ok(cmd.id, "compact", { summary: "s", firstKeptEntryId: "x", tokensBefore: 5000, estimatedTokensAfter: 800 });
     case "bash":
       // "sleep" commands stay running until abort_bash, like a long command would
