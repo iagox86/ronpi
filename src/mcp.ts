@@ -97,12 +97,17 @@ export function mcpConfigFile(): string {
 }
 
 /**
- * Whether a skill for `name` exists under the skills dir `dir`: a skill
- * directory whose name contains it, or whose SKILL.md mentions it as a whole
- * word (case-insensitive, so a short name like "git" does not hit "digit").
- * A missing dir means no skills at all.
+ * Whether a skill for `name` exists under any of the skills dirs `dirs` (the
+ * agent dir's own skills/ plus any extension-provided skills roots like
+ * <extension>/skills): a skill directory whose name contains it, or whose
+ * SKILL.md mentions it as a whole word (case-insensitive, so a short name
+ * like "git" does not hit "digit"). A missing dir means no skills at all.
  */
-export function skillExistsForServer(dir: string, name: string): boolean {
+export function skillExistsForServer(dirs: string[], name: string): boolean {
+  return dirs.some((dir) => skillExistsInDir(dir, name));
+}
+
+function skillExistsInDir(dir: string, name: string): boolean {
   let entries: string[];
   try {
     entries = fs.readdirSync(dir);

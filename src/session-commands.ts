@@ -1,5 +1,6 @@
 // The /commands ronpi handles itself inside a session (SESSION_COMMANDS);
 // anything else typed with a leading slash goes to pi.
+import { readdirSync, type Dirent } from "node:fs";
 import * as path from "node:path";
 import { type Invocation, listing, parseCommandLine } from "./cli.ts";
 import { SESSION_COMMANDS, type SessionCommandName } from "./commands.ts";
@@ -429,8 +430,8 @@ export class SessionCommands {
       this.h.notify("asking the MCP servers...");
       const r = (await this.h.request({ type: "mcp_status", session: meta.id }, 60_000)) as { text: string };
       const configs = readConfigs([mcpConfigFile(), path.join(meta.cwd, ".pi", "mcp.json")]);
-      const skillsDir = path.join(agentDir(), "skills");
-      const missingSkill = [...configs.keys()].filter((n) => !skillExistsForServer(skillsDir, n));
+      const skillsDirs = [path.join(agentDir(), "skills"), ...readdirSync(agentDir(), { withFileTypes: true }).filter((e: Dirent) => e.isDirectory()).map((e: Dirent) => path.join(agentDir(), e.name, "skills"))];
+      const missingSkill = [...configs.keys()].filter((n) => !skillExistsForServer(skillsDirs, n));
       const hints = missingSkill.map((n) => `${n}: no skill found - /mcp explore ${n} writes one`);
       this.h.infoPanel.show(["MCP servers", "", r.text, "", ...hints, "/mcp reconnect <server> - tab completes the names"].join("\n"));
       this.h.notify("");

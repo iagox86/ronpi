@@ -156,14 +156,14 @@ describe("skillExistsForServer", () => {
     fs.writeFileSync(path.join(dir, "vikunja-mcp", "SKILL.md"), "# a skill that mentions nothing else\n");
     fs.mkdirSync(path.join(dir, "other"), { recursive: true });
     fs.writeFileSync(path.join(dir, "other", "SKILL.md"), "# unrelated\n");
-    assert.equal(skillExistsForServer(dir, "mealie"), true);
-    assert.equal(skillExistsForServer(dir, "MEALIE"), true);
-    assert.equal(skillExistsForServer(dir, "vikunja"), true);
-    assert.equal(skillExistsForServer(dir, "nope"), false);
+    assert.equal(skillExistsForServer([dir], "mealie"), true);
+    assert.equal(skillExistsForServer([dir], "MEALIE"), true);
+    assert.equal(skillExistsForServer([dir], "vikunja"), true);
+    assert.equal(skillExistsForServer([dir], "nope"), false);
   });
 
   it("treats a missing skills dir as no skills at all", () => {
-    assert.equal(skillExistsForServer(path.join(dir, "gone"), "mealie"), false);
+    assert.equal(skillExistsForServer([path.join(dir, "gone")], "mealie"), false);
   });
 
   it("matches the server name as a whole word in SKILL.md, not inside longer words", () => {
@@ -171,9 +171,23 @@ describe("skillExistsForServer", () => {
     fs.writeFileSync(path.join(dir, "spelling", "SKILL.md"), "# about digits, not version control\n");
     fs.mkdirSync(path.join(dir, "tools"), { recursive: true });
     fs.writeFileSync(path.join(dir, "tools", "SKILL.md"), "# use git for version control\n");
-    assert.equal(skillExistsForServer(dir, "git"), true);
+    assert.equal(skillExistsForServer([dir], "git"), true);
     fs.rmSync(path.join(dir, "tools"), { recursive: true });
-    assert.equal(skillExistsForServer(dir, "git"), false);
+    assert.equal(skillExistsForServer([dir], "git"), false);
+  });
+
+  it("scans extension-provided skills roots too", () => {
+    // the real layout: ~/.pi/agent/skills plus ~/.pi/agent/<extension>/skills
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-agent-"));
+    fs.mkdirSync(path.join(root, "skills"), { recursive: true });
+    fs.mkdirSync(path.join(root, "pi-hermes-memory", "skills", "vikunja-mcp"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, "pi-hermes-memory", "skills", "vikunja-mcp", "SKILL.md"),
+      "# the vikunja job board workflow\n",
+    );
+    const dirs = [path.join(root, "skills"), path.join(root, "pi-hermes-memory", "skills")];
+    assert.equal(skillExistsForServer(dirs, "vikunja"), true);
+    assert.equal(skillExistsForServer([path.join(root, "skills")], "vikunja"), false);
   });
 });
 
