@@ -117,5 +117,6 @@ Layout:
 - `test/` - tests and the fake-pi fixture
 - `pi/` - what ronpi installs into pi: extensions (presence, usage, cache warning, session bridge) and the theme
 - `docs/` - `reference.md` (keys, semantics, env), `design.md` (architecture, findings, backlog),
+  `updates.md` (updating pi and its packages),
   `requirements.md`, `permission-dialogs.md`
 - `AGENTS.md` - instructions for coding agents working in this repo
