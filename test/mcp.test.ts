@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { addMcpServer, mcpCompletions, mcpEntry, parseMcpStatus, removeMcpServer } from "../src/mcp.ts";
+import { addMcpServer, mcpCompletions, mcpEntry, mcpServerConnected, parseMcpStatus, removeMcpServer, skillExistsForServer } from "../src/mcp.ts";
 
 const STATUS = [
   "mealie: connected, 12 tools (direct)",
@@ -35,7 +35,7 @@ describe("mcpCompletions", () => {
   const servers = parseMcpStatus(STATUS);
 
   it("offers the actions for the first word, narrowed by what is typed", () => {
-    assert.deepEqual(mcpCompletions("", servers).map((c) => c.value), ["list", "status ", "add ", "remove ", "reconnect ", "login ", "logout "]);
+    assert.deepEqual(mcpCompletions("", servers).map((c) => c.value), ["list", "status ", "explore ", "add ", "remove ", "reconnect ", "login ", "logout "]);
     assert.deepEqual(mcpCompletions("lo", servers).map((c) => c.value), ["login ", "logout "]);
   });
 
@@ -47,6 +47,10 @@ describe("mcpCompletions", () => {
 
   it("narrows servers by the start of their name, ignoring case", () => {
     assert.deepEqual(mcpCompletions("login SE", servers).map((c) => c.value), ["login sentry"]);
+  });
+
+  it("offers the servers after explore, like the other per-server actions", () => {
+    assert.deepEqual(mcpCompletions("explore fr", servers).map((c) => c.value), ["explore freecad"]);
   });
 
   it("has nothing to add after list or an unknown action", () => {
@@ -136,5 +140,48 @@ describe("removeMcpServer", () => {
   it("offers server names after remove, with their state", () => {
     const out = mcpCompletions("remove me", [{ name: "mealie", detail: "connected, 12 tools (direct)" }, { name: "other", detail: "x" }]);
     assert.deepEqual(out, [{ value: "remove mealie", description: "connected, 12 tools (direct)" }]);
+  });
+});
+
+describe("skillExistsForServer", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-skills-"));
+  after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("finds a matching SKILL.md and a matching directory name, ignoring case", () => {
+    fs.mkdirSync(path.join(dir, "recipe-import"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "recipe-import", "SKILL.md"), "# import recipes into the Mealie server\n");
+    fs.mkdirSync(path.join(dir, "vikunja-mcp"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "vikunja-mcp", "SKILL.md"), "# a skill that mentions nothing else\n");
+    fs.mkdirSync(path.join(dir, "other"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "other", "SKILL.md"), "# unrelated\n");
+    assert.equal(skillExistsForServer(dir, "mealie"), true);
+    assert.equal(skillExistsForServer(dir, "MEALIE"), true);
+    assert.equal(skillExistsForServer(dir, "vikunja"), true);
+    assert.equal(skillExistsForServer(dir, "nope"), false);
+  });
+
+  it("treats a missing skills dir as no skills at all", () => {
+    assert.equal(skillExistsForServer(path.join(dir, "gone"), "mealie"), false);
+  });
+
+  it("matches the server name as a whole word in SKILL.md, not inside longer words", () => {
+    fs.mkdirSync(path.join(dir, "spelling"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "spelling", "SKILL.md"), "# about digits, not version control\n");
+    fs.mkdirSync(path.join(dir, "tools"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "tools", "SKILL.md"), "# use git for version control\n");
+    assert.equal(skillExistsForServer(dir, "git"), true);
+    fs.rmSync(path.join(dir, "tools"), { recursive: true });
+    assert.equal(skillExistsForServer(dir, "git"), false);
+  });
+});
+
+describe("mcpServerConnected", () => {
+  it("is true only for a server listed as connected", () => {
+    assert.equal(mcpServerConnected(STATUS, "mealie"), true);
+    assert.equal(mcpServerConnected(STATUS, "freecad"), false);
+    assert.equal(mcpServerConnected(STATUS, "sentry"), false);
+    assert.equal(mcpServerConnected(STATUS, "nosuch"), false);
   });
 });

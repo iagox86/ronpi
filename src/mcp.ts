@@ -27,7 +27,7 @@ export function parseMcpStatus(text: string): McpServer[] {
   return servers;
 }
 
-export const MCP_ACTIONS = ["list", "status", "add", "remove", "reconnect", "login", "logout"] as const;
+export const MCP_ACTIONS = ["list", "status", "explore", "add", "remove", "reconnect", "login", "logout"] as const;
 export type McpAction = (typeof MCP_ACTIONS)[number];
 
 export interface Completion {
@@ -56,7 +56,9 @@ export function mcpCompletions(typed: string, servers: readonly McpServer[]): Co
             ? "add a server: add <name> <url | command args...>"
             : a === "remove"
               ? "remove a server from mcp.json (tab completes its name)"
-              : `${a} a server (tab completes its name)`,
+              : a === "explore"
+                ? "have the agent introspect a server and write a skill for it (tab completes its name)"
+                : `${a} a server (tab completes its name)`,
     }));
   }
   if (!(MCP_ACTIONS as readonly string[]).includes(action) || action === "list" || action === "add") {
@@ -92,6 +94,46 @@ export function mcpEntry(target: readonly string[]): McpEntry {
 export function mcpConfigFile(): string {
   const agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(process.env.HOME ?? "", ".pi", "agent");
   return path.join(agentDir, "mcp.json");
+}
+
+/**
+ * Whether a skill for `name` exists under the skills dir `dir`: a skill
+ * directory whose name contains it, or whose SKILL.md mentions it as a whole
+ * word (case-insensitive, so a short name like "git" does not hit "digit").
+ * A missing dir means no skills at all.
+ */
+export function skillExistsForServer(dir: string, name: string): boolean {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return false;
+  }
+  const needle = name.toLowerCase();
+  const inContent = new RegExp(`\\b${escapeRegExp(name)}\\b`, "i");
+  for (const entry of entries) {
+    if (entry.toLowerCase().includes(needle)) {
+      return true;
+    }
+    try {
+      if (inContent.test(fs.readFileSync(path.join(dir, entry, "SKILL.md"), "utf8"))) {
+        return true;
+      }
+    } catch {
+      // not a skill dir (no readable SKILL.md) - nothing to check
+    }
+  }
+  return false;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Whether `name` is listed as connected in /mcp's status text (as parsed by parseMcpStatus). */
+export function mcpServerConnected(text: string, name: string): boolean {
+  const server = parseMcpStatus(text).find((s) => s.name === name);
+  return server !== undefined && /^connected/i.test(server.detail);
 }
 
 /**

@@ -6,8 +6,10 @@ import { SESSION_COMMANDS, type SessionCommandName } from "./commands.ts";
 import { fmtTokens } from "./format.ts";
 import { detachFromParent, loadLineage } from "./lineage.ts";
 import { relationOf } from "./session-tree.ts";
+import { agentDir } from "./install.ts";
 import { probeEntry, parseStatusDetailed, readConfigs, statusReport } from "./mcp-doctor.ts";
-import { addMcpServer, MCP_ACTIONS, mcpConfigFile, mcpEntry, removeMcpServer } from "./mcp.ts";
+import { addMcpServer, MCP_ACTIONS, mcpConfigFile, mcpEntry, mcpServerConnected, removeMcpServer, skillExistsForServer } from "./mcp.ts";
+import { mcpExplorePrompt } from "./mcp-explore-prompt.ts";
 import { forkName, placeFork } from "./fork-placement.ts";
 import { loadGroups, saveGroups, withComment, withParked } from "./groups.ts";
 import type { Host } from "./host.ts";
@@ -410,6 +412,10 @@ export class SessionCommands {
       await this.mcpStatus(server);
       return;
     }
+    if (action === "explore") {
+      await this.mcpExplore(server);
+      return;
+    }
     if (action !== "list") {
       this.h.editor.setText("");
       await this.h.session.prompt(`/mcp ${action}${server ? ` ${server}` : ""}`);
@@ -422,7 +428,11 @@ export class SessionCommands {
     try {
       this.h.notify("asking the MCP servers...");
       const r = (await this.h.request({ type: "mcp_status", session: meta.id }, 60_000)) as { text: string };
-      this.h.infoPanel.show(`MCP servers\n\n${r.text}\n\n/mcp reconnect <server> - tab completes the names`);
+      const configs = readConfigs([mcpConfigFile(), path.join(meta.cwd, ".pi", "mcp.json")]);
+      const skillsDir = path.join(agentDir(), "skills");
+      const missingSkill = [...configs.keys()].filter((n) => !skillExistsForServer(skillsDir, n));
+      const hints = missingSkill.map((n) => `${n}: no skill found - /mcp explore ${n} writes one`);
+      this.h.infoPanel.show(["MCP servers", "", r.text, "", ...hints, "/mcp reconnect <server> - tab completes the names"].join("\n"));
       this.h.notify("");
       this.h.tui.requestRender();
     } catch (err) {
@@ -511,6 +521,35 @@ export class SessionCommands {
     } catch (err) {
       this.fail("mcp", err);
     }
+  }
+
+  /** /mcp explore <server>: the agent introspects the server and writes a skill for it. Needs a live child (liveMeta); refuses with a notice if the server is not a configured mcp.json server or not connected, then an ordinary prompt. */
+  private async mcpExplore(server: string | undefined): Promise<void> {
+    if (!server) {
+      this.h.notify("/mcp explore <server> (tab completes the names)");
+      return;
+    }
+    const meta = await this.liveMeta();
+    if (!meta) {
+      return;
+    }
+    const configs = readConfigs([mcpConfigFile(), path.join(meta.cwd, ".pi", "mcp.json")]);
+    if (!configs.has(server)) {
+      this.h.notify(`"${server}" is not a configured mcp.json server - /mcp status shows what is available`);
+      return;
+    }
+    try {
+      const r = (await this.h.request({ type: "mcp_status", session: meta.id }, 60_000)) as { text: string };
+      if (!mcpServerConnected(r.text, server)) {
+        this.h.notify(`"${server}" is not connected - /mcp reconnect ${server} (or /mcp status for the details)`);
+        return;
+      }
+    } catch (err) {
+      this.fail("mcp", err);
+      return;
+    }
+    this.h.editor.setText("");
+    await this.h.session.prompt(mcpExplorePrompt(server));
   }
 
   /** /mcp remove: take the server out of pi's mcp.json and reload this session so it disconnects. */
