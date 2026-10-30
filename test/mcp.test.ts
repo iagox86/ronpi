@@ -3,7 +3,7 @@ import { after, describe, it } from "node:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { addMcpServer, mcpCompletions, mcpEntry, mcpServerConnected, parseMcpStatus, removeMcpServer, skillExistsForServer } from "../src/mcp.ts";
+import { addMcpServer, mcpCompletions, mcpEntry, mcpListLines, mcpServerConnected, parseMcpStatus, removeMcpServer, skillForServer } from "../src/mcp.ts";
 
 const STATUS = [
   "mealie: connected, 12 tools (direct)",
@@ -143,27 +143,27 @@ describe("removeMcpServer", () => {
   });
 });
 
-describe("skillExistsForServer", () => {
+describe("skillForServer", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-skills-"));
   after(() => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("finds a matching SKILL.md and a matching directory name, ignoring case", () => {
+  it("names the matching skill directory, by SKILL.md or directory name, ignoring case", () => {
     fs.mkdirSync(path.join(dir, "recipe-import"), { recursive: true });
     fs.writeFileSync(path.join(dir, "recipe-import", "SKILL.md"), "# import recipes into the Mealie server\n");
     fs.mkdirSync(path.join(dir, "vikunja-mcp"), { recursive: true });
     fs.writeFileSync(path.join(dir, "vikunja-mcp", "SKILL.md"), "# a skill that mentions nothing else\n");
     fs.mkdirSync(path.join(dir, "other"), { recursive: true });
     fs.writeFileSync(path.join(dir, "other", "SKILL.md"), "# unrelated\n");
-    assert.equal(skillExistsForServer([dir], "mealie"), true);
-    assert.equal(skillExistsForServer([dir], "MEALIE"), true);
-    assert.equal(skillExistsForServer([dir], "vikunja"), true);
-    assert.equal(skillExistsForServer([dir], "nope"), false);
+    assert.equal(skillForServer([dir], "mealie"), "recipe-import");
+    assert.equal(skillForServer([dir], "MEALIE"), "recipe-import");
+    assert.equal(skillForServer([dir], "vikunja"), "vikunja-mcp");
+    assert.equal(skillForServer([dir], "nope"), undefined);
   });
 
   it("treats a missing skills dir as no skills at all", () => {
-    assert.equal(skillExistsForServer([path.join(dir, "gone")], "mealie"), false);
+    assert.equal(skillForServer([path.join(dir, "gone")], "mealie"), undefined);
   });
 
   it("matches the server name as a whole word in SKILL.md, not inside longer words", () => {
@@ -171,23 +171,56 @@ describe("skillExistsForServer", () => {
     fs.writeFileSync(path.join(dir, "spelling", "SKILL.md"), "# about digits, not version control\n");
     fs.mkdirSync(path.join(dir, "tools"), { recursive: true });
     fs.writeFileSync(path.join(dir, "tools", "SKILL.md"), "# use git for version control\n");
-    assert.equal(skillExistsForServer([dir], "git"), true);
+    assert.equal(skillForServer([dir], "git"), "tools");
     fs.rmSync(path.join(dir, "tools"), { recursive: true });
-    assert.equal(skillExistsForServer([dir], "git"), false);
+    assert.equal(skillForServer([dir], "git"), undefined);
   });
 
-  it("scans extension-provided skills roots too", () => {
+  it("scans extension-provided skills roots too, earlier dirs first", () => {
     // the real layout: ~/.pi/agent/skills plus ~/.pi/agent/<extension>/skills
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-agent-"));
-    fs.mkdirSync(path.join(root, "skills"), { recursive: true });
+    fs.mkdirSync(path.join(root, "skills", "other-vikunja-skill"), { recursive: true });
+    fs.writeFileSync(path.join(root, "skills", "other-vikunja-skill", "SKILL.md"), "# unrelated\n");
     fs.mkdirSync(path.join(root, "pi-hermes-memory", "skills", "vikunja-mcp"), { recursive: true });
     fs.writeFileSync(
       path.join(root, "pi-hermes-memory", "skills", "vikunja-mcp", "SKILL.md"),
       "# the vikunja job board workflow\n",
     );
     const dirs = [path.join(root, "skills"), path.join(root, "pi-hermes-memory", "skills")];
-    assert.equal(skillExistsForServer(dirs, "vikunja"), true);
-    assert.equal(skillExistsForServer([path.join(root, "skills")], "vikunja"), false);
+    assert.equal(skillForServer(dirs, "vikunja"), "other-vikunja-skill");
+    assert.equal(skillForServer([path.join(root, "pi-hermes-memory", "skills")], "vikunja"), "vikunja-mcp");
+  });
+});
+
+describe("mcpListLines", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-list-skills-"));
+  fs.mkdirSync(path.join(dir, "recipe-import"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "recipe-import", "SKILL.md"), "# import recipes into the Mealie server\n");
+  after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("appends the skill to every server line and passes non-server lines through", () => {
+    assert.deepEqual(mcpListLines(STATUS, [dir]), [
+      "mealie: connected, 12 tools (direct) - skill: recipe-import",
+      "freecad: failed (direct) - no matching skill (/mcp explore freecad)",
+      "    connect ECONNREFUSED 127.0.0.1:39280",
+      "sentry: needs sign-in, run /mcp login sentry (direct) - no matching skill (/mcp explore sentry)",
+      "old: disabled (direct) - no matching skill (/mcp explore old)",
+      "config error: bad.json is not valid JSON",
+      "overridden: docs (project entry wins)",
+    ]);
+  });
+
+  it("keeps the whole state text and points at /mcp explore when no skills exist", () => {
+    assert.deepEqual(mcpListLines("mealie: connected, 12 tools (direct)", []), [
+      "mealie: connected, 12 tools (direct) - no matching skill (/mcp explore mealie)",
+    ]);
+  });
+
+  it("passes the none-configured message through untouched", () => {
+    const none = "No MCP servers configured. Add them to /x/mcp.json or .pi/mcp.json.";
+    assert.deepEqual(mcpListLines(none, [dir]), [none]);
   });
 });
 
