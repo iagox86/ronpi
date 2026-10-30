@@ -10,6 +10,7 @@ export function mcpExplorePrompt(server: string): string {
     "Then write the skill: if you have a skill-management tool of your own, use it and let it place the skill; otherwise write it under the memory extension's skills directory when that exists (~/.pi/agent/pi-hermes-memory/skills, or $PI_CODING_AGENT_DIR/pi-hermes-memory/skills), falling back to the pi agent directory's own skills/ folder (~/.pi/agent/skills, or $PI_CODING_AGENT_DIR/skills). Either way use a subdirectory named after the server or its topic with a filesystem-safe name derived from the server name (lowercase, a-z, 0-9, - and _ only) so it is a valid path: <skills dir>/<server or topic name>/SKILL.md.",
     "Follow pi's skill format: a frontmatter with name and description; the description is what surfaces the skill to future agents, so make it say what the server is for and the phrases an agent would actually use.",
     "Cover: what the server is for, every tool with its parameters, gotchas (quirks, required sign-in, anything easy to get wrong), and one example call per important tool.",
+    "Verify what you wrote by reading it back with your read tool - do not shell out to grep/head/wc for checks like existence or ASCII-cleanliness; shell commands may trigger permission prompts for no good reason.",
     "Be factual: write only what the introspection shows, not what you guess.",
   ].join(" ");
 }
