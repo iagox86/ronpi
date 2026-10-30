@@ -192,6 +192,7 @@ class Controller {
         cwd: (this.viewing && (this.metaForPath(this.viewing)?.cwd ?? this.local.get(this.viewing)?.cwd)) || process.cwd(),
         sources: {
           models: () => this.modelNames(),
+          thinkingLevels: () => this.thinkingLevels(),
           groups: () => this.switching.groups.groups,
           mcpServers: () => this.mcpServers(),
           agents: () => loadAgents(process.cwd()).agents,
@@ -630,6 +631,27 @@ class Controller {
 
   /** Models the viewed live session can switch to; cached briefly since completion asks per keystroke. */
   private modelCache?: { session: number; at: number; names: string[] };
+
+  /** Thinking levels the viewed session's model supports; cached briefly since completion asks per keystroke. Keyed by model too: /model changes the supported levels. */
+  private thinkCache?: { session: number; model: string; at: number; levels: string[] };
+
+  async thinkingLevels(): Promise<string[]> {
+    const meta = this.switching.isOpen || !this.viewing ? undefined : this.metaForPath(this.viewing);
+    if (!meta?.active) {
+      return [];
+    }
+    const cached = this.thinkCache;
+    if (cached && cached.session === meta.id && cached.model === meta.model && Date.now() - cached.at < 60_000) {
+      return cached.levels;
+    }
+    try {
+      const r = (await this.request({ type: "think", session: meta.id })) as { levels: string[] };
+      this.thinkCache = { session: meta.id, model: meta.model, at: Date.now(), levels: r.levels };
+      return r.levels;
+    } catch {
+      return [];
+    }
+  }
 
   async modelNames(): Promise<string[]> {
     const meta = this.switching.isOpen || !this.viewing ? undefined : this.metaForPath(this.viewing);

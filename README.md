@@ -76,7 +76,7 @@ Type `/` for commands; tab completes them and their arguments, `/help` lists the
 
 - Switcher: `/new [-a agent]`, `/agents`, `/detach`, `/stop`, `/delete`, `/rename`, `/group`, `/ungroup`, `/park`,
   `/filter`, `/comment`, `/summarize`, `/restore`, `/adopt`, `/feedback`, `/kill-daemon`, `/help`, `/exit`
-- In a session: `/help`, `/btw`, `/comment`, `/model`, `/compact`, `/clear`, `/fork`, `/park`, `/rename`, `/reload`,
+- In a session: `/help`, `/btw`, `/comment`, `/model`, `/think`, `/compact`, `/clear`, `/fork`, `/park`, `/rename`, `/reload`,
   `/mcp` (`list`, `status`, `explore`, `add`, `remove`, `reconnect`, `login`, `logout`), `/init`, `/why`, `/abort`,
   `/feedback`, `/parent` (jump to the agent that started this subagent), `/detach` (cut that link), `/quit` (back to the switcher), `/exit`
 

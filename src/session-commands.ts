@@ -79,6 +79,7 @@ export class SessionCommands {
       rename,
       reload: () => this.reload(),
       model: (c) => this.model(c.args.join(" "), c.opts.list === true),
+      think: (c) => this.think(c.args.join(" ")),
       fork: (c) => this.fork(c.opts.name as string | undefined, c.opts.switch !== false, c.args.join(" ")),
       feedback: (c) => runFeedback(this.h, c, this.h.viewing ?? undefined),
       why: (c) => this.why(c.opts.model as string | undefined),
@@ -265,6 +266,25 @@ export class SessionCommands {
       this.h.notify(`model: ${r.model}`);
     } catch (err) {
       this.fail("model", err);
+    }
+  }
+
+  /** Show or set the thinking level. Needs a running pi child (it asks and sets over RPC), so it starts a sleeping session. */
+  private async think(level: string): Promise<void> {
+    const meta = await this.liveMeta();
+    if (!meta) {
+      return;
+    }
+    try {
+      if (!level.trim()) {
+        const r = (await this.h.request({ type: "think", session: meta.id })) as { current: string; levels: string[] };
+        this.h.notify(`thinking level: ${r.current} (available: ${r.levels.join(", ")})`);
+        return;
+      }
+      const r = (await this.h.request({ type: "think", session: meta.id, level: level.trim() })) as { level: string };
+      this.h.notify(`thinking level: ${r.level}`);
+    } catch (err) {
+      this.fail("think", err);
     }
   }
 

@@ -234,6 +234,8 @@ async function handle(cmd) {
     case "set_thinking_level":
       thinkingLevel = cmd.level;
       return ok(cmd.id, "set_thinking_level", null);
+    case "get_available_thinking_levels":
+      return ok(cmd.id, "get_available_thinking_levels", { levels: ["off", "minimal", "low", "medium", "high"] });
     case "compact":
       compacting = true;
       out({ type: "compaction_start", reason: "manual" });
