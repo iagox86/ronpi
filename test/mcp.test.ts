@@ -149,15 +149,15 @@ describe("skillForServer", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("names the matching skill directory, by SKILL.md or directory name, ignoring case", () => {
-    fs.mkdirSync(path.join(dir, "recipe-import"), { recursive: true });
-    fs.writeFileSync(path.join(dir, "recipe-import", "SKILL.md"), "# import recipes into the Mealie server\n");
+  it("names the matching skill directory by name, ignoring case", () => {
+    fs.mkdirSync(path.join(dir, "mealie-recipe-import"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "mealie-recipe-import", "SKILL.md"), "# import recipes into the Mealie server\n");
     fs.mkdirSync(path.join(dir, "vikunja-mcp"), { recursive: true });
     fs.writeFileSync(path.join(dir, "vikunja-mcp", "SKILL.md"), "# a skill that mentions nothing else\n");
     fs.mkdirSync(path.join(dir, "other"), { recursive: true });
     fs.writeFileSync(path.join(dir, "other", "SKILL.md"), "# unrelated\n");
-    assert.equal(skillForServer([dir], "mealie"), "recipe-import");
-    assert.equal(skillForServer([dir], "MEALIE"), "recipe-import");
+    assert.equal(skillForServer([dir], "mealie"), "mealie-recipe-import");
+    assert.equal(skillForServer([dir], "MEALIE"), "mealie-recipe-import");
     assert.equal(skillForServer([dir], "vikunja"), "vikunja-mcp");
     assert.equal(skillForServer([dir], "nope"), undefined);
   });
@@ -166,14 +166,15 @@ describe("skillForServer", () => {
     assert.equal(skillForServer([path.join(dir, "gone")], "mealie"), undefined);
   });
 
-  it("matches the server name as a whole word in SKILL.md, not inside longer words", () => {
-    fs.mkdirSync(path.join(dir, "spelling"), { recursive: true });
-    fs.writeFileSync(path.join(dir, "spelling", "SKILL.md"), "# about digits, not version control\n");
-    fs.mkdirSync(path.join(dir, "tools"), { recursive: true });
-    fs.writeFileSync(path.join(dir, "tools", "SKILL.md"), "# use git for version control\n");
-    assert.equal(skillForServer([dir], "git"), "tools");
-    fs.rmSync(path.join(dir, "tools"), { recursive: true });
-    assert.equal(skillForServer([dir], "git"), undefined);
+  it("does not match on SKILL.md body text when the directory name does not match", () => {
+    const regDir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-skill-reg-"));
+    fs.mkdirSync(path.join(regDir, "freecad-mcp"), { recursive: true });
+    fs.writeFileSync(path.join(regDir, "freecad-mcp", "SKILL.md"), "# Drive FreeCAD and interact with the github MCP server for code review.\n");
+    // "github" appears in the body but not in the directory name, so it must not match.
+    assert.equal(skillForServer([regDir], "github"), undefined);
+    // Positive name-based case: "freecad" matches the directory name.
+    assert.equal(skillForServer([regDir], "freecad"), "freecad-mcp");
+    fs.rmSync(regDir, { recursive: true, force: true });
   });
 
   it("scans extension-provided skills roots too, earlier dirs first", () => {
@@ -194,15 +195,15 @@ describe("skillForServer", () => {
 
 describe("mcpListLines", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-list-skills-"));
-  fs.mkdirSync(path.join(dir, "recipe-import"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "recipe-import", "SKILL.md"), "# import recipes into the Mealie server\n");
+  fs.mkdirSync(path.join(dir, "mealie-recipe-import"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "mealie-recipe-import", "SKILL.md"), "# import recipes into the Mealie server\n");
   after(() => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it("appends the skill to every server line and passes non-server lines through", () => {
     assert.deepEqual(mcpListLines(STATUS, [dir]), [
-      "mealie: connected, 12 tools (direct) - skill: recipe-import",
+      "mealie: connected, 12 tools (direct) - skill: mealie-recipe-import",
       "freecad: failed (direct) - no matching skill (/mcp explore freecad)",
       "    connect ECONNREFUSED 127.0.0.1:39280",
       "sentry: needs sign-in, run /mcp login sentry (direct) - no matching skill (/mcp explore sentry)",

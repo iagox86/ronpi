@@ -102,9 +102,8 @@ export function mcpConfigFile(): string {
 /**
  * The name of a skill for `name` under any of the skills dirs `dirs` (the
  * agent dir's own skills/ plus any extension-provided skills roots like
- * <extension>/skills): a skill directory whose name contains it, or whose
- * SKILL.md mentions it as a whole word (case-insensitive, so a short name
- * like "git" does not hit "digit"). A missing dir means no skills at all.
+ * <extension>/skills): a skill directory whose name contains it
+ * (case-insensitive). A missing dir means no skills at all.
  * Earlier dirs win, and within a dir the first matching entry.
  */
 export function skillForServer(dirs: string[], name: string): string | undefined {
@@ -125,17 +124,9 @@ function skillInDir(dir: string, name: string): string | undefined {
     return undefined;
   }
   const needle = name.toLowerCase();
-  const inContent = new RegExp(`\\b${escapeRegExp(name)}\\b`, "i");
   for (const entry of entries) {
     if (entry.toLowerCase().includes(needle)) {
       return entry;
-    }
-    try {
-      if (inContent.test(fs.readFileSync(path.join(dir, entry, "SKILL.md"), "utf8"))) {
-        return entry;
-      }
-    } catch {
-      // not a skill dir (no readable SKILL.md) - nothing to check
     }
   }
   return undefined;
@@ -157,10 +148,6 @@ export function mcpListLines(text: string, skillsDirs: string[]): string[] {
     const skill = skillForServer(skillsDirs, m[1] as string);
     return `${line} - ${skill ? `skill: ${skill}` : `no matching skill (/mcp explore ${m[1]})`}`;
   });
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Whether `name` is listed as connected in /mcp's status text (as parsed by parseMcpStatus). */
