@@ -46,6 +46,7 @@ describe("command autocomplete", () => {
 describe("argument completion", () => {
   const sources = {
     models: async () => ["zai/glm-5.3-flash", "zai/glm-5.3", "anthropic/claude-opus"],
+    thinkingLevels: async () => ["off", "minimal", "low", "medium", "high"],
     groups: () => ["Work", "Home"],
     agents: () => [{ name: "explore", description: "look around" }],
     mcpServers: async () => [
@@ -65,6 +66,17 @@ describe("argument completion", () => {
 
   it("offers group names after /group in the switcher", async () => {
     assert.deepEqual(await suggest({ ...base, switcher: true, sources }, "/group ho"), ["Home"]);
+  });
+
+  it("offers the model's thinking levels after /think, narrowed by the prefix typed", async () => {
+    assert.deepEqual(await suggest({ ...base, sources }, "/think "), [
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+    ]);
+    assert.deepEqual(await suggest({ ...base, sources }, "/think mi"), ["minimal"]);
   });
 
   it("offers the MCP actions, then the servers with their states", async () => {

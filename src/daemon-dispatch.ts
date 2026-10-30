@@ -28,6 +28,7 @@ import {
   handleReload,
   handleRestoreClear,
   handleRewind,
+  handleThink,
   handleUiResponse,
 } from "./daemon-handlers-ops.ts";
 import { handleMessage } from "./daemon-handlers-messages.ts";
@@ -76,6 +77,8 @@ export async function dispatch(ctx: DaemonContext, cmd: ClientCommand, socket: n
       return handleMcpStatus(ctx, cmd, res);
     case "model":
       return handleModel(ctx, cmd, res);
+    case "think":
+      return handleThink(ctx, cmd, res);
     case "compact":
       return handleCompact(ctx, cmd, socket, res);
     case "reload":

@@ -9,6 +9,8 @@ import type { McpServer } from "./mcp.ts";
 export interface CompletionSources {
   /** Names (provider/id) of the models the viewed session can use. */
   models(): Promise<string[]>;
+  /** Thinking levels the viewed session's model supports. */
+  thinkingLevels(): Promise<string[]>;
   /** Existing group names. */
   groups(): string[];
   /** MCP servers of the viewed session, with their states. */

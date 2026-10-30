@@ -153,6 +153,8 @@ type ClientCommandBody =
   | { type: "adopt"; id?: string; path: string; cwd: string; fork?: boolean; name?: string; parentName?: string }
   /** Without `query`: the current model and the available ones. With it: switch to the match. */
   | { type: "model"; id?: string; session: number; query?: string }
+  /** Without `level`: the current thinking level and the ones the model supports. With it: switch to the match. */
+  | { type: "think"; id?: string; session: number; level?: string }
   /** Compact the session's context (refused mid-run); can take minutes. */
   | { type: "compact"; id?: string; session: number; instructions?: string }
   /** Wipe the conversation but keep the session (file, name, model); old contents go to the trash dir. Refused mid-run. */

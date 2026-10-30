@@ -11,6 +11,7 @@ import { type DaemonSession, type HeldPrompt, requireIdle } from "./daemon-sessi
 import { formatLocalCommand, type LocalResult, runLocal } from "./local-command.ts";
 import { log } from "./log.ts";
 import { matchModel, modelName } from "./model-match.ts";
+import { matchThinkingLevel } from "./think-match.ts";
 import { clearFile, latestClearBackup, restoreClear, rewindFile } from "./rewind.ts";
 import { encodeLine } from "./shared.ts";
 
@@ -103,6 +104,31 @@ export async function handleModel(
   await ctx.children.refreshMeta(s);
   ctx.hub.broadcastSessions();
   res(true, undefined, { model: modelName(match.model) });
+}
+
+export async function handleThink(
+  ctx: DaemonContext,
+  cmd: Cmd<"think">,
+  res: Responder,
+): Promise<void> {
+  const s = ctx.registry.live(cmd.session);
+  const levels = await s.child.getAvailableThinkingLevels();
+  const current = (await s.child.getState()).thinkingLevel;
+  if (!cmd.level?.trim()) {
+    res(true, undefined, { current, levels });
+    return;
+  }
+  const match = matchThinkingLevel(levels, cmd.level);
+  if (match.kind === "none") {
+    throw new Error(`this model has no thinking level "${cmd.level.trim()}" - it supports: ${levels.join(", ")}`);
+  }
+  if (match.kind === "many") {
+    throw new Error(`"${cmd.level.trim()}" matches ${match.matches.length} levels: ${match.matches.join(", ")}`);
+  }
+  await s.child.setThinkingLevel(match.level);
+  await ctx.children.refreshMeta(s);
+  ctx.hub.broadcastSessions();
+  res(true, undefined, { level: match.level });
 }
 
 /** Send what was typed during a compaction, now that pi accepts prompts again. */

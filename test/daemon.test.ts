@@ -366,6 +366,22 @@ describe("daemon: lifecycle", () => {
     assert.equal(c.sessions().find((s) => s.id === sessionId)?.model, "other/fake-big");
   });
 
+  it("shows and sets the thinking level, and refuses an ambiguous or unsupported one (/think)", async () => {
+    harness = await startDaemon();
+    const c = await harness.connect();
+    const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
+    await c.waitFor((m) => m.type === "history");
+    const info = await c.request({ type: "think", session: sessionId });
+    assert.equal(info.current, "medium");
+    assert.deepEqual(info.levels, ["off", "minimal", "low", "medium", "high"]);
+    await assert.rejects(c.request({ type: "think", session: sessionId, level: "m" }), /matches 2 levels: minimal, medium/);
+    await assert.rejects(c.request({ type: "think", session: sessionId, level: "max" }), /supports: off, minimal/);
+    const done = await c.request({ type: "think", session: sessionId, level: "hi" });
+    assert.equal(done.level, "high");
+    await c.waitFor(() => c.sessions().find((s) => s.id === sessionId)?.thinkingLevel === "high");
+    assert.equal((await c.request({ type: "think", session: sessionId })).current, "high");
+  });
+
   it("compacts an idle session and reports the sizes", async () => {
     harness = await startDaemon();
     const c = await harness.connect();
