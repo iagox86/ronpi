@@ -9,7 +9,7 @@ import { detachFromParent, loadLineage } from "./lineage.ts";
 import { relationOf } from "./session-tree.ts";
 import { agentDir } from "./install.ts";
 import { probeEntry, parseStatusDetailed, readConfigs, statusReport } from "./mcp-doctor.ts";
-import { addMcpServer, MCP_ACTIONS, mcpConfigFile, mcpEntry, mcpServerConnected, removeMcpServer, skillExistsForServer } from "./mcp.ts";
+import { addMcpServer, MCP_ACTIONS, mcpConfigFile, mcpEntry, mcpListLines, mcpServerConnected, removeMcpServer } from "./mcp.ts";
 import { mcpExplorePrompt } from "./mcp-explore-prompt.ts";
 import { forkName, placeFork } from "./fork-placement.ts";
 import { loadGroups, saveGroups, withComment, withParked } from "./groups.ts";
@@ -429,11 +429,8 @@ export class SessionCommands {
     try {
       this.h.notify("asking the MCP servers...");
       const r = (await this.h.request({ type: "mcp_status", session: meta.id }, 60_000)) as { text: string };
-      const configs = readConfigs([mcpConfigFile(), path.join(meta.cwd, ".pi", "mcp.json")]);
       const skillsDirs = [path.join(agentDir(), "skills"), ...readdirSync(agentDir(), { withFileTypes: true }).filter((e: Dirent) => e.isDirectory()).map((e: Dirent) => path.join(agentDir(), e.name, "skills"))];
-      const missingSkill = [...configs.keys()].filter((n) => !skillExistsForServer(skillsDirs, n));
-      const hints = missingSkill.map((n) => `${n}: no skill found - /mcp explore ${n} writes one`);
-      this.h.infoPanel.show(["MCP servers", "", r.text, "", ...hints, "/mcp reconnect <server> - tab completes the names"].join("\n"));
+      this.h.infoPanel.show(["MCP servers", "", ...mcpListLines(r.text, skillsDirs), "", "/mcp reconnect <server> - tab completes the names"].join("\n"));
       this.h.notify("");
       this.h.tui.requestRender();
     } catch (err) {

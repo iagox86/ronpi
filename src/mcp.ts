@@ -12,6 +12,9 @@ export interface McpServer {
 /** Lines of the /mcp status that are about the configuration, not about one server. */
 const NOT_SERVERS = new Set(["config error", "overridden"]);
 
+/** One unindented "name: state ..." line per server; indented lines continue the one above (e.g. an error's stderr tail). */
+const SERVER_LINE = /^([^\s:][^:]*?): (.+)$/;
+
 /**
  * Parse /mcp's status text: one unindented "name: state ..." line per server
  * (indented lines continue the one above, e.g. an error's stderr tail).
@@ -19,7 +22,7 @@ const NOT_SERVERS = new Set(["config error", "overridden"]);
 export function parseMcpStatus(text: string): McpServer[] {
   const servers: McpServer[] = [];
   for (const line of text.split("\n")) {
-    const m = /^([^\s:][^:]*?): (.+)$/.exec(line);
+    const m = SERVER_LINE.exec(line);
     if (m && !NOT_SERVERS.has(m[1] as string)) {
       servers.push({ name: m[1] as string, detail: m[2] as string });
     }
@@ -97,38 +100,63 @@ export function mcpConfigFile(): string {
 }
 
 /**
- * Whether a skill for `name` exists under any of the skills dirs `dirs` (the
+ * The name of a skill for `name` under any of the skills dirs `dirs` (the
  * agent dir's own skills/ plus any extension-provided skills roots like
  * <extension>/skills): a skill directory whose name contains it, or whose
  * SKILL.md mentions it as a whole word (case-insensitive, so a short name
  * like "git" does not hit "digit"). A missing dir means no skills at all.
+ * Earlier dirs win, and within a dir the first matching entry.
  */
-export function skillExistsForServer(dirs: string[], name: string): boolean {
-  return dirs.some((dir) => skillExistsInDir(dir, name));
+export function skillForServer(dirs: string[], name: string): string | undefined {
+  for (const dir of dirs) {
+    const skill = skillInDir(dir, name);
+    if (skill !== undefined) {
+      return skill;
+    }
+  }
+  return undefined;
 }
 
-function skillExistsInDir(dir: string, name: string): boolean {
+function skillInDir(dir: string, name: string): string | undefined {
   let entries: string[];
   try {
     entries = fs.readdirSync(dir);
   } catch {
-    return false;
+    return undefined;
   }
   const needle = name.toLowerCase();
   const inContent = new RegExp(`\\b${escapeRegExp(name)}\\b`, "i");
   for (const entry of entries) {
     if (entry.toLowerCase().includes(needle)) {
-      return true;
+      return entry;
     }
     try {
       if (inContent.test(fs.readFileSync(path.join(dir, entry, "SKILL.md"), "utf8"))) {
-        return true;
+        return entry;
       }
     } catch {
       // not a skill dir (no readable SKILL.md) - nothing to check
     }
   }
-  return false;
+  return undefined;
+}
+
+/**
+ * The /mcp list panel's lines: pi's status text with every server line
+ * extended by that server's skill presence ("skill: <name>" or "no matching
+ * skill (/mcp explore <name>)"; the state text is kept whole). Lines that are
+ * not about one server (indented error tails, "config error", "overridden",
+ * the none-configured message) pass through unchanged.
+ */
+export function mcpListLines(text: string, skillsDirs: string[]): string[] {
+  return text.split("\n").map((line) => {
+    const m = SERVER_LINE.exec(line);
+    if (!m || NOT_SERVERS.has(m[1] as string)) {
+      return line;
+    }
+    const skill = skillForServer(skillsDirs, m[1] as string);
+    return `${line} - ${skill ? `skill: ${skill}` : `no matching skill (/mcp explore ${m[1]})`}`;
+  });
 }
 
 function escapeRegExp(s: string): string {
