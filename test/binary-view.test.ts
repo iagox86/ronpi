@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { binaryReadDisplay, hexdump, looksBinary } from "../src/binary-view.ts";
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-binview-"));
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "toriel-binview-"));
 const garbled = { content: [{ type: "text", text: "%PDF-1.7\n���" }], isError: false };
 
 describe("hexdump", () => {

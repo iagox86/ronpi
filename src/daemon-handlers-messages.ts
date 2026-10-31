@@ -32,7 +32,7 @@ export async function handleMessage(ctx: DaemonContext, cmd: Cmd<"message">, res
     throw new Error(`${target.name ?? "that session"} has not been saved yet - nothing to deliver to`);
   }
   if (target.file && ctx.presence.has(target.file)) {
-    throw new Error(`${target.name ?? "that session"} is open in another pi process - /adopt it into ronpi first`);
+    throw new Error(`${target.name ?? "that session"} is open in another pi process - /adopt it into toriel first`);
   }
   let s: DaemonSession | undefined = target.session;
   if (!s) {

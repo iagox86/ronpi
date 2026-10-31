@@ -142,8 +142,8 @@ answering these.
    text could feed the status bar, and `permissions:ui_prompt` /
    `permissions:decision` exist only on the child-internal extension bus
    (not visible over RPC) - do not look for them over the wire.
-5. **Re-verify through ronpi, not raw spawns.** The 2026-10-23 verification
-   drove `pi --mode rpc` directly with a scripted client. ronpi's own path
+5. **Re-verify through toriel, not raw spawns.** The 2026-10-23 verification
+   drove `pi --mode rpc` directly with a scripted client. toriel's own path
    (controller -> daemon -> raw child stdin) was built for the old confirm
    flow and is believed correct (the raw-write exists precisely because of
    the RpcClient id-corruption bug), but must be exercised: restart the
@@ -163,7 +163,7 @@ answering these.
   dismissal means deny; the package default already waits indefinitely).
 - No parsing of option text beyond the deny-identification heuristic in
   change 2; no synthesizing options.
-- Plain-pi TUI sessions get the package's inline hotkey dialog; ronpi
+- Plain-pi TUI sessions get the package's inline hotkey dialog; toriel
   children are RPC-only and never render it - the controller never needs
   to reproduce hotkeys (`y`/`s`/`b`/`n`/`r`).
 - Known-existing caveat, unchanged by this migration: unattached dialogs

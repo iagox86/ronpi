@@ -1,7 +1,7 @@
 // /feedback, shared by the session and switcher command sets.
 import type { Invocation } from "./cli.ts";
 import { LOG } from "./config.ts";
-import { appendFeedback, formatFeedback, piVersion, readFeedback, ronpiRevision, sessionPosition } from "./feedback.ts";
+import { appendFeedback, formatFeedback, piVersion, readFeedback, torielRevision, sessionPosition } from "./feedback.ts";
 import type { Host } from "./host.ts";
 import { loadSettings, resolveChildConfig } from "./settings.ts";
 
@@ -34,7 +34,7 @@ export function runFeedback(h: Host, call: Invocation, key: string | undefined):
           }
         : undefined,
       cwd: meta?.cwd,
-      env: { ronpi: ronpiRevision(), pi: piVersion(resolveChildConfig(loadSettings().settings).piCli), daemonLog: LOG },
+      env: { toriel: torielRevision(), pi: piVersion(resolveChildConfig(loadSettings().settings).piCli), daemonLog: LOG },
     });
     h.notify("feedback recorded");
   } catch (err) {

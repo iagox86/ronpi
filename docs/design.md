@@ -1,4 +1,4 @@
-# ronpi - design notes
+# toriel - design notes
 
 ## Status
 
@@ -22,7 +22,7 @@ runs (ctrl-o), thinking toggle (ctrl-t), working indicator + queued-message
 strip + switcher-row spinner, Esc restores queued messages then aborts,
 rewind (esc esc), history seeded from the session file plus a slash-command
 log, wheel scroll acceleration, scroll position held while output streams,
-steeringMode "all", the ronpi settings file (settings.ts), install.ts for
+steeringMode "all", the toriel settings file (settings.ts), install.ts for
 pi/ resources. Everything is tested against a fake pi (test/fixtures/fake-pi
 .mjs, incl. FAKE_PI_SLOW=1); real-model runs are the remaining verification.
 Also built 2026-10-22 (night): ctrl-r history search (switcher rename moved to f2), /command autocomplete (registries in commands.ts; pi commands via daemon `commands`), plain text in the switcher starts a session.
@@ -51,13 +51,13 @@ an integration suite that runs the real daemon against a fake pi. Findings:
 
 ## Session UX project (scoped 2026-10-22; DONE 2026-10-23 except per-item expand)
 
-Roadmap items 7 and 8 combined; goal: ronpi sessions should look and feel
+Roadmap items 7 and 8 combined; goal: toriel sessions should look and feel
 alive. Built; the per-step notes below record what shipped. Decision (Ron): ONE solarized palette drives both the
 session view and the switcher chrome. Keyboard-only: no mouse (reporting would
 break terminal select/copy, and click hit-testing against ScrollView offsets is
 real work).
 
-Packaging (decided 2026-10-22): ronpi owns its pi-side resources in the repo
+Packaging (decided 2026-10-22): toriel owns its pi-side resources in the repo
 (`pi/extensions/`, `pi/themes/`) and `node src/install.ts` symlinks them into
 $PI_CODING_AGENT_DIR (default ~/.pi/agent). Idempotent; refuses to replace
 anything that is not its own link. The presence extension moves here from
@@ -107,7 +107,7 @@ Steps, each independently shippable, in order:
    messages; still open, plus the clear_queue-on-Esc flow).
    STATUS 2026-10-22: indicator + queued strip BUILT (activity.ts, the strip
    docked under the transcript, 100ms timer only while working); daemon sets
-   steeringMode "all" on every child (RONPI_STEERING_MODE=one-at-a-time
+   steeringMode "all" on every child (TORIEL_STEERING_MODE=one-at-a-time
    restores pi's default). Fake pi: FAKE_PI_SLOW=1 scripts thinking/tool/text/
    error and queues mid-run prompts. DONE 2026-10-23: switcher-row spinner (same
    timer, runs while the switcher is open and any session streams); Esc on a
@@ -117,7 +117,7 @@ Steps, each independently shippable, in order:
    agent processed them (messaging-test incident, session 8). Post-mortem:
    repeated repros against real pi 1.3.0 (labeled + plain steers, mid-tool and
    mid-stream timing, full daemon, real controller TUI) all clear correctly -
-   pi's exact-match removal at message_start is sound and ronpi's relay is
+   pi's exact-match removal at message_start is sound and toriel's relay is
    faithful, so the incident's one-shot loss was never reproduced. The defect
    that made it permanent is real, though: queue_update is fire-and-forget with
    no replay and pi exposes no read-only way to get the queued texts back, so a
@@ -130,7 +130,7 @@ Steps, each independently shippable, in order:
    incident (watch for it recurring - the log line above will show it); pi's
    exit race where a steer arriving between the run's final queue drain and
    _isAgentRunActive=false is stranded until the next prompt (pi-side, benign:
-   the strip is honest and the next run delivers it); ronpi pins
+   the strip is honest and the next run delivers it); toriel pins
    pi-coding-agent 1.4.0 in package.json while node_modules holds 1.3.0
    (installed 2026-10-18) - run npm install and re-verify the queue paths on
    1.4.0.
@@ -162,7 +162,7 @@ Risk: Loader/diff components are interactive-mode internals, not all exported
   flag-name completion for every command (from the option declarations),
   option VALUES (`-m <model>` for /summarize and /why, `-C <dir>` for /new,
   `-c <category>` for /feedback), `/help [command]`, `/restore` from trash
-  names, a ronpi `/group` inside sessions. Done so far: models (/model),
+  names, a toriel `/group` inside sessions. Done so far: models (/model),
   groups (/group in the switcher), MCP servers (/mcp). pi's own extension
   commands cannot be completed through RPC (no completion API); only worth
   doing one by one, the way /mcp was, or upstream in pi.
@@ -170,7 +170,7 @@ Risk: Loader/diff components are interactive-mode internals, not all exported
   row sometimes does not open it. Ruled out: terminal key timeouts (kitty
   protocol sends whole sequences) and key-release events. Fixed as a
   contributing cause: `right` on a group header used to do nothing silently.
-  If it recurs, run with RONPI_KEYS=1 (writes logs/key-debug.log: every key
+  If it recurs, run with TORIEL_KEYS=1 (writes logs/key-debug.log: every key
   and every selection change) and capture the tail right after a failure.
 
 ## M0 findings (corrections to earlier assumptions)
@@ -231,11 +231,11 @@ rewritable elsewhere later without touching the other.
 ## Architecture
 
 ```
-ronpid (daemon)                                  controllers (N)
+daemon                                                    controllers (N)
   owns child lifetimes                            view/switch/prompt TUIs
   event fan-out to attached controllers   <--->   unix socket, JSONL
   dialog routing (badge-and-block)                built on @earendil-works/pi-tui
-  group/state storage (~/.local/share/ronpi/)
+  group/state storage (~/.local/share/toriel/)
    |
    +-- pi --mode rpc child <-> RpcClient (JSONL stdio)
    +-- pi --mode rpc child <-> RpcClient
@@ -254,7 +254,7 @@ ronpid (daemon)                                  controllers (N)
 - `RpcClient` is exported from the pi package: spawn, id correlation,
   typed commands, event listeners.
 - Controller<->daemon protocol: JSONL over a unix socket
-  ($XDG_RUNTIME_DIR/ronpi.sock), same framing rules as pi rpc.
+  ($XDG_RUNTIME_DIR/toriel.sock), same framing rules as pi rpc.
 - Spawn requests carry cwd; the daemon spawns children with it (RpcClient /
   child_process cwd option). Never rely on inherited cwd - the daemon's
   cwd is meaningless. Session storage is cwd-derived per pi's layout, and
@@ -264,7 +264,7 @@ ronpid (daemon)                                  controllers (N)
 - Usage accounting lives in the daemon: message events carry usage
   (input/output/cache/cost); accumulate per-child totals and a global total;
   get_session_stats reconciles on attach. Persist rollups under
-  ~/.local/share/ronpi/ if a budget window beyond daemon lifetime is
+  ~/.local/share/toriel/ if a budget window beyond daemon lifetime is
   wanted. Future MCP server = another client of the same daemon socket
   (list/spawn/deactivate/query), registrable in pi's mcp.json. A future web
   GUI is the same pattern again (bridge client); pi's export_html command
@@ -292,7 +292,7 @@ Code's agent-list shape) mirrors Claude Code's agent list:
   `CSI 1;<mods> D` - reuse the lock-bit-tolerant match, ignoring numlock
   (128) and caps (64) bits.
 - **Switcher contents**: group headers from
-  ~/.local/share/ronpi/session-groups.json (shared with the stock pi
+  ~/.local/share/toriel/session-groups.json (shared with the stock pi
   extension), each session under its group with name + state marker
   (color: streaming/idle/inactive/dead), plus an (ungrouped) section.
   Sessions come from two sources merged: daemon tabs (live) and
@@ -343,7 +343,7 @@ Code's agent-list shape) mirrors Claude Code's agent list:
   same call executes when idle and queues as steering when streaming. Never
   call prompt() bare during a run (pi rejects it).
 - **Trash**: delete never unlinks - the daemon moves the session file to
-  ~/.local/share/ronpi/trash/ with a manifest (original path + timestamp)
+  ~/.local/share/toriel/trash/ with a manifest (original path + timestamp)
   and drops its in-memory entry. The group assignment is deliberately KEPT
   so /restore brings the session back already grouped (orphan assignments
   are harmless - they attach to nothing until a session id matches).
@@ -383,7 +383,7 @@ export_html; get_commands.
 - session-groups.ts: the /group command keeps working (dialog-based); the
   switcher half is superseded by controller chrome; left-arrow hook is
   TUI-only (reborn as a controller binding). Path moves to
-  ~/.local/share/ronpi/session-groups.json (shared with stock pi; migrate
+  ~/.local/share/toriel/session-groups.json (shared with stock pi; migrate
   once, update the extension).
 - status-bar.ts: superseded; spec reimplemented controller-side, extended
   with the session-state indicator.
@@ -410,8 +410,8 @@ export_html; get_commands.
   session states + lazy spawn, exclusive attach + take-over, permission
   forwarding (badge-and-block, re-sent on attach), trash-based delete,
   rename, shared groups JSON in XDG data dir.
-- Trial phase (current): Ron runs real work through ronpi; friction list
-  drives fixes. Presence/adopt work landed 2026-10-21 (ronpi-presence
+- Trial phase (current): Ron runs real work through toriel; friction list
+  drives fixes. Presence/adopt work landed 2026-10-21 (toriel-presence
   extension, /adopt, live-in-pi markers, prompt-fork confirm, ghost
   pruning, controller announce).
 - M2: the UX batch (see "M2+ roadmap" below) - quick wins first.
@@ -420,10 +420,10 @@ export_html; get_commands.
   Controller-class split is also done.
 - Done: ctrl-r history search, /command autocomplete, text-starts-session.
 
-## ronpi settings file (built 2026-10-23)
+## toriel settings file (built 2026-10-23)
 
-~/.config/ronpi/settings.json (settings.ts): steeringMode, provider, model,
-thinking, piCli; defaults < file < RONPI_* env. Read by the daemon at EVERY
+~/.config/toriel/settings.json (settings.ts): steeringMode, provider, model,
+thinking, piCli; defaults < file < TORIEL_* env. Read by the daemon at EVERY
 child spawn (not at daemon start), so changes need no restart; each child
 records the file's mtime it started with (SessionMeta.settingsMtime) and the
 switcher status line warns how many running sessions are behind (mtime, not
@@ -444,7 +444,7 @@ Handoff for the next session (findings checked 2026-10-23):
   `CombinedAutocompleteProvider(commands: SlashCommand[], basePath, fdPath)`
   gives slash commands (name, description, argumentHint,
   getArgumentCompletions) AND @file path completion for free - useful in the
-  session editor. Two providers: (a) switcher box: ronpi's own commands from
+  session editor. Two providers: (a) switcher box: toriel's own commands from
   commands.ts (needs descriptions/arg hints, and the session editor's /exit
   /quit /abort); (b) session editor: the child's `get_commands` list via a new
   daemon passthrough, plus (a)'s session-level commands. Open: inactive
@@ -467,7 +467,7 @@ Handoff for the next session (findings checked 2026-10-23):
 - Web search: NOT NEEDED - an off-the-shelf pi extension covers it (Ron,
   2026-10-23), installed outside this repo. Custom tools of our own remain
   possible via pi extension tools (`pi.registerTool()`) in pi/extensions/;
-  candidates, roughly by value: ronpi-aware tools via the daemon socket
+  candidates, roughly by value: toriel-aware tools via the daemon socket
   (spawn a named agent, message another session; see "Agent definitions"), a
   notify tool (push when a long run finishes or needs input), docs lookup
   (pi's own docs dir). If we ever write a fetch-style tool: block loopback,
@@ -487,7 +487,7 @@ Near-term (post-budget-reset), rough order = dependency + value:
    (pieces exist: spawn flow + pendingPrompt).
 2. Slash autocomplete: pi-tui ships AutocompleteProvider /
    CombinedAutocompleteProvider (SlashCommand with description +
-   argumentHint) - free for BOTH the switcher command box (ronpi's own
+   argumentHint) - free for BOTH the switcher command box (toriel's own
    commands) and the session editor. Ron prefers readline semantics:
    tab completes, tab-tab lists options (the provider's force flag looks
    like the hook); use the popup if it comes free. Session-side needs the
@@ -513,7 +513,7 @@ Near-term (post-budget-reset), rough order = dependency + value:
    with that session's own user messages (from the file, so it survives
    restarts and includes messages sent from standalone pi); a rewind reseeds.
    Slash commands (session editor AND switcher box) are logged to
-   ~/.local/share/ronpi/history.jsonl (RONPI_HISTORY; trimmed to 500 at
+   ~/.local/share/toriel/history.jsonl (TORIEL_HISTORY; trimmed to 500 at
    startup; history.ts) and merged by time with the session's prompts; the
    switcher's up-arrow shows commands only. Not built: a global cross-session
    history of prompts. ctrl-r backward search is wanted (see "Next
@@ -544,7 +544,7 @@ Near-term (post-budget-reset), rough order = dependency + value:
 7. In-session solarized (SCOPED, see "NEXT BIG PROJECT: session UX"): ONE theme definition living in the dotfiles
    extensions (or a shared module), consumed by the controller - in RPC
    mode the child renders nothing, so the controller does all session
-   rendering; the shared definition keeps ronpi and any future pi-side
+   rendering; the shared definition keeps toriel and any future pi-side
    use on one palette. Blocker to check: pi exports only
    getMarkdownTheme/getSelectListTheme/initTheme - read docs/themes.md and
    see whether initTheme accepts a custom theme object; if not, that is an
@@ -555,7 +555,7 @@ Near-term (post-budget-reset), rough order = dependency + value:
 9. Multiple agents / subagents (ADDED 2026-10-23; deliberately DEFERRED,
    BUT the project was started 2026-10-27 - read this status first, the notes
    below are the earlier evaluation). DESIGN (decided): subagents are real pi
-   sessions owned by the daemon, started by a ronpi_agent tool, shown nested
+   sessions owned by the daemon, started by a toriel_agent tool, shown nested
    under the parent, agent types as markdown files (Claude-style), limits
    enforced by the daemon; pi-subagents is NOT used. Full proposal and the
    decisions are in the job board ticket "Big feature - subagents" (Ron's
@@ -564,22 +564,22 @@ Near-term (post-budget-reset), rough order = dependency + value:
    identity (UUIDs chosen at spawn via --session-id, `resolve`, unique names),
    the parent/child tree for agent-started sessions (`kind: "subagent"` in
    lineage.json: nesting, folds, banner, /parent, /detach), and session
-   messaging (`ronpi_message` tool, daemon `message`). NOT built: the spawn
+   messaging (`toriel_message` tool, daemon `message`). NOT built: the spawn
    tool and limits (ticket 5), permission trickle-up (6), delegation skill and
    shipped types (7). Findings that matter: `--tools` does not remove
    extension tools (use --no-extensions); pi cannot select MCP servers per run
    (every enabled server connects; only --no-mcp or a project override
    changes that); pi's `--fork` ignores --session-id. Older evaluation:
    not installed): goal is CC-Task-style lightweight subagents living
-   INSIDE a ronpi-affiliated session - in-process, not switcher rows,
+   INSIDE a toriel-affiliated session - in-process, not switcher rows,
    results streaming into the conversation - plus an optional tree-view
    under the parent's switcher row. Two paths, decide when picked up:
    - pi-subagents (npm, nicopreme): foreground children run as in-process
      sessions (exactly the CC-Task model, works under RPC children);
      background children run in a DETACHED RUNNER process the daemon
      cannot see - a blind spot for the activation cap and budget
-     tracking, and RONPI_CHILD=1 env inheritance currently keeps them out
-     of ronpi-presence (decide then whether runners must register with
+     tracking, and TORIEL_CHILD=1 env inheritance currently keeps them out
+     of toriel-presence (decide then whether runners must register with
      the daemon instead). Ships the guards we would want anyway
      (maxSubagentSpawnsPerSession/PerRun, concurrency, depth caps) and
      writes machine-readable run artifacts + an extension API that an
@@ -588,7 +588,7 @@ Near-term (post-budget-reset), rough order = dependency + value:
      artifacts are the integration surface. Its researcher/
      evidence-auditor agents want pi-web-access in the child (installed
      2026-10-23, searxngBaseUrl -> search.shiverthorn.com).
-   - Own minimal Task-style tool (a ronpi extensions/ entry spawning
+   - Own minimal Task-style tool (a toriel extensions/ entry spawning
      in-process child sessions via the pi SDK): we own the event stream,
      so the switcher tree-view is direct and the daemon sees everything;
      we lose pi-subagents' preset agent ecosystem (scout/reviewer/
@@ -607,7 +607,7 @@ Near-term (post-budget-reset), rough order = dependency + value:
    that can receive daemon-delivered messages (check for a first-class
    delivery mechanism first). Until then parents are unaware of forks.
    USAGE AWARENESS FOR AGENTS (parked 2026-10-25, goes with this item):
-   the ronpi_usage tool exists (quota/budget windows, credits left, resets),
+   the toriel_usage tool exists (quota/budget windows, credits left, resets),
    but nothing tells an agent WHEN to use it. Design that with agent
    management: guidance in the agent instructions ("check usage before big
    tasks, save headroom in the long window"), and/or an extension that warns
@@ -615,7 +615,7 @@ Near-term (post-budget-reset), rough order = dependency + value:
    subagents (a coordinator pacing work across a multi-week job).
 
 10. Time-based commands (ADDED 2026-10-23, Ron's idea; deliberately NOT started):
-   pi has no scheduling, so ronpi adds a suite that fires prompts into
+   pi has no scheduling, so toriel adds a suite that fires prompts into
    sessions on a timer, e.g. "check a process hourly until it exists".
    Sketch to refine when picked up:
    - Commands (same registry/parser as the rest): `/in <when> <prompt>`
@@ -626,7 +626,7 @@ Near-term (post-budget-reset), rough order = dependency + value:
      accepts durations (90m, 2h), clock times and cron expressions.
    - The DAEMON owns the clock, not the controller, so schedules survive
      controller restarts and fire with nobody watching. Persisted in a
-     ronpi-owned `schedules.json` (keyed by session UUID, like lineage.json).
+     toriel-owned `schedules.json` (keyed by session UUID, like lineage.json).
      Firing = a `prompt` to the session, lazily respawning it if it is
      inactive (the existing resume path).
    - Cheap conditions: `--until` / `--while` take a SHELL command checked by
@@ -678,7 +678,7 @@ Near-term (post-budget-reset), rough order = dependency + value:
        involved" is the cheap middle: poll without spending tokens.
      * Gap in theirs that ours can fill: schedules that survive restarts and
        fire with nobody attached, and a cost guard tied to the usage readout
-       (ronpi_usage, built 2026-10-24) so a schedule can pause itself when
+       (toriel_usage, built 2026-10-24) so a schedule can pause itself when
        the budget window is nearly spent.
      TODO when picked up: also search pi packages for existing scheduling
      extensions before building (not done yet).
@@ -691,12 +691,12 @@ green to 100% red.
 
 Decisions:
 
-- **The key never leaves pi (trust boundary).** ronpi does not read
+- **The key never leaves pi (trust boundary).** toriel does not read
   `~/.pi/agent/auth.json` or `models.json`. A small pi extension
-  (`pi/extensions/ronpi-usage.ts`, linked by `node src/install.ts`) runs in
-  ronpi-spawned children only (`RONPI_CHILD`), fetches the quota through pi's
+  (`pi/extensions/toriel-usage.ts`, linked by `node src/install.ts`) runs in
+  toriel-spawned children only (`TORIEL_CHILD`), fetches the quota through pi's
   own model registry (`ctx.modelRegistry.getApiKeyForProvider`), and reports
-  only percentages back as a `setStatus` record under the key `ronpi-usage`.
+  only percentages back as a `setStatus` record under the key `toriel-usage`.
   The daemon consumes that record itself (controllers never see it).
 - **Normalized, producer-neutral report** (`UsageReport` in `src/shared.ts`):
   provider, source, plan, `windows[{label, pct, resetsAt}]`, optional `spend`,
@@ -764,13 +764,13 @@ Recorded so the usage and status-bar work does not close the door (see also
   session. A native "Claude Code session type" instead means a second backend
   next to the pi RPC child (see below); the two are different goals, and the
   provider extensions are the cheaper first step if all that is wanted is
-  Claude models in ronpi.
+  Claude models in toriel.
 - Sessions-as-files: Claude Code stores transcripts under `~/.claude/projects/`
   (JSONL, different schema from pi's). `itemsFromFile` / compaction display /
   rewind / clear all assume pi's entry format today; a Claude backend needs its
   own reader behind the same functions, and rewind/clear/fork would need
   backend-specific semantics (or be disabled for it).
-- Slash commands: the CLI-style parser and registries are ronpi-side and
+- Slash commands: the CLI-style parser and registries are toriel-side and
   backend-neutral; a backend can contribute its own commands the way pi's
   `get_commands` does.
 
@@ -808,7 +808,7 @@ while scoping M2:
   ON THE ROADMAP, LOW PRIORITY (Ron, 2026-10-22).
 - Terminal integration: formatProgramStatus emits OSC 7501 program status
   (idle/working/blocked + reason) - the terminal tab title could show
-  "ronpi: 1 working, 1 blocked on permission" without focusing ronpi.
+  "toriel: 1 working, 1 blocked on permission" without focusing toriel.
 - KeybindingsManager: centralized keybinding config - user-configurable
   keys later.
 - Colors toolkit: parseColor/okhsl/styleText - utilities for the
@@ -856,7 +856,7 @@ Bigger goals - design-arounds, not scheduled:
     (an arbitrary-args spawn command is command injection by a model).
   - Sidecar can record `agent` and `parent` for switcher tags ([tiny]) and
     grouping; forks/adopt inherit the agent.
-  - Open: definition location (user file vs per-project .ronpi/agents vs
+  - Open: definition location (user file vs per-project .toriel/agents vs
     both), keeping some pi extensions while dropping others (-e with
     --no-extensions, unverified). Cheapest first cut: a hardcoded `minimal`
     profile + `/new <name>` + sidecar + tag. Not planned: inheritance,
@@ -884,7 +884,7 @@ Bigger goals - design-arounds, not scheduled:
   (Ron 2026-10-24): wl-paste ->
   controller -> daemon -> child. Verified 2026-10-24: pi's RpcClient
   `prompt(message, images?: ImageContent[])` (and steer/followUp) carry image
-  parts, so the protocol supports it; ronpi's `prompt` command is text-only
+  parts, so the protocol supports it; toriel's `prompt` command is text-only
   today and would grow an `images` field. Gate on the model: pi drops images
   for a model whose entry lacks `input: ["text","image"]` (the read tool says
   "Current model does not support images"; hit 2026-10-24 on a LiteLLM model
@@ -897,7 +897,7 @@ Bigger goals - design-arounds, not scheduled:
 - Tool manager (FUTURE GOAL, Ron 2026-10-23; supersedes "Extension manager"):
   one place to see and control what a session can use: pi extensions, MCP
   servers and individual tools, per session or per agent profile, instead of
-  hand-editing settings and dotfiles. Building blocks that exist today: ronpi
+  hand-editing settings and dotfiles. Building blocks that exist today: toriel
   owns pi/extensions + install.ts (symlink installer); pi's `packages`
   setting and `pi install` / `pi config`; `defaultTools` with +name/-name
   entries; `--tools` / `--no-tools` / `--no-extensions` / `--no-mcp` child
@@ -905,10 +905,10 @@ Bigger goals - design-arounds, not scheduled:
   shape: a switcher-style list of tools/extensions/servers with on/off per
   agent profile (ties to "Agent definitions": the profile snapshot records
   the loadout, since a lazy respawn loses launch flags), plus install/update
-  of the extensions ronpi ships. Open: whether to flip tools on a LIVE
+  of the extensions toriel ships. Open: whether to flip tools on a LIVE
   session (pi's RPC surface for active tools is unverified) or only at
-  spawn; where profiles live (the ronpi settings file is the natural home).
-  Today's de-facto version is install.ts plus pi's own settings. ronpi's own
+  spawn; where profiles live (the toriel settings file is the natural home).
+  Today's de-facto version is install.ts plus pi's own settings. toriel's own
   pieces (the presence extension and the solarized theme in pi/) are the
   first things the manager should take over from install.ts; not needed yet.
 
@@ -962,7 +962,7 @@ bridge, a changed session file after /clear, a dead socket).
   pi emits `entry_appended {entry}` instead (with `details.id` intact), so
   the daemon and the controller handle both shapes.
 - `ctx.ui.setStatus(key, text)` reaches the daemon as an
-  `extension_ui_request` (the channel ronpi-usage already uses).
+  `extension_ui_request` (the channel toriel-usage already uses).
 - pi documents that a steer's queued state "is not guaranteed to remain"
   (rpc-commands.md) - the loss #47 hit is acknowledged upstream.
 
@@ -970,25 +970,25 @@ bridge, a changed session file after /clear, a dead socket).
 
 No new sockets or client commands.
 
-- daemon -> bridge: `prompt("/ronpi-inject {"id": "b7", "text": "<labeled
+- daemon -> bridge: `prompt("/toriel-inject {"id": "b7", "text": "<labeled
   body>"}")` over the child's RPC pipe. `text` is the formatReceived-labeled
   body, so the model sees what it always has and the controller renders the
   "from" row by parsing it.
-- bridge -> daemon: `setStatus("ronpi-bridge", {v:1, kind, ...})` with kind
+- bridge -> daemon: `setStatus("toriel-bridge", {v:1, kind, ...})` with kind
   `injected {id}`, `failed {id, error}` or `requeued {ids}`. Only failures
   and recoveries need it; the append itself is seen directly (below).
 - Confirmation: the daemon acks an inject when pi announces the append
   (`entry_appended`, or `message_end` with `role: "custom"`, carrying the id).
   The `injected` status is a second, redundant route.
 
-### Delivery (extension, pi/extensions/ronpi-session-bridge.ts)
+### Delivery (extension, pi/extensions/toriel-session-bridge.ts)
 
 `InjectQueue` holds `pending` (waiting for a chance) and `inflight` (handed to
 pi, not yet seen in the transcript). Busy state is tracked from
 agent_start/agent_settled.
 
 1. idle: move one pending message to inflight and
-   `sendMessage(custom ronpi-inject, {triggerTurn: true})`; a throw reports
+   `sendMessage(custom toriel-inject, {triggerTurn: true})`; a throw reports
    `failed`.
 2. mid-run: `turn_end` returns all pending messages as custom_message entries
    with `continue: true`; they move to inflight.
@@ -1024,7 +1024,7 @@ switcher notice line says how many and how to fix it (`bridgeNotice`:
 
 ### Controller rendering
 
-`ronpi-inject` custom messages render as "from NAME" rows: `message_start`
+`toriel-inject` custom messages render as "from NAME" rows: `message_start`
 (idle delivery), `entry_appended` (boundary delivery) and `itemsFromMessages`
 (replay) each have a branch; rewind excludes them like received labels.
 

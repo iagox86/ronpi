@@ -2,7 +2,7 @@
 // file's bytes decoded as text (a PDF becomes screens of replacement
 // characters and control codes). Showing that is noise, so the transcript shows
 // a hexdump of the start of the file instead. The model still gets exactly what
-// pi sent it; this only changes what ronpi draws.
+// pi sent it; this only changes what toriel draws.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

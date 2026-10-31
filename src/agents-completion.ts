@@ -21,7 +21,7 @@ export function agentCompletions(typed: string, agents: ReadonlyArray<{ name: st
 /** The /agents panel. */
 export function agentListing(agents: readonly AgentProfile[], problems: readonly string[]): string {
   if (agents.length === 0 && problems.length === 0) {
-    return "No agent profiles found.\n\nPut *.md files in agents/ (ronpi repo), ~/.config/ronpi/agents/ or <project>/.ronpi/agents/.";
+    return "No agent profiles found.\n\nPut *.md files in agents/ (toriel repo), ~/.config/toriel/agents/ or <project>/.toriel/agents/.";
   }
   const width = Math.max(0, ...agents.map((a) => a.name.length));
   const rows = agents.map((a) => {

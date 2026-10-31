@@ -1,4 +1,4 @@
-// ronpid: owns pi sessions and their child processes, bridges them to
+// toriel daemon: owns pi sessions and their child processes, bridges them to
 // controllers over a unix socket. Killing a controller never touches a child.
 //
 // Session model:
@@ -9,11 +9,12 @@
 //
 // Input on a live session is exclusively attached to one controller socket;
 // event streams fan out to every connected controller (viewing is never
-// exclusive). Deletes never unlink: files move to the ronpi trash dir with a
+// exclusive). Deletes never unlink: files move to the toriel trash dir with a
 // restore manifest, because the session file is the only copy of a session.
 //
 // Run: node daemon.ts   (from a shell where `node` is v26; children inherit
 // this env, including pi settings/auth/extensions.)
+import "./migrate-on-start.ts";
 import * as fs from "node:fs";
 import { PID_FILE, SOCK } from "./config.ts";
 import { BridgeTracker } from "./daemon-bridge.ts";

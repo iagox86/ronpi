@@ -1,6 +1,6 @@
 // Input history beyond what a session file holds. A session's own user
 // messages (with timestamps) cover prompts; slash commands never reach the
-// session file, so they live in one small ronpi log shared by the session
+// session file, so they live in one small toriel log shared by the session
 // editor and the switcher box. Up-arrow history merges the two by time.
 import * as fs from "node:fs";
 import * as path from "node:path";

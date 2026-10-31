@@ -52,9 +52,9 @@ export function needsResummary(a: {
   return a.messages - (a.entry?.messages ?? 0) >= (a.minNew ?? DEFAULT_MIN_NEW_MESSAGES);
 }
 
-/** The model to summarize with: settings file (summaryModel), RONPI_SUMMARY_MODEL, else the default. */
+/** The model to summarize with: settings file (summaryModel), TORIEL_SUMMARY_MODEL, else the default. */
 export function summaryModel(env: NodeJS.ProcessEnv = process.env): string {
-  return env.RONPI_SUMMARY_MODEL ?? loadSettings().settings.summaryModel ?? DEFAULT_SUMMARY_MODEL;
+  return env.TORIEL_SUMMARY_MODEL ?? loadSettings().settings.summaryModel ?? DEFAULT_SUMMARY_MODEL;
 }
 
 /**
@@ -120,7 +120,7 @@ export function describeFailure(model: string, stderr: string, code: number | nu
   const detail = prettyError(text || `exit ${code}`);
   let hint = "";
   if (/not found/i.test(detail)) {
-    hint = " - check summaryModel in the ronpi settings, or pass -m provider/id";
+    hint = " - check summaryModel in the toriel settings, or pass -m provider/id";
   } else if (/connection error|econnrefused|enotfound|fetch failed/i.test(detail)) {
     hint = " - the model's server is unreachable";
   }
@@ -158,7 +158,7 @@ export function runSummarizer(opts: SummarizerOptions): Promise<string> {
         opts.model,
         opts.prompt ?? PROMPT,
       ],
-      { cwd: os.tmpdir(), env: { ...process.env, RONPI_CHILD: "1" }, stdio: ["pipe", "pipe", "pipe"] },
+      { cwd: os.tmpdir(), env: { ...process.env, TORIEL_CHILD: "1" }, stdio: ["pipe", "pipe", "pipe"] },
     );
     let out = "";
     let err = "";

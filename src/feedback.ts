@@ -34,7 +34,7 @@ export interface FeedbackRecord {
     entries?: number;
   };
   cwd?: string;
-  env?: { ronpi?: string; pi?: string; daemonLog?: string };
+  env?: { toriel?: string; pi?: string; daemonLog?: string };
 }
 
 /** Append a record, filling in its version and id. */
@@ -103,8 +103,8 @@ export function sessionPosition(sessionFile: string | undefined): SessionPositio
   return pos;
 }
 
-/** Short git hash of the ronpi checkout, if it is one. */
-export function ronpiRevision(root = path.join(import.meta.dirname, "..")): string | undefined {
+/** Short git hash of the toriel checkout, if it is one. */
+export function torielRevision(root = path.join(import.meta.dirname, "..")): string | undefined {
   try {
     const head = fs.readFileSync(path.join(root, ".git", "HEAD"), "utf8").trim();
     const hash = head.startsWith("ref: ") ? fs.readFileSync(path.join(root, ".git", head.slice(5)), "utf8").trim() : head;

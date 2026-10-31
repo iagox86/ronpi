@@ -1,4 +1,4 @@
-// Command-line parsing for ronpi's own /commands: a shell-ish tokenizer plus
+// Command-line parsing for toriel's own /commands: a shell-ish tokenizer plus
 // commander for options, arguments, `--` and the generated -h/--help text.
 // A command is declared once as a CommandSpec (commands.ts); everything here
 // works from that, so adding a command needs no parsing code.

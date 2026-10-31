@@ -1,4 +1,4 @@
-// `!command`: a shell command the user runs inside a session. ronpi runs it
+// `!command`: a shell command the user runs inside a session. toriel runs it
 // itself and hands the agent the result as an ordinary message wrapped in
 // <local-command> tags (the way Claude Code does), so the agent sees it at once
 // and cannot mistake it for something pasted in. The same tags are what the

@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { loadCommands, mergeHistory, recordCommand, trimCommands } from "../src/history.ts";
 
-const tmpFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-hist-")), "sub", "history.jsonl");
+const tmpFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "toriel-hist-")), "sub", "history.jsonl");
 
 describe("command log", () => {
   it("records commands and reads them back oldest first", () => {

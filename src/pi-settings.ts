@@ -1,4 +1,4 @@
-// The few pi settings (~/.pi/agent/settings.json) that ronpi's own rendering
+// The few pi settings (~/.pi/agent/settings.json) that toriel's own rendering
 // should honor, since pi's components don't read them for us. Read once at
 // startup; a missing or unreadable file means defaults.
 import { readFileSync } from "node:fs";

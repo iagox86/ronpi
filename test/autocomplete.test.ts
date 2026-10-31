@@ -16,12 +16,12 @@ describe("command autocomplete", () => {
     assert.deepEqual(names({ ...base, switcher: true }), SWITCHER_COMMANDS.map((c) => c.name));
   });
 
-  it("offers ronpi's session commands plus whatever pi reports", () => {
+  it("offers toriel's session commands plus whatever pi reports", () => {
     const ctx = { ...base, piCommands: [{ name: "skill:demo", description: "d" }] };
     assert.deepEqual(names(ctx), [...SESSION_COMMANDS.map((c) => c.name), "skill:demo"]);
   });
 
-  it("lets a ronpi command win over a pi command of the same name", () => {
+  it("lets a toriel command win over a pi command of the same name", () => {
     const ctx = { ...base, piCommands: [{ name: "exit" }] };
     assert.equal(names(ctx).filter((n) => n === "exit").length, 1);
   });

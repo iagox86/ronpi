@@ -12,7 +12,7 @@ let dir: string;
 const saved = process.env.XDG_DATA_HOME;
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-sw-"));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-sw-"));
   process.env.XDG_DATA_HOME = dir;
 });
 

@@ -32,7 +32,7 @@ let sessionName = flag("--name");
 // let tests see how the daemon launched this child
 mkdirSync(dirname(sessionFile), { recursive: true });
 writeFileSync(`${sessionFile}.argv.json`, JSON.stringify(args));
-writeFileSync(`${sessionFile}.env.json`, JSON.stringify({ RONPI_SESSION_ID: process.env.RONPI_SESSION_ID ?? null }));
+writeFileSync(`${sessionFile}.env.json`, JSON.stringify({ TORIEL_SESSION_ID: process.env.TORIEL_SESSION_ID ?? null }));
 const messages = [];
 
 function loadMessages(file) {
@@ -70,14 +70,14 @@ function persist(message) {
   lastEntryId = id;
 }
 
-// Session-bridge mode (FAKE_PI_BRIDGE=1): like the ronpi-session-bridge extension, the
-// command `/ronpi-inject {"id","text"}` appends a ronpi-inject custom message - at the
+// Session-bridge mode (FAKE_PI_BRIDGE=1): like the toriel-session-bridge extension, the
+// command `/toriel-inject {"id","text"}` appends a toriel-inject custom message - at the
 // turn boundary while a run is in flight, or by starting a turn when idle - and reports
-// it as a ronpi-bridge status record. FAKE_PI_BRIDGE_FAIL=1 reports a failure instead.
+// it as a toriel-bridge status record. FAKE_PI_BRIDGE_FAIL=1 reports a failure instead.
 const bridgePending = [];
-const bridgeStatus = (r) => out({ type: "extension_ui_request", id: randomUUID(), method: "setStatus", statusKey: "ronpi-bridge", statusText: JSON.stringify({ v: 1, ...r }) });
+const bridgeStatus = (r) => out({ type: "extension_ui_request", id: randomUUID(), method: "setStatus", statusKey: "toriel-bridge", statusText: JSON.stringify({ v: 1, ...r }) });
 function persistCustom(p) {
-  const custom = { role: "custom", customType: "ronpi-inject", content: p.text, display: true, details: { id: p.id } };
+  const custom = { role: "custom", customType: "toriel-inject", content: p.text, display: true, details: { id: p.id } };
   messages.push(custom);
   mkdirSync(dirname(sessionFile), { recursive: true });
   if (!existsSync(sessionFile)) {
@@ -190,8 +190,8 @@ async function handle(cmd) {
     started = true;
     await sleep(Number(process.env.FAKE_PI_STARTUP_MS ?? 0));
     if (process.env.FAKE_PI_USAGE) {
-      // what the ronpi-usage extension does: a status record the daemon should consume
-      out({ type: "extension_ui_request", id: "usage-1", method: "setStatus", statusKey: "ronpi-usage", statusText: process.env.FAKE_PI_USAGE });
+      // what the toriel-usage extension does: a status record the daemon should consume
+      out({ type: "extension_ui_request", id: "usage-1", method: "setStatus", statusKey: "toriel-usage", statusText: process.env.FAKE_PI_USAGE });
     }
   }
   switch (cmd.type) {
@@ -263,7 +263,7 @@ async function handle(cmd) {
         commands: [
           { name: "skill:demo", description: "A demo skill", source: "skill" },
           { name: "compact", description: "Compact the context", source: "extension" },
-          ...(process.env.FAKE_PI_BRIDGE === "1" ? [{ name: "ronpi-inject", description: "ronpi internal: deliver a message from another session", source: "extension" }] : []),
+          ...(process.env.FAKE_PI_BRIDGE === "1" ? [{ name: "toriel-inject", description: "toriel internal: deliver a message from another session", source: "extension" }] : []),
         ],
       });
     case "clear_queue": {
@@ -272,9 +272,9 @@ async function handle(cmd) {
       return ok(cmd.id, "clear_queue", { steering, followUp: [] });
     }
     case "prompt": {
-      if (cmd.message.startsWith("/ronpi-inject ")) {
+      if (cmd.message.startsWith("/toriel-inject ")) {
         ok(cmd.id, "prompt", { disposition: "handled" });
-        const p = JSON.parse(cmd.message.slice("/ronpi-inject ".length));
+        const p = JSON.parse(cmd.message.slice("/toriel-inject ".length));
         if (process.env.FAKE_PI_BRIDGE_FAIL === "1") {
           return bridgeStatus({ kind: "failed", id: p.id, error: "inject refused" });
         }

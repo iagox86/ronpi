@@ -420,9 +420,9 @@ export class SessionActions {
       return false;
     }
     if (meta?.externallyLive && meta.active) {
-      // double-open: ronpi owns a live child AND a plain pi has the same
+      // double-open: toriel owns a live child AND a plain pi has the same
       // file open - forking cannot help, two writers would diverge
-      this.h.notify("open in both ronpi and another pi - close one before prompting here");
+      this.h.notify("open in both toriel and another pi - close one before prompting here");
       this.h.editor.setText(text);
       return false;
     }
@@ -484,7 +484,7 @@ export class SessionActions {
         // undetectable from here, so the daemon decides: it refuses files a
         // presence-covered pi holds, and flags brand-new recently-modified
         // files (a fork risk) with a confirmFork response instead of
-        // touching them. Files it has handled before are ronpi's own and
+        // touching them. Files it has handled before are toriel's own and
         // just continue, whatever their mtime (a resume makes them look
         // freshly written).
         // Echo before sending: the confirmed request can take seconds (it

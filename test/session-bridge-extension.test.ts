@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-process.env.RONPI_CHILD = "1";
-const ext = await import("../pi/extensions/ronpi-session-bridge.ts");
+process.env.TORIEL_CHILD = "1";
+const ext = await import("../pi/extensions/toriel-session-bridge.ts");
 
 type Handler = (event: Record<string, unknown>, ctx: unknown) => unknown;
 
@@ -16,7 +16,7 @@ function fakePi() {
   let sendFails = false;
   const ctx = {
     sessionManager: { getBranch: () => branch },
-    ui: { setStatus: (key: string, text: string | undefined) => key === "ronpi-bridge" && statuses.push(JSON.parse(text as string)) },
+    ui: { setStatus: (key: string, text: string | undefined) => key === "toriel-bridge" && statuses.push(JSON.parse(text as string)) },
   };
   const pi = {
     on: (name: string, h: Handler) => handlers.set(name, h),
@@ -26,7 +26,7 @@ function fakePi() {
         throw new Error("no model");
       }
       sent.push({ message, options });
-      branch.push({ type: "custom_message", customType: "ronpi-inject", details: message.details });
+      branch.push({ type: "custom_message", customType: "toriel-inject", details: message.details });
     },
   };
   ext.default(pi as never);
@@ -38,9 +38,9 @@ function fakePi() {
     failSends: () => {
       sendFails = true;
     },
-    inject: (id: string, text: string) => commands.get("ronpi-inject")?.(JSON.stringify({ id, text }), ctx),
+    inject: (id: string, text: string) => commands.get("toriel-inject")?.(JSON.stringify({ id, text }), ctx),
     fire: (name: string, event: Record<string, unknown> = {}) => handlers.get(name)?.(event, ctx),
-    hasCommand: () => commands.has("ronpi-inject"),
+    hasCommand: () => commands.has("toriel-inject"),
   };
 }
 
@@ -96,7 +96,7 @@ describe("session bridge extension", () => {
     await pi.inject("b1", "landed");
     await pi.inject("b2", "lost to an abort");
     pi.fire("turn_end", { outcome: "completed" });
-    pi.branch.push({ type: "custom_message", customType: "ronpi-inject", details: { id: "b1" } });
+    pi.branch.push({ type: "custom_message", customType: "toriel-inject", details: { id: "b1" } });
     pi.fire("turn_start");
     assert.deepEqual(pi.statuses, [{ v: 1, kind: "injected", id: "b1" }]);
     pi.fire("agent_settled");

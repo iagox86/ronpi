@@ -54,7 +54,7 @@ export interface SessionMeta {
   /** False when the child has been deactivated (session is file-only). */
   active: boolean;
   pendingDialog: boolean;
-  /** ronpi settings-file mtime this child started with (null = no file); undefined when inactive. */
+  /** toriel settings-file mtime this child started with (null = no file); undefined when inactive. */
   settingsMtime?: number | null;
   /** Problems the settings file had when this child started. */
   settingsProblem?: string;
@@ -143,11 +143,11 @@ type ClientCommandBody =
   | { type: "ui_response"; session: number; response: Record<string, unknown> }
   /** Orderly daemon shutdown (children stop too). */
   | { type: "shutdown" }
-  /** Presence heartbeat from the ronpi-presence extension in an external
+  /** Presence heartbeat from the toriel-presence extension in an external
    * pi process (live=false deregisters on shutdown). */
   | { type: "external_register"; pid: number; sessionFile: string; cwd: string; live: boolean }
-  /** Fork an external session file into a new ronpi-owned session.
-   * `fork` forks even a file a live ronpi session already owns (/fork).
+  /** Fork an external session file into a new toriel-owned session.
+   * `fork` forks even a file a live toriel session already owns (/fork).
    * `name` names the new session; `parentName` is what the parent is called
    * (recorded in the lineage the two sessions are told about). */
   | { type: "adopt"; id?: string; path: string; cwd: string; fork?: boolean; name?: string; parentName?: string }

@@ -77,7 +77,7 @@ describe("mcpEntry", () => {
 
 describe("addMcpServer", () => {
   function tmpFile(content?: string): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-mcp-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-mcp-"));
     const file = path.join(dir, "mcp.json");
     if (content !== undefined) {
       fs.writeFileSync(file, content);
@@ -111,7 +111,7 @@ describe("addMcpServer", () => {
 
 describe("removeMcpServer", () => {
   function tmpFile(content: string): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-mcp-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-mcp-"));
     const file = path.join(dir, "mcp.json");
     fs.writeFileSync(file, content);
     return file;
@@ -128,7 +128,7 @@ describe("removeMcpServer", () => {
     const project = tmpFile(JSON.stringify({ mcpServers: { proj: { command: "p" } } }));
     assert.throws(() => removeMcpServer(user, "proj", [project]), new RegExp(`defined in ${project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
     assert.throws(() => removeMcpServer(user, "ghost", [project]), /not in .*extension cannot be removed/);
-    assert.throws(() => removeMcpServer(path.join(os.tmpdir(), "no-such-ronpi-mcp.json"), "a"), /is not in/);
+    assert.throws(() => removeMcpServer(path.join(os.tmpdir(), "no-such-toriel-mcp.json"), "a"), /is not in/);
   });
 
   it("leaves a file that is not valid JSON alone", () => {
@@ -144,7 +144,7 @@ describe("removeMcpServer", () => {
 });
 
 describe("skillForServer", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-skills-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-skills-"));
   after(() => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
@@ -167,7 +167,7 @@ describe("skillForServer", () => {
   });
 
   it("does not match on SKILL.md body text when the directory name does not match", () => {
-    const regDir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-skill-reg-"));
+    const regDir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-skill-reg-"));
     fs.mkdirSync(path.join(regDir, "freecad-mcp"), { recursive: true });
     fs.writeFileSync(path.join(regDir, "freecad-mcp", "SKILL.md"), "# Drive FreeCAD and interact with the github MCP server for code review.\n");
     // "github" appears in the body but not in the directory name, so it must not match.
@@ -179,7 +179,7 @@ describe("skillForServer", () => {
 
   it("scans extension-provided skills roots too, earlier dirs first", () => {
     // the real layout: ~/.pi/agent/skills plus ~/.pi/agent/<extension>/skills
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-agent-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-agent-"));
     fs.mkdirSync(path.join(root, "skills", "other-vikunja-skill"), { recursive: true });
     fs.writeFileSync(path.join(root, "skills", "other-vikunja-skill", "SKILL.md"), "# unrelated\n");
     fs.mkdirSync(path.join(root, "pi-hermes-memory", "skills", "vikunja-mcp"), { recursive: true });
@@ -194,7 +194,7 @@ describe("skillForServer", () => {
 });
 
 describe("mcpListLines", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-list-skills-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-list-skills-"));
   fs.mkdirSync(path.join(dir, "mealie-recipe-import"), { recursive: true });
   fs.writeFileSync(path.join(dir, "mealie-recipe-import", "SKILL.md"), "# import recipes into the Mealie server\n");
   after(() => {

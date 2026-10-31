@@ -131,6 +131,6 @@ describe("runWrite", () => {
   });
 
   it("rejects when the tool is not installed", async () => {
-    await assert.rejects(runWrite("ronpi-no-such-tool", [], "text"));
+    await assert.rejects(runWrite("toriel-no-such-tool", [], "text"));
   });
 });

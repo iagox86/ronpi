@@ -1,11 +1,11 @@
-// ronpi usage: reports the account's quota / spend for the session's provider
-// to ronpi, which shows it in its status bar. Runs only in children the ronpi
-// daemon starts (RONPI_CHILD), so plain pi sessions are untouched.
+// toriel usage: reports the account's quota / spend for the session's provider
+// to toriel, which shows it in its status bar. Runs only in children the toriel
+// daemon starts (TORIEL_CHILD), so plain pi sessions are untouched.
 //
 // The API key never leaves this process: the key is looked up through pi's own
 // model registry, used for one request to the provider, and only the resulting
-// percentages go back, as a setStatus record under "ronpi-usage" (JSON, see
-// UsageReport in src/shared.ts). ronpi normalizes by provider, so a new
+// percentages go back, as a setStatus record under "toriel-usage" (JSON, see
+// UsageReport in src/shared.ts). toriel normalizes by provider, so a new
 // provider is one adapter here, and a non-pi backend (Claude Code) can produce
 // the same report from its own data.
 //
@@ -16,7 +16,7 @@
 //                       header on every ordinary response (spend only; the budget is unknown)
 // Bifrost has no documented read endpoint for a virtual key's usage yet.
 //
-// The same numbers are offered to the agent as the `ronpi_usage` tool, so it can
+// The same numbers are offered to the agent as the `toriel_usage` tool, so it can
 // check how much of the budget is left before starting something large.
 
 // Only the slice of pi's extension API this file uses, so it type-checks (and is
@@ -40,7 +40,7 @@ interface Pi {
   }): void;
 }
 
-export const STATUS_KEY = "ronpi-usage";
+export const STATUS_KEY = "toriel-usage";
 const MIN_INTERVAL_MS = 60_000;
 const TIMEOUT_MS = 5_000;
 
@@ -199,7 +199,7 @@ export async function fetchReport(adapter: AdapterName, provider: string, baseUr
 }
 
 export default function (pi: Pi) {
-  if (!process.env.RONPI_CHILD) {
+  if (!process.env.TORIEL_CHILD) {
     return;
   }
   let last = 0;
@@ -255,11 +255,11 @@ export default function (pi: Pi) {
   });
 
   pi.registerTool({
-    name: "ronpi_usage",
+    name: "toriel_usage",
     label: "Usage",
     description:
       "Shows how much of the account's quota or budget is used for the current model's provider (percent per window, or spend against the budget, and when it resets), plus this session's token and cost totals. Use it before starting something large or expensive.",
-    promptSnippet: "ronpi_usage: how much of the provider quota/budget is used",
+    promptSnippet: "toriel_usage: how much of the provider quota/budget is used",
     parameters: { type: "object", properties: {}, additionalProperties: false },
     async execute(_id, _params, _signal, _onUpdate, ctx) {
       const report = await refresh(ctx, false, 15_000);

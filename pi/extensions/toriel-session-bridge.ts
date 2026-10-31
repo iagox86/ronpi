@@ -1,10 +1,10 @@
-// ronpi session bridge: takes injection requests from the ronpi daemon as the
-// extension command `/ronpi-inject {"id","text"}` (sent over the child's own RPC
+// toriel session bridge: takes injection requests from the toriel daemon as the
+// extension command `/toriel-inject {"id","text"}` (sent over the child's own RPC
 // pipe, handled at once even mid-run, never entering the user history) and
-// delivers each as a `ronpi-inject` custom message: at the next turn boundary
+// delivers each as a `toriel-inject` custom message: at the next turn boundary
 // while the agent is working, or by starting a turn when it is idle. pi's own
 // text-matched steering queue is never used (see docs/design.md, "Session
-// bridge"). Runs only in children the ronpi daemon starts (RONPI_CHILD).
+// bridge"). Runs only in children the toriel daemon starts (TORIEL_CHILD).
 //
 // Delivery is confirmed from the transcript: a message counts as delivered once
 // its id is in the session branch. The daemon sees the same append as a
@@ -22,16 +22,16 @@ interface Pi {
   sendMessage(message: { customType: string; content: string; display: boolean; details: unknown }, options?: { triggerTurn?: boolean }): Promise<void>;
 }
 
-export const INJECT_COMMAND = "ronpi-inject";
-export const CUSTOM_TYPE = "ronpi-inject";
-export const STATUS_KEY = "ronpi-bridge";
+export const INJECT_COMMAND = "toriel-inject";
+export const CUSTOM_TYPE = "toriel-inject";
+export const STATUS_KEY = "toriel-bridge";
 
 interface Pending {
   id: string;
   text: string;
 }
 
-/** Parse the argument of `/ronpi-inject`; undefined when it is not a well-formed request. */
+/** Parse the argument of `/toriel-inject`; undefined when it is not a well-formed request. */
 export function parseInject(args: string): Pending | undefined {
   try {
     const v = JSON.parse(args) as { id?: unknown; text?: unknown };
@@ -107,7 +107,7 @@ export class InjectQueue {
 }
 
 export default function (pi: Pi) {
-  if (!process.env.RONPI_CHILD) {
+  if (!process.env.TORIEL_CHILD) {
     return;
   }
   const queue = new InjectQueue();
@@ -175,12 +175,12 @@ export default function (pi: Pi) {
   };
 
   pi.registerCommand(INJECT_COMMAND, {
-    description: "ronpi internal: deliver a message from another session (JSON {id, text})",
+    description: "toriel internal: deliver a message from another session (JSON {id, text})",
     handler: async (args, ctx) => {
       ui = ctx.ui;
       const p = parseInject(args);
       if (!p) {
-        report({ kind: "failed", id: "", error: "malformed /ronpi-inject request" });
+        report({ kind: "failed", id: "", error: "malformed /toriel-inject request" });
         return;
       }
       queue.add(p);

@@ -1,4 +1,4 @@
-// ronpi controller: a TUI over the daemon socket. Dumb by design - it
+// toriel controller: a TUI over the daemon socket. Dumb by design - it
 // renders, switches, and prompts; the daemon owns everything else.
 //
 // Session view: left-arrow on an empty editor opens the switcher; /abort and
@@ -160,9 +160,9 @@ class Controller {
   /** Views still to be replaced by the daemon's replay after a reconnect. */
   private staleViews = new Set<string>();
   private disposing = false;
-  /** ronpi has the mouse (reporting on); /mouse off hands it to the terminal. */
+  /** toriel has the mouse (reporting on); /mouse off hands it to the terminal. */
   private mouseOn = true;
-  /** Required ronpi resources missing from the pi agent dir; re-checked with the session list. */
+  /** Required toriel resources missing from the pi agent dir; re-checked with the session list. */
   private resourceNotice = "";
   private reqSeq = 0;
   private responses = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
@@ -349,14 +349,14 @@ class Controller {
         await this.connect();
         this.daemonDown = false;
         this.renderChrome();
-        this.notify("reconnected to the ronpi daemon");
+        this.notify("reconnected to the toriel daemon");
         return;
       } catch {
         await new Promise((r) => setTimeout(r, delay));
         delay = Math.min(delay * 2, 5000);
       }
     }
-    process.stdout.write("\nronpi daemon disconnected and did not come back; exiting.\n");
+    process.stdout.write("\ntoriel daemon disconnected and did not come back; exiting.\n");
     this.dispose();
   }
 
@@ -616,7 +616,7 @@ class Controller {
   /**
    * Middle click: paste whatever was last highlighted anywhere (the primary
    * selection). Returns false when there is no clipboard tool, so the click
-   * goes on to the terminal layer as if ronpi did not know about it.
+   * goes on to the terminal layer as if toriel did not know about it.
    */
   onMiddleClick(): boolean {
     if (!this.clipboard.available) {
@@ -639,7 +639,7 @@ class Controller {
     }
   }
 
-  /** Text selected in ronpi goes to the clipboard and the primary selection, so ctrl-v and middle click both get it. */
+  /** Text selected in toriel goes to the clipboard and the primary selection, so ctrl-v and middle click both get it. */
   copyText(text: string): Promise<boolean | string> {
     return this.copySelection(text);
   }

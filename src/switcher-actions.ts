@@ -384,7 +384,7 @@ export class SwitcherActions {
   }
 
   /**
-   * While ronpi is open, every `summaryIntervalMinutes` (settings; default 60, 0 = off)
+   * While toriel is open, every `summaryIntervalMinutes` (settings; default 60, 0 = off)
    * summarize sessions that have no summary yet or have changed since theirs.
    */
   startAutoSummary(): void {

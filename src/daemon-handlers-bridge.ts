@@ -1,5 +1,5 @@
 // Delivering a message into a live session: through its session bridge
-// (the ronpi-session-bridge extension, reached as the `/ronpi-inject` command over
+// (the toriel-session-bridge extension, reached as the `/toriel-inject` command over
 // the child's own RPC pipe) when it has one, else through pi's steering queue.
 // See docs/design.md, "Session bridge". Only messages from other sessions come
 // here; the user's own prompts stay ordinary user messages.

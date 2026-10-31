@@ -1,5 +1,5 @@
 // pi's /mcp command prints its status as plain text; this reads it back into
-// records ronpi can list and complete from.
+// records toriel can list and complete from.
 import * as fs from "node:fs";
 import * as path from "node:path";
 

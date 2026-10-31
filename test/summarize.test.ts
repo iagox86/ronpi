@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { autoSummaryFailure, cleanSummary, describeFailure, EmptyReplyError, needsResummary, QUIET_MS, runSummarizer, transcriptOf } from "../src/summarize.ts";
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-summarize-"));
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "toriel-summarize-"));
 
 function sessionFile(messages: Array<[string, string]>): string {
   const file = path.join(tmp(), "s.jsonl");

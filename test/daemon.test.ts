@@ -209,7 +209,7 @@ describe("daemon: lifecycle", () => {
   });
 
   it("delivers messages from other sessions through the session bridge, as custom entries with a self-clearing strip", async () => {
-    // A child that offers /ronpi-inject gets the message as that command, never through pi's
+    // A child that offers /toriel-inject gets the message as that command, never through pi's
     // steering queue. Mid-run it lands as an appended custom entry at the turn boundary, and
     // the strip shows it pending until the daemon sees that append.
     harness = await startDaemon({ FAKE_PI_SLOW: "1", FAKE_PI_STEP_MS: "150", FAKE_PI_BRIDGE: "1" });
@@ -238,7 +238,7 @@ describe("daemon: lifecycle", () => {
       .split("\n")
       .filter((l) => l)
       .map((l) => JSON.parse(l) as { type?: string; customType?: string; content?: unknown; message?: { role?: string; content?: unknown } });
-    const injected = entries.find((e) => e.type === "custom_message" && e.customType === "ronpi-inject");
+    const injected = entries.find((e) => e.type === "custom_message" && e.customType === "toriel-inject");
     assert.ok(injected, "no custom_message entry for the bridged message");
     assert.ok(JSON.stringify(injected.content).includes("bridged hello"));
     const asUserPrompt = entries.some((e) => e.type === "message" && e.message?.role === "user" && JSON.stringify(e.message.content).includes("bridged hello"));
@@ -264,7 +264,7 @@ describe("daemon: lifecycle", () => {
     await c.waitFor((m) => m.type === "history");
     const r = await c.request({ type: "message", to: `#${sessionId}`, text: "wake up via bridge" });
     assert.equal((r as { via?: string }).via, "bridge");
-    await c.waitFor((m) => m.type === "event" && m.session === sessionId && m.event?.type === "message_end" && m.event.message?.customType === "ronpi-inject");
+    await c.waitFor((m) => m.type === "event" && m.session === sessionId && m.event?.type === "message_end" && m.event.message?.customType === "toriel-inject");
     await c.waitFor(isSettled);
     const meta = c.sessions().find((s) => s.id === sessionId);
     assert.equal(meta?.sessionBridge, true);
@@ -326,15 +326,15 @@ describe("daemon: lifecycle", () => {
     assert.equal((r3 as { confirmFork?: boolean }).confirmFork, undefined);
   });
 
-  it("does not ask about a fresh session file that ronpi ran before a daemon restart", async () => {
-    const handled = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-handled-")), "handled.json");
-    harness = await startDaemon({ RONPI_HANDLED: handled });
+  it("does not ask about a fresh session file that toriel ran before a daemon restart", async () => {
+    const handled = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "toriel-handled-")), "handled.json");
+    harness = await startDaemon({ TORIEL_HANDLED: handled });
     const c = await harness.connect();
     const file = path.join(harness.dir, "was-ours.jsonl");
     fs.writeFileSync(file, `${JSON.stringify({ type: "session", id: "ours" })}\n`);
     fs.writeFileSync(handled, JSON.stringify([file]));
     const r = await c.request({ type: "prompt", sessionFile: file, cwd: harness.dir, message: "hello" });
-    assert.equal((r as { confirmFork?: boolean }).confirmFork, undefined, "a file ronpi ran before is its own");
+    assert.equal((r as { confirmFork?: boolean }).confirmFork, undefined, "a file toriel ran before is its own");
     await c.waitFor((m) => m.type === "history");
     assert.ok(JSON.parse(fs.readFileSync(handled, "utf8")).includes(file));
   });
@@ -580,7 +580,7 @@ describe("daemon: lifecycle", () => {
     const second = await c.request({ type: "spawn", cwd: harness.dir });
     await c.waitFor((m) => m.type === "sessions" && m.sessions.some((s: Msg) => s.id === second.sessionId && s.usage?.source === "zai"));
     // the record is the daemon's: controllers never see it as a UI request
-    assert.ok(!c.messages.some((m: Msg) => m.type === "ui_request" && m.request?.statusKey === "ronpi-usage"));
+    assert.ok(!c.messages.some((m: Msg) => m.type === "ui_request" && m.request?.statusKey === "toriel-usage"));
   });
 
   it("names a new session when spawned with a name", async () => {
@@ -672,9 +672,9 @@ describe("daemon: lifecycle", () => {
   });
 
   it("uses the settings' model for a new session but lets a resumed one keep its own", async () => {
-    const settings = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-settings-")), "settings.json");
+    const settings = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "toriel-settings-")), "settings.json");
     fs.writeFileSync(settings, '{"model":"default-model"}');
-    harness = await startDaemon({ RONPI_SETTINGS: settings });
+    harness = await startDaemon({ TORIEL_SETTINGS: settings });
     const c = await harness.connect();
     const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
     await c.waitFor((m) => m.type === "history");
@@ -695,7 +695,7 @@ describe("daemon: lifecycle", () => {
   });
 
   it("starts a session as an agent profile and keeps its loadout across a respawn", async () => {
-    harness = await startDaemon({ RONPI_AGENTS_DIR: path.join(os.tmpdir(), "ronpi-no-user-agents") });
+    harness = await startDaemon({ TORIEL_AGENTS_DIR: path.join(os.tmpdir(), "toriel-no-user-agents") });
     const c = await harness.connect();
     const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir, agent: "explore" });
     await c.waitFor((m) => m.type === "history");
@@ -715,8 +715,8 @@ describe("daemon: lifecycle", () => {
     assert.equal(c.sessions().find((x) => x.id === sessionId)?.agent, "explore");
   });
 
-  it("adds ronpi's tools to the loadout on every start and resume, unless a profile owns the tool list", async () => {
-    harness = await startDaemon({ RONPI_AGENTS_DIR: path.join(os.tmpdir(), "ronpi-no-user-agents") });
+  it("adds toriel's tools to the loadout on every start and resume, unless a profile owns the tool list", async () => {
+    harness = await startDaemon({ TORIEL_AGENTS_DIR: path.join(os.tmpdir(), "toriel-no-user-agents") });
     const c = await harness.connect();
     const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
     await c.waitFor((m) => m.type === "history");
@@ -725,11 +725,11 @@ describe("daemon: lifecycle", () => {
       return JSON.parse(fs.readFileSync(`${f}.argv.json`, "utf8")) as string[];
     };
     const tools = (): string | undefined => argv()[argv().indexOf("--tools") + 1];
-    assert.equal(tools(), "+ronpi_message,+ronpi_usage");
+    assert.equal(tools(), "+toriel_message,+toriel_usage");
     await c.request({ type: "prompt", session: sessionId, message: "hi" });
     await c.waitFor(isSettled);
     await c.request({ type: "reload", session: sessionId });
-    assert.equal(tools(), "+ronpi_message,+ronpi_usage", "a /reload resume passes them again");
+    assert.equal(tools(), "+toriel_message,+toriel_usage", "a /reload resume passes them again");
 
     const explore = await c.request({ type: "spawn", cwd: harness.dir, agent: "explore" });
     await c.waitFor((m) => m.type === "history" && m.session === explore.sessionId);
@@ -754,7 +754,7 @@ describe("daemon: lifecycle", () => {
   });
 
   it("refuses to start an unknown agent and names the ones it has", async () => {
-    harness = await startDaemon({ RONPI_AGENTS_DIR: path.join(os.tmpdir(), "ronpi-no-user-agents") });
+    harness = await startDaemon({ TORIEL_AGENTS_DIR: path.join(os.tmpdir(), "toriel-no-user-agents") });
     const c = await harness.connect();
     await assert.rejects(c.request({ type: "spawn", cwd: harness.dir, agent: "nope" }), /no agent called "nope" \(have: explore, summarize\)/);
   });
@@ -768,7 +768,7 @@ describe("daemon: lifecycle", () => {
     const file = c.sessions().find((x) => x.id === r.sessionId)?.sessionFile as string;
     const argv = JSON.parse(fs.readFileSync(`${file}.argv.json`, "utf8")) as string[];
     assert.equal(argv[argv.indexOf("--session-id") + 1], r.uuid);
-    assert.equal(JSON.parse(fs.readFileSync(`${file}.env.json`, "utf8")).RONPI_SESSION_ID, r.uuid);
+    assert.equal(JSON.parse(fs.readFileSync(`${file}.env.json`, "utf8")).TORIEL_SESSION_ID, r.uuid);
     assert.equal(c.sessions().find((x) => x.id === r.sessionId)?.sessionId, r.uuid);
     // a respawn of the same file is the same session, so the child is told the same id
     await c.request({ type: "prompt", session: r.sessionId, message: "hi" });
@@ -776,7 +776,7 @@ describe("daemon: lifecycle", () => {
     await c.request({ type: "deactivate", session: r.sessionId });
     await c.request({ type: "prompt", session: r.sessionId, message: "again" });
     await c.waitFor(isSettled);
-    assert.equal(JSON.parse(fs.readFileSync(`${file}.env.json`, "utf8")).RONPI_SESSION_ID, r.uuid);
+    assert.equal(JSON.parse(fs.readFileSync(`${file}.env.json`, "utf8")).TORIEL_SESSION_ID, r.uuid);
   });
 
   it("resolves a session from its UUID, prefix, #number or name, and says when it cannot", async () => {
@@ -842,10 +842,10 @@ describe("daemon: lifecycle", () => {
   });
 
   it("records the settings file's mtime per child and re-reads it on respawn", async () => {
-    const settings = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-settings-")), "settings.json");
+    const settings = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "toriel-settings-")), "settings.json");
     fs.writeFileSync(settings, '{"model":"a"}');
     fs.utimesSync(settings, new Date(1_000_000), new Date(1_000_000));
-    harness = await startDaemon({ RONPI_SETTINGS: settings });
+    harness = await startDaemon({ TORIEL_SETTINGS: settings });
     const c = await harness.connect();
     const { sessionId } = await c.request({ type: "spawn", cwd: harness.dir });
     await c.waitFor((m) => m.type === "history");

@@ -18,8 +18,8 @@ describe("click guard", () => {
     }
   });
 
-  it("passes single clicks when RONPI_CLICK=single", () => {
-    assert.equal(clickMode({ RONPI_CLICK: "single" }), "single");
+  it("passes single clicks when TORIEL_CLICK=single", () => {
+    assert.equal(clickMode({ TORIEL_CLICK: "single" }), "single");
     assert.equal(clickMode({}), "double");
     assert.equal(passesToTranscript({ type: "click", clickCount: 1 }, "single"), true);
   });

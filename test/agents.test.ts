@@ -93,12 +93,12 @@ describe("mcpWarnings", () => {
 
 describe("loadAgents", () => {
   function tree() {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-agents-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-agents-"));
     const user = path.join(root, "user");
     const project = path.join(root, "proj");
     fs.mkdirSync(user, { recursive: true });
-    fs.mkdirSync(path.join(project, ".ronpi", "agents"), { recursive: true });
-    return { user, project, env: { RONPI_AGENTS_DIR: user, HOME: root } };
+    fs.mkdirSync(path.join(project, ".toriel", "agents"), { recursive: true });
+    return { user, project, env: { TORIEL_AGENTS_DIR: user, HOME: root } };
   }
   const agent = (name: string, desc: string) => `---\nname: ${name}\ndescription: ${desc}\n---\nbody`;
 
@@ -106,7 +106,7 @@ describe("loadAgents", () => {
     const t = tree();
     fs.writeFileSync(path.join(t.user, "explore.md"), agent("explore", "user version"));
     fs.writeFileSync(path.join(t.user, "mine.md"), agent("mine", "only mine"));
-    fs.writeFileSync(path.join(t.project, ".ronpi", "agents", "mine.md"), agent("mine", "project version"));
+    fs.writeFileSync(path.join(t.project, ".toriel", "agents", "mine.md"), agent("mine", "project version"));
     const { agents, problems } = loadAgents(t.project, t.env);
     assert.deepEqual(problems, []);
     const by = Object.fromEntries(agents.map((a) => [a.name, a]));

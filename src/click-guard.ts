@@ -15,9 +15,9 @@ export function passesToTranscript(event: ClickEvent, mode: "double" | "single" 
   return (event.clickCount ?? 1) >= 2;
 }
 
-/** `RONPI_CLICK=single` brings back pi's one-click toggle. */
+/** `TORIEL_CLICK=single` brings back pi's one-click toggle. */
 export function clickMode(env: NodeJS.ProcessEnv = process.env): "double" | "single" {
-  return env.RONPI_CLICK === "single" ? "single" : "double";
+  return env.TORIEL_CLICK === "single" ? "single" : "double";
 }
 
 /** Wraps the screen's layout dispatch (private in pi-tui, and the one place clicks reach the transcript). */

@@ -1,7 +1,7 @@
 // Mouse reporting on and off at run time (/mouse). pi-tui turns it on at start with
 // these same codes and reads its own `mouseEnabled` flag only at start and stop, so
 // writing them is all a toggle needs. While it is off the terminal owns the mouse:
-// native select, copy and middle-click paste (also over ssh); ronpi's clicks stop.
+// native select, copy and middle-click paste (also over ssh); toriel's clicks stop.
 
 /** What pi-tui sends at start (button-motion mode, focus reports, SGR coordinates). */
 export const MOUSE_ON = "\x1b[?1000h\x1b[?1002h\x1b[?1004h\x1b[?1006h";
@@ -31,9 +31,9 @@ export function nextMouse(current: boolean, choice: MouseChoice): boolean {
 /** The notice for a /mouse call. */
 export function mouseNotice(on: boolean, changed: boolean): string {
   if (on) {
-    return changed ? "mouse on - clicks, double-click, selection and wheel are ronpi's" : "mouse is on (/mouse off hands it to the terminal)";
+    return changed ? "mouse on - clicks, double-click, selection and wheel are toriel's" : "mouse is on (/mouse off hands it to the terminal)";
   }
   return changed
-    ? "mouse off - the terminal handles select, copy and middle-click paste now (/mouse on to restore ronpi's mouse)"
-    : "mouse is off (/mouse on restores ronpi's mouse)";
+    ? "mouse off - the terminal handles select, copy and middle-click paste now (/mouse on to restore toriel's mouse)"
+    : "mouse is off (/mouse on restores toriel's mouse)";
 }

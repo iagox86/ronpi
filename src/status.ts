@@ -39,7 +39,7 @@ export function stateLabel(meta: SessionMeta | undefined): "inactive" | "working
 }
 
 /**
- * Warning about sessions that started before the ronpi settings file last
+ * Warning about sessions that started before the toriel settings file last
  * changed (they keep the old values until they respawn), or about a settings
  * file that did not parse. Empty when there is nothing to say.
  */
@@ -102,7 +102,7 @@ export interface StatusInputs {
   relation?: { kind: "subagent"; parentName: string };
   /** Spend of everything below the viewed session. */
   childCost?: number;
-  /** /mouse off: ronpi has handed the mouse to the terminal. */
+  /** /mouse off: toriel has handed the mouse to the terminal. */
   mouseOff?: boolean;
   /** Terminal width; low-priority segments are dropped to fit. */
   width?: number;

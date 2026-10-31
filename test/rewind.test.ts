@@ -7,7 +7,7 @@ import { formatLocalCommand } from "../src/local-command.ts";
 import { clearFile, latestClearBackup, restoreClear, rewindFile, rewindTargets } from "../src/rewind.ts";
 
 function session(): { file: string; trash: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-rewind-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-rewind-"));
   const file = path.join(dir, "s.jsonl");
   const entries = [
     { type: "session", id: "sid", version: 3 },
@@ -81,7 +81,7 @@ describe("rewind", () => {
 
 describe("clearFile", () => {
   function named(): { file: string; trash: string } {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-clear-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-clear-"));
     const file = path.join(dir, "s.jsonl");
     const entries = [
       { type: "session", id: "sid", version: 3 },

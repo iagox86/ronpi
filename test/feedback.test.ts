@@ -3,9 +3,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { appendFeedback, formatFeedback, piVersion, readFeedback, ronpiRevision, sessionPosition } from "../src/feedback.ts";
+import { appendFeedback, formatFeedback, piVersion, readFeedback, torielRevision, sessionPosition } from "../src/feedback.ts";
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-feedback-"));
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "toriel-feedback-"));
 
 describe("feedback records", () => {
   it("appends records as lines and reads them back in order, skipping damaged lines", () => {
@@ -46,8 +46,8 @@ describe("feedback records", () => {
     fs.mkdirSync(path.join(root, ".git", "refs", "heads"), { recursive: true });
     fs.writeFileSync(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
     fs.writeFileSync(path.join(root, ".git", "refs", "heads", "main"), "0123456789abcdef\n");
-    assert.equal(ronpiRevision(root), "0123456789");
-    assert.equal(ronpiRevision(tmp()), undefined);
+    assert.equal(torielRevision(root), "0123456789");
+    assert.equal(torielRevision(tmp()), undefined);
     const pi = tmp();
     fs.mkdirSync(path.join(pi, "dist"));
     fs.writeFileSync(path.join(pi, "package.json"), '{"version":"1.2.3"}');

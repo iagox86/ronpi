@@ -1,8 +1,8 @@
-// ronpi agents: tools that let a session in ronpi talk to its siblings. For now
-// one tool, `ronpi_message`, which delivers text to another session by id or
+// toriel agents: tools that let a session in toriel talk to its siblings. For now
+// one tool, `toriel_message`, which delivers text to another session by id or
 // name. The daemon does the work (resolving, waking an idle session, labelling
 // the message); this file is the thin client that asks it. Runs only in
-// children the ronpi daemon starts (RONPI_CHILD).
+// children the toriel daemon starts (TORIEL_CHILD).
 import { connect } from "node:net";
 
 interface Ctx {
@@ -19,7 +19,7 @@ interface Pi {
   }): void;
 }
 
-const sockPath = process.env.RONPI_SOCK ?? (process.env.XDG_RUNTIME_DIR ? `${process.env.XDG_RUNTIME_DIR}/ronpi.sock` : undefined);
+const sockPath = process.env.TORIEL_SOCK ?? (process.env.XDG_RUNTIME_DIR ? `${process.env.XDG_RUNTIME_DIR}/toriel.sock` : undefined);
 const TIMEOUT_MS = 30_000;
 
 /** One request/response exchange with the daemon; rejects with the daemon's error text. */
@@ -33,7 +33,7 @@ export function ask(sock: string, cmd: Record<string, unknown>, timeoutMs = TIME
       s.destroy();
       fn();
     };
-    const timer = setTimeout(() => done(() => reject(new Error("the ronpi daemon did not answer in time"))), timeoutMs);
+    const timer = setTimeout(() => done(() => reject(new Error("the toriel daemon did not answer in time"))), timeoutMs);
     s.on("connect", () => s.write(`${JSON.stringify({ ...cmd, id })}\n`));
     s.on("data", (chunk) => {
       buf += chunk.toString("utf8");
@@ -49,23 +49,23 @@ export function ask(sock: string, cmd: Record<string, unknown>, timeoutMs = TIME
         }
       }
     });
-    s.on("error", () => done(() => reject(new Error("cannot reach the ronpi daemon"))));
+    s.on("error", () => done(() => reject(new Error("cannot reach the toriel daemon"))));
   });
 }
 
 export const MESSAGE_DESCRIPTION =
-  "Send a message to another ronpi session, by its session id (preferred, a UUID) or its name. The text arrives in that session as a user message labelled with your name and id, and an idle session is started to read it. It returns once delivered, not when the other session answers; if you expect a reply it arrives later as a message to you. Use this ONLY when the user asks you to tell or ask another session something - never on your own initiative.";
+  "Send a message to another toriel session, by its session id (preferred, a UUID) or its name. The text arrives in that session as a user message labelled with your name and id, and an idle session is started to read it. It returns once delivered, not when the other session answers; if you expect a reply it arrives later as a message to you. Use this ONLY when the user asks you to tell or ask another session something - never on your own initiative.";
 
 export default function (pi: Pi) {
-  if (!process.env.RONPI_CHILD || !sockPath) {
+  if (!process.env.TORIEL_CHILD || !sockPath) {
     return;
   }
   const sock = sockPath;
   pi.registerTool({
-    name: "ronpi_message",
+    name: "toriel_message",
     label: "Message",
     description: MESSAGE_DESCRIPTION,
-    promptSnippet: "ronpi_message: send a message to another ronpi session (only when the user asks)",
+    promptSnippet: "toriel_message: send a message to another toriel session (only when the user asks)",
     parameters: {
       type: "object",
       properties: {
@@ -77,7 +77,7 @@ export default function (pi: Pi) {
     },
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const { to, text } = params as { to: string; text: string };
-      const from = process.env.RONPI_SESSION_ID ?? ctx.sessionManager?.getSessionId?.();
+      const from = process.env.TORIEL_SESSION_ID ?? ctx.sessionManager?.getSessionId?.();
       try {
         const r = await ask(sock, { type: "message", to, text, from });
         const who = `${r.to ?? "the session"}${r.toId ? ` (${r.toId})` : ""}`;

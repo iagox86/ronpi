@@ -1,4 +1,4 @@
-// The /commands ronpi handles itself inside a session (SESSION_COMMANDS);
+// The /commands toriel handles itself inside a session (SESSION_COMMANDS);
 // anything else typed with a leading slash goes to pi.
 import { readdirSync, type Dirent } from "node:fs";
 import * as path from "node:path";
@@ -93,7 +93,7 @@ export class SessionCommands {
 
   /**
    * Show, set (`text`) or remove (`clear`) the viewed session's comment. Only
-   * ronpi's own state: does not wake the session.
+   * toriel's own state: does not wake the session.
    */
   private comment(text: string, clear: boolean): void {
     const meta = this.viewedMeta();

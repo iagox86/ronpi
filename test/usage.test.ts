@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { adapterFor, describeUsage, reportFromHeaders, parseLitellm, parseZai } from "../pi/extensions/ronpi-usage.ts";
+import { adapterFor, describeUsage, reportFromHeaders, parseLitellm, parseZai } from "../pi/extensions/toriel-usage.ts";
 import type { SessionMeta, UsageReport } from "../src/shared.ts";
 import { buildStatusLine, usageText } from "../src/status.ts";
 

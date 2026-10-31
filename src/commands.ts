@@ -24,24 +24,24 @@ export const SWITCHER_COMMANDS = [
   {
     name: "new",
     description: "start a new session",
-    help: "Starts an empty session and opens it. It runs in the directory ronpi was started from unless -C says otherwise.\nExamples:\n  /new\n  /new -n \"Mealie import\" -C ~/projects/mealie\n  /new -a explore          (a read-only agent profile; see /agents)",
+    help: "Starts an empty session and opens it. It runs in the directory toriel was started from unless -C says otherwise.\nExamples:\n  /new\n  /new -n \"Mealie import\" -C ~/projects/mealie\n  /new -a explore          (a read-only agent profile; see /agents)",
     build: (cmd) => {
       cmd
         .option("-n, --name <name>", "name for the new session")
-        .option("-C, --cwd <dir>", "working directory for the new session (default: where ronpi was started)")
+        .option("-C, --cwd <dir>", "working directory for the new session (default: where toriel was started)")
         .option("-a, --agent <name>", "start it as an agent profile (see /agents; tab completes the name after -a)");
     },
     // flags are not completed in general; this one value is worth it
     complete: (typed, src) => agentCompletions(typed, src.agents()),
   },
   { name: "agents", description: "list the agent profiles (/new --agent <name> starts one) and any problems loading them",
-    help: "Agent profiles are markdown files (agents/ in the ronpi repo, ~/.config/ronpi/agents/, <project>/.ronpi/agents/). A broken file is listed under Problems and the rest still load. Format: agents/README.md." },
+    help: "Agent profiles are markdown files (agents/ in the toriel repo, ~/.config/toriel/agents/, <project>/.toriel/agents/). A broken file is listed under Problems and the rest still load. Format: agents/README.md." },
   { name: "stop", description: "stop the highlighted session's process (file kept; respawns on next prompt)",
     help: "Stops the highlighted session's pi process but keeps its file; the next message (or /reload, /model, !command) starts it again. Use it to free memory or MCP servers." },
   {
     name: "delete",
     description: "move the highlighted session to trash (asks twice; stops it if running)",
-    help: "Moves the session file to ronpi's trash; /restore brings it back. Without -y you press ctrl-x (or enter the command) a second time to confirm. A running session is stopped first. Sessions nested under it stay.",
+    help: "Moves the session file to toriel's trash; /restore brings it back. Without -y you press ctrl-x (or enter the command) a second time to confirm. A running session is stopped first. Sessions nested under it stay.",
     build: (cmd) => {
       cmd.option("-y, --yes", "skip the confirmation");
     },
@@ -72,7 +72,7 @@ export const SWITCHER_COMMANDS = [
   {
     name: "summarize",
     description: "write a one-line summary of the highlighted session into the Summary column",
-    help: "Asks a small model for a one-line summary of the transcript and stores it for the Summary column. The model defaults to summaryModel in the ronpi settings, else litellm/gemma4:12b. ronpi also refreshes summaries by itself while it is open.\nExamples:\n  /summarize\n  /summarize --all -c 1500 -m litellm/gemma4:12b",
+    help: "Asks a small model for a one-line summary of the transcript and stores it for the Summary column. The model defaults to summaryModel in the toriel settings, else litellm/gemma4:12b. toriel also refreshes summaries by itself while it is open.\nExamples:\n  /summarize\n  /summarize --all -c 1500 -m litellm/gemma4:12b",
     build: (cmd) => {
       cmd
         .option("-m, --model <model>", "model to summarize with, provider/id (default: summaryModel in settings, else litellm/gemma4:12b)")
@@ -101,7 +101,7 @@ export const SWITCHER_COMMANDS = [
   {
     name: "feedback",
     description: "record a note about a harness or extension problem, with this session and turn attached, for later investigation",
-    help: "Saves a note (with this session and the last turn attached) to ronpi's feedback log so a harness or extension problem can be looked at later. -l lists recent notes.\nExample: /feedback -c tool-quirk the grep tool ignored my path",
+    help: "Saves a note (with this session and the last turn attached) to toriel's feedback log so a harness or extension problem can be looked at later. -l lists recent notes.\nExample: /feedback -c tool-quirk the grep tool ignored my path",
     build: (cmd) => {
       cmd
         .option("-c, --category <name>", "short tag, e.g. tool-quirk, ui, extension")
@@ -109,8 +109,8 @@ export const SWITCHER_COMMANDS = [
         .argument("[text...]", "what went wrong");
     },
   },
-  { name: "adopt", description: "fork an external session into ronpi",
-    help: "Forks a session that is open in a plain pi process into ronpi (pi keeps its own copy). The fork is an ordinary session. Needs the session to have been saved by pi at least once." },
+  { name: "adopt", description: "fork an external session into toriel",
+    help: "Forks a session that is open in a plain pi process into toriel (pi keeps its own copy). The fork is an ordinary session. Needs the session to have been saved by pi at least once." },
   {
     name: "restore",
     description: "bring back a deleted session from the trash (pick from a list)",
@@ -120,27 +120,27 @@ export const SWITCHER_COMMANDS = [
     },
   },
   { name: "kill-daemon", description: "stop the daemon and every session it owns",
-    help: "Stops the daemon and every pi session it runs, ending any work in progress. Sessions can be resumed afterwards: their files are kept. Use /exit to leave ronpi without stopping anything." },
+    help: "Stops the daemon and every pi session it runs, ending any work in progress. Sessions can be resumed afterwards: their files are kept. Use /exit to leave toriel without stopping anything." },
   {
     name: "mouse",
-    description: "show or set ronpi's mouse handling: on, off or toggle (off: the terminal does select, copy and middle-click paste)",
-    help: "With no argument says whether ronpi has the mouse. Off hands the mouse back to the terminal: native select, copy and middle-click paste (also over ssh, where ronpi cannot read your clipboard), at the cost of ronpi's clicks (switcher rows, double-click on blocks), its own selection highlight and, in some terminals, wheel scrolling. On restores it. Not remembered across restarts. For one click only, hold shift instead.\nExamples:\n  /mouse\n  /mouse off\n  /mouse on\n  /mouse toggle",
+    description: "show or set toriel's mouse handling: on, off or toggle (off: the terminal does select, copy and middle-click paste)",
+    help: "With no argument says whether toriel has the mouse. Off hands the mouse back to the terminal: native select, copy and middle-click paste (also over ssh, where toriel cannot read your clipboard), at the cost of toriel's clicks (switcher rows, double-click on blocks), its own selection highlight and, in some terminals, wheel scrolling. On restores it. Not remembered across restarts. For one click only, hold shift instead.\nExamples:\n  /mouse\n  /mouse off\n  /mouse on\n  /mouse toggle",
     complete: (typed) => ["on", "off", "toggle"].filter((w) => w.startsWith(typed.trim().toLowerCase())),
     build: (cmd) => {
       cmd.argument("[state]", "on, off or toggle; leave out to show the current state");
     },
   },
   { name: "help", description: "list commands",
-    help: "Lists ronpi's own commands. <command> --help describes one. Anything else typed with a leading / goes to pi (skills, prompt templates, extension commands)." },
-  { name: "exit", description: "leave ronpi (sessions keep running)",
-    help: "Closes ronpi only. The daemon and every running session keep going; start ronpi again to reattach." },
-  { name: "quit", description: "leave ronpi (sessions keep running)",
-    help: "Same as /exit: closes ronpi only; the daemon and every running session keep going." },
+    help: "Lists toriel's own commands. <command> --help describes one. Anything else typed with a leading / goes to pi (skills, prompt templates, extension commands)." },
+  { name: "exit", description: "leave toriel (sessions keep running)",
+    help: "Closes toriel only. The daemon and every running session keep going; start toriel again to reattach." },
+  { name: "quit", description: "leave toriel (sessions keep running)",
+    help: "Same as /exit: closes toriel only; the daemon and every running session keep going." },
 ] as const satisfies readonly CommandSpec[];
 
 export type SwitcherCommandName = (typeof SWITCHER_COMMANDS)[number]["name"];
 
-/** Handled by ronpi inside a session; everything else goes to pi. */
+/** Handled by toriel inside a session; everything else goes to pi. */
 export const SESSION_COMMANDS = [
   {
     name: "btw",
@@ -162,15 +162,15 @@ export const SESSION_COMMANDS = [
   },
   {
     name: "mouse",
-    description: "show or set ronpi's mouse handling: on, off or toggle (off: the terminal does select, copy and middle-click paste)",
-    help: "With no argument says whether ronpi has the mouse. Off hands the mouse back to the terminal: native select, copy and middle-click paste (also over ssh, where ronpi cannot read your clipboard), at the cost of ronpi's clicks (switcher rows, double-click on blocks), its own selection highlight and, in some terminals, wheel scrolling. On restores it. Not remembered across restarts. For one click only, hold shift instead.\nExamples:\n  /mouse\n  /mouse off\n  /mouse on\n  /mouse toggle",
+    description: "show or set toriel's mouse handling: on, off or toggle (off: the terminal does select, copy and middle-click paste)",
+    help: "With no argument says whether toriel has the mouse. Off hands the mouse back to the terminal: native select, copy and middle-click paste (also over ssh, where toriel cannot read your clipboard), at the cost of toriel's clicks (switcher rows, double-click on blocks), its own selection highlight and, in some terminals, wheel scrolling. On restores it. Not remembered across restarts. For one click only, hold shift instead.\nExamples:\n  /mouse\n  /mouse off\n  /mouse on\n  /mouse toggle",
     complete: (typed) => ["on", "off", "toggle"].filter((w) => w.startsWith(typed.trim().toLowerCase())),
     build: (cmd) => {
       cmd.argument("[state]", "on, off or toggle; leave out to show the current state");
     },
   },
-  { name: "exit", description: "leave ronpi (sessions keep running)",
-    help: "Closes ronpi only. The daemon and every running session keep going; start ronpi again to reattach." },
+  { name: "exit", description: "leave toriel (sessions keep running)",
+    help: "Closes toriel only. The daemon and every running session keep going; start toriel again to reattach." },
   { name: "quit", description: "back to the session list",
     help: "Goes back to the list without stopping this session (use /park to also stop it)." },
   {
@@ -180,7 +180,7 @@ export const SESSION_COMMANDS = [
   },
   {
     name: "help",
-    description: "list ronpi's commands for a session",
+    description: "list toriel's commands for a session",
     help: "<command> --help describes one. Anything else typed with a leading / goes to pi (skills, prompt templates, extension commands).",
   },
   { name: "abort", description: "interrupt the running agent",
@@ -239,7 +239,7 @@ export const SESSION_COMMANDS = [
   {
     name: "feedback",
     description: "record a note about a harness or extension problem, with this session and turn attached, for later investigation",
-    help: "Saves a note (with this session and the last turn attached) to ronpi's feedback log. -l lists recent notes.\nExample: /feedback -c ui the popup covers the input",
+    help: "Saves a note (with this session and the last turn attached) to toriel's feedback log. -l lists recent notes.\nExample: /feedback -c ui the popup covers the input",
     build: (cmd) => {
       cmd
         .option("-c, --category <name>", "short tag, e.g. tool-quirk, ui, extension")
