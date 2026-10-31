@@ -717,6 +717,7 @@ export class SwitcherActions {
         const error = this.setFilter(text, call.opts.regex === true);
         this.h.switcher.hint = error ? `filter: ${error}` : "";
       },
+      mouse: async (call) => this.h.setMouse(call.args[0] ?? ""),
       exit: leave,
       quit: leave,
       help: async () => {

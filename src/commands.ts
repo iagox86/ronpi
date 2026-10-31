@@ -121,6 +121,15 @@ export const SWITCHER_COMMANDS = [
   },
   { name: "kill-daemon", description: "stop the daemon and every session it owns",
     help: "Stops the daemon and every pi session it runs, ending any work in progress. Sessions can be resumed afterwards: their files are kept. Use /exit to leave ronpi without stopping anything." },
+  {
+    name: "mouse",
+    description: "show or set ronpi's mouse handling: on, off or toggle (off: the terminal does select, copy and middle-click paste)",
+    help: "With no argument says whether ronpi has the mouse. Off hands the mouse back to the terminal: native select, copy and middle-click paste (also over ssh, where ronpi cannot read your clipboard), at the cost of ronpi's clicks (switcher rows, double-click on blocks), its own selection highlight and, in some terminals, wheel scrolling. On restores it. Not remembered across restarts. For one click only, hold shift instead.\nExamples:\n  /mouse\n  /mouse off\n  /mouse on\n  /mouse toggle",
+    complete: (typed) => ["on", "off", "toggle"].filter((w) => w.startsWith(typed.trim().toLowerCase())),
+    build: (cmd) => {
+      cmd.argument("[state]", "on, off or toggle; leave out to show the current state");
+    },
+  },
   { name: "help", description: "list commands",
     help: "Lists ronpi's own commands. <command> --help describes one. Anything else typed with a leading / goes to pi (skills, prompt templates, extension commands)." },
   { name: "exit", description: "leave ronpi (sessions keep running)",
@@ -149,6 +158,15 @@ export const SESSION_COMMANDS = [
     help: "Stores a longer note about why the session exists and where it stands. It is not drawn in the list; the switcher's /filter and ctrl-f search it. With no text the current comment is shown; /comment -c removes it.\nExamples:\n  /comment waiting on the vendor, retry the import after friday\n  /comment -c",
     build: (cmd) => {
       cmd.option("-c, --clear", "remove the comment").argument("[text...]", "the note (leave out to show the current one)");
+    },
+  },
+  {
+    name: "mouse",
+    description: "show or set ronpi's mouse handling: on, off or toggle (off: the terminal does select, copy and middle-click paste)",
+    help: "With no argument says whether ronpi has the mouse. Off hands the mouse back to the terminal: native select, copy and middle-click paste (also over ssh, where ronpi cannot read your clipboard), at the cost of ronpi's clicks (switcher rows, double-click on blocks), its own selection highlight and, in some terminals, wheel scrolling. On restores it. Not remembered across restarts. For one click only, hold shift instead.\nExamples:\n  /mouse\n  /mouse off\n  /mouse on\n  /mouse toggle",
+    complete: (typed) => ["on", "off", "toggle"].filter((w) => w.startsWith(typed.trim().toLowerCase())),
+    build: (cmd) => {
+      cmd.argument("[state]", "on, off or toggle; leave out to show the current state");
     },
   },
   { name: "exit", description: "leave ronpi (sessions keep running)",

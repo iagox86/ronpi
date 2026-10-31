@@ -61,4 +61,6 @@ export interface Host {
   copyText(text: string): Promise<boolean | string>;
   renderChrome(): void;
   dispose(): void;
+  /** /mouse: "on", "off", "toggle", or "" (just report the state); says what happened. */
+  setMouse(arg: string): void;
 }

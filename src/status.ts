@@ -102,6 +102,8 @@ export interface StatusInputs {
   relation?: { kind: "subagent"; parentName: string };
   /** Spend of everything below the viewed session. */
   childCost?: number;
+  /** /mouse off: ronpi has handed the mouse to the terminal. */
+  mouseOff?: boolean;
   /** Terminal width; low-priority segments are dropped to fit. */
   width?: number;
 }
@@ -181,6 +183,9 @@ function sessionSegments(inp: StatusInputs): Segment[] {
   }
   if (inp.childCost) {
     out.push({ text: dim(`+$${inp.childCost.toFixed(inp.childCost < 0.1 ? 3 : 2)} children`), drop: 3 });
+  }
+  if (inp.mouseOff) {
+    out.push({ text: attention("mouse off"), drop: 0 });
   }
   if (meta?.attachedElsewhere) {
     out.push({ text: attention("VIEW-ONLY"), drop: 0 });

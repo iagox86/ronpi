@@ -63,6 +63,7 @@ export class SessionCommands {
   private handlers(): Record<SessionCommandName, (call: Invocation) => void | Promise<void>> {
     const rename = (c: Invocation) => this.rename(c.args.join(" "));
     return {
+      mouse: (c) => this.h.setMouse(c.args[0] ?? ""),
       exit: () => this.h.dispose(),
       quit: () => this.h.switching.open(),
       park: () => this.park(),

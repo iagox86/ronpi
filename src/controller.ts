@@ -56,6 +56,8 @@ import {
 } from "./session-list.ts";
 import { type ClientCommand, type DaemonMessage, type DistributiveOmit, encodeLine, LineSplitter, type SessionMeta } from "./shared.ts";
 import { drifted } from "./drift.ts";
+import { MOUSE_OFF, MOUSE_ON, mouseNotice, nextMouse, parseMouseArg } from "./mouse.ts";
+import { osc52Output, osc52Result } from "./osc52.ts";
 import { agentDir } from "./install.ts";
 import { auditRequired, describeProblems } from "./required.ts";
 import { clearTransient, viewFromHistory } from "./resync.ts";
@@ -158,6 +160,8 @@ class Controller {
   /** Views still to be replaced by the daemon's replay after a reconnect. */
   private staleViews = new Set<string>();
   private disposing = false;
+  /** ronpi has the mouse (reporting on); /mouse off hands it to the terminal. */
+  private mouseOn = true;
   /** Required ronpi resources missing from the pi agent dir; re-checked with the session list. */
   private resourceNotice = "";
   private reqSeq = 0;
@@ -354,6 +358,22 @@ class Controller {
     }
     process.stdout.write("\nronpi daemon disconnected and did not come back; exiting.\n");
     this.dispose();
+  }
+
+  /** /mouse: report (no argument), turn on, off or toggle mouse reporting by writing the codes pi-tui wrote at start; pi-tui's own flag stays set so stop still resets the terminal. */
+  setMouse(arg: string): void {
+    const choice = parseMouseArg(arg);
+    if (!choice) {
+      this.notify(`mouse: "${arg.trim()}" is not on, off or toggle`);
+      return;
+    }
+    const next = nextMouse(this.mouseOn, choice);
+    const changed = next !== this.mouseOn;
+    if (changed) {
+      this.tui.terminal.write(next ? MOUSE_ON : MOUSE_OFF);
+      this.mouseOn = next;
+    }
+    this.notify(mouseNotice(next, changed));
   }
 
   dispose(): void {
@@ -600,6 +620,10 @@ class Controller {
    */
   onMiddleClick(): boolean {
     if (!this.clipboard.available) {
+      // said, not silent: the click still goes on to the terminal layer
+      if (this.canPaste()) {
+        this.notify(`middle-click paste is off: ${this.clipboard.problem}`);
+      }
       return false;
     }
     if (this.canPaste()) {
@@ -622,8 +646,9 @@ class Controller {
 
   private async copySelection(text: string): Promise<boolean | string> {
     if (!this.clipboard.available) {
-      this.tui.terminal.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
-      return true;
+      // no clipboard tool (typically over ssh): ask the terminal, which never says whether it did
+      this.tui.terminal.write(osc52Output(text));
+      return osc52Result();
     }
     const ok = await this.clipboard.writeText(text, ["clipboard", "primary"]);
     return ok ? true : copyFailureMessage(this.clipboard.backend);
@@ -1097,6 +1122,7 @@ class Controller {
       stats,
       flash: this.flash,
       dialog: this.openDialog(key),
+      mouseOff: !this.mouseOn,
       activity: key ? this.views.get(key)?.activity?.label : undefined,
       width,
       // a clipboard problem is worth a standing note while the switcher is up; it is not an error

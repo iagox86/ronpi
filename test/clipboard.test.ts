@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { Clipboard, copyFailureMessage, imageTypeOf, isTextType, onPath, type Runner } from "../src/clipboard.ts";
+import { Clipboard, copyFailureMessage, imageTypeOf, isTextType, onPath, runWrite, type Runner } from "../src/clipboard.ts";
 
 const WAYLAND = { WAYLAND_DISPLAY: "wayland-0" } as NodeJS.ProcessEnv;
 
@@ -86,6 +86,7 @@ describe("Clipboard tool check", () => {
 
   it("explains a session with no display at all", () => {
     assert.match(new Clipboard({} as NodeJS.ProcessEnv, undefined, have()).problem ?? "", /no Wayland or X11 display/);
+    assert.match(new Clipboard({ SSH_CONNECTION: "1 2 3 4" } as NodeJS.ProcessEnv, undefined, have()).problem ?? "", /over ssh.*ctrl-shift-v/);
   });
 
   it("finds real programs on the PATH and not made-up ones", () => {
@@ -114,5 +115,22 @@ describe("copyFailureMessage", () => {
     assert.equal(copyFailureMessage("wayland"), "Copy failed (wl-clipboard error; check WAYLAND_DISPLAY)");
     assert.equal(copyFailureMessage("x11"), "Copy failed (xclip error; check DISPLAY)");
     assert.equal(copyFailureMessage(undefined), "Copy failed (wl-clipboard error; check WAYLAND_DISPLAY)");
+  });
+});
+
+describe("runWrite", () => {
+  it("returns when the tool exits, not when a background process it left behind closes the pipes", async () => {
+    // wl-copy and xclip fork a process that keeps serving the selection
+    const started = Date.now();
+    await runWrite("sh", ["-c", "cat >/dev/null; sleep 3 & exit 0"], "text");
+    assert.ok(Date.now() - started < 1500, `waited ${Date.now() - started}ms for the background process`);
+  });
+
+  it("rejects when the tool exits non-zero", async () => {
+    await assert.rejects(runWrite("sh", ["-c", "cat >/dev/null; exit 3"], "text"), /exited 3/);
+  });
+
+  it("rejects when the tool is not installed", async () => {
+    await assert.rejects(runWrite("ronpi-no-such-tool", [], "text"));
   });
 });
