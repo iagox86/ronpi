@@ -72,6 +72,10 @@ export class ChildManager {
    * turn). Set steeringMode in the toriel settings to change.
    */
   async launch(s: DaemonSession, args: string[], cfg: ChildConfig): Promise<RpcClient> {
+    // spawn reports a missing cwd as "spawn node ENOENT", which points at the wrong thing
+    if (!fs.existsSync(s.cwd)) {
+      throw new Error(`working directory no longer exists: ${s.cwd} (moved or deleted; recreate it or symlink it to the new location)`);
+    }
     const client = new RpcClient({
       cliPath: cfg.piCli,
       cwd: s.cwd,
