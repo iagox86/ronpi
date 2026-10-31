@@ -14,14 +14,33 @@ export interface DialogRequest {
   placeholder?: string;
   /** Which session raised the dialog, e.g. "Session 3 'Worker'"; set by the controller. */
   origin?: string;
+  /** When the controller received it (ms); set by withOrigin. */
+  shownAt?: number;
 }
+
+/**
+ * Affirmative answers are ignored this long after a dialog appears: a prompt that
+ * pops up mid-sentence must not be answered by the keys still being typed.
+ */
+export const DIALOG_GUARD_MS = 700;
 
 /**
  * Label a dialog request with the session that raised it. The numeric id
  * goes in because session names can repeat.
  */
 export function withOrigin(d: DialogRequest, id: number, name?: string): DialogRequest {
-  return { ...d, origin: name ? `Session ${id} '${name}'` : `Session ${id}` };
+  return { ...d, origin: name ? `Session ${id} '${name}'` : `Session ${id}`, shownAt: Date.now() };
+}
+
+/** Whether an answer that grants something must still be ignored (denying never is). */
+export function grantGuarded(d: DialogRequest, fields: Record<string, unknown>, now = Date.now()): boolean {
+  const denies = fields.confirmed === false || fields.cancelled === true || (d.method === "select" && fields.value === denyOption(d.options ?? []));
+  return !denies && d.shownAt !== undefined && now - d.shownAt < DIALOG_GUARD_MS;
+}
+
+/** Keys that would type into the box or submit it: a pending prompt owns the keyboard, so these are swallowed. */
+export function isTypingKey(data: string): boolean {
+  return data === "\r" || data === "\n" || data === "\x7f" || data === "\b" || (data.length > 0 && !/[\x00-\x1f\x7f]/.test(data) && !data.startsWith("\x1b"));
 }
 
 /** Free-text dialogs: answered by typing in the input box. */

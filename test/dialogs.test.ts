@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { DialogPanel, dialogAnswer, dialogLines, dialogPrompt, withOrigin } from "../src/dialogs.ts";
+import { DIALOG_GUARD_MS, DialogPanel, dialogAnswer, dialogLines, dialogPrompt, grantGuarded, isTypingKey, withOrigin } from "../src/dialogs.ts";
 
 const confirm = { id: "1", method: "confirm", title: "Run rm?", message: "rm -rf x" };
 const select = { id: "2", method: "select", title: "Pick", options: ["a", "b", "c"] };
@@ -105,5 +105,36 @@ describe("dialog rendering", () => {
   it("leaves unlabelled dialogs unchanged", () => {
     assert.doesNotMatch(dialogLines(perm, 0, 100).join("\n"), /Session/);
     assert.equal(dialogPrompt(perm), "PERMISSION pending - up/down choose, enter or 1-9 answer, tab reason, esc deny");
+  });
+});
+
+describe("modal permission prompt", () => {
+  const perm = { id: "9", method: "select", options: ["Yes", "No"], shownAt: 1000 };
+
+  it("ignores a grant in the first moments after the prompt appears, so typing cannot allow it", () => {
+    assert.equal(grantGuarded(perm, { value: "Yes" }, 1000 + DIALOG_GUARD_MS - 1), true);
+    assert.equal(grantGuarded(perm, { value: "Yes" }, 1000 + DIALOG_GUARD_MS), false);
+    assert.equal(grantGuarded({ ...confirm, shownAt: 1000 }, { confirmed: true }, 1100), true);
+  });
+
+  it("always lets a deny through", () => {
+    assert.equal(grantGuarded(perm, { value: "No" }, 1001), false);
+    assert.equal(grantGuarded({ ...confirm, shownAt: 1000 }, { confirmed: false }, 1001), false);
+  });
+
+  it("does not guard a dialog with no arrival time", () => {
+    assert.equal(grantGuarded({ ...perm, shownAt: undefined }, { value: "Yes" }, 1001), false);
+  });
+
+  it("stamps the arrival time when labelling a request", () => {
+    assert.ok((withOrigin(select, 1).shownAt ?? 0) > 0);
+  });
+
+  it("treats text and enter as typing, but not escape sequences or control chords", () => {
+    assert.equal(isTypingKey("a"), true);
+    assert.equal(isTypingKey("\r"), true);
+    assert.equal(isTypingKey("\x7f"), true);
+    assert.equal(isTypingKey("\x1b[A"), false);
+    assert.equal(isTypingKey("\x03"), false);
   });
 });

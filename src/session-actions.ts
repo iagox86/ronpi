@@ -3,7 +3,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
-import { dialogAnswer, isTextDialog, takesReason } from "./dialogs.ts";
+import { dialogAnswer, grantGuarded, isTextDialog, isTypingKey, takesReason } from "./dialogs.ts";
 import { isPlainLeft } from "./editor.ts";
 import { fmtAge } from "./format.ts";
 import { TRASH_DIR } from "./config.ts";
@@ -265,7 +265,11 @@ export class SessionActions {
     }
     const fields = dialogAnswer(dialog, raw, panel.highlighted);
     if (!fields) {
-      return false;
+      // modal: typing must not land in the message box while a permission is pending
+      return isTypingKey(data) || matchesKey(data, Key.enter);
+    }
+    if (grantGuarded(dialog, fields)) {
+      return true;
     }
     this.h.send({
       type: "ui_response",
