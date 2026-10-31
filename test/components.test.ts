@@ -32,6 +32,12 @@ describe("message components", () => {
     assert.equal(strip(out[0] as string).trim(), "");
     assert.ok(out.some((l) => strip(l).includes("hello")));
   });
+
+  it("hides fence lines in a user message, such as an expanded large paste, but keeps the pasted text", () => {
+    const out = new UserMessage("look:\n\n```\npasted line\n```", mdTheme, 1).render(60).map(strip).join("\n");
+    assert.doesNotMatch(out, /fence/);
+    assert.match(out, /pasted line/);
+  });
 });
 
 describe("Dimmed", () => {
@@ -46,6 +52,14 @@ describe("CompactionRow", () => {
     const row = new CompactionRow({ role: "compactionSummary", summary: "s", tokensBefore: 50110, timestamp: 0 }, mdTheme, 1);
     const text = row.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
     assert.match(text, /Compacted from 50,110 tokens \(ctrl-o to expand\)/);
+  });
+
+  it("hides fence lines in the expanded summary", () => {
+    const row = new CompactionRow({ role: "compactionSummary", summary: "```\nkept\n```", tokensBefore: 1, timestamp: 0 }, mdTheme, 1);
+    row.setExpanded(true);
+    const text = row.render(80).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+    assert.doesNotMatch(text, /fence/);
+    assert.match(text, /kept/);
   });
 });
 

@@ -48,10 +48,13 @@ export class AssistantMessage extends AssistantMessageComponent {
   }
 }
 
-/** User message with a blank line above, so it doesn't butt against the previous output. */
+/**
+ * User message with a blank line above, so it doesn't butt against the previous output.
+ * Fence lines are dropped as for assistant text: a large paste expands into a fenced block.
+ */
 export class UserMessage extends UserMessageComponent {
   override render(width: number): string[] {
-    return ["", ...super.render(width)];
+    return ["", ...super.render(width).filter((line) => !line.includes(FENCE_MARK))];
   }
 }
 
@@ -89,6 +92,6 @@ export class Dimmed implements Component {
  */
 export class CompactionRow extends CompactionSummaryMessageComponent {
   override render(width: number): string[] {
-    return super.render(width).map((l) => l.replace(/\(((?:\x1b\[[0-9;]*m)*) to expand\)/, "($1ctrl-o to expand)"));
+    return super.render(width).filter((l) => !l.includes(FENCE_MARK)).map((l) => l.replace(/\(((?:\x1b\[[0-9;]*m)*) to expand\)/, "($1ctrl-o to expand)"));
   }
 }
