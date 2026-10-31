@@ -7,6 +7,7 @@ import { BashExecutionComponent, ToolExecutionComponent } from "@earendil-works/
 import { AssistantMessage, CompactionRow, UserMessage } from "./components.ts";
 import { type ActivityState, reduceActivity } from "./activity.ts";
 import { messagesAdded } from "./drift.ts";
+import { INJECT_TYPE } from "./daemon-bridge.ts";
 import { binaryReadDisplay } from "./binary-view.ts";
 import { prettyError } from "./error-format.ts";
 import { toolDefinitionFor } from "./tool-defs.ts";
@@ -228,9 +229,17 @@ function appendCall(view: SessionView, env: EventEnv, call: ToolCall): void {
   env.addItem({ kind: "tools", component: run });
 }
 
+/** The custom message type sessions recorded before the rename; they still render as injections. */
+const LEGACY_INJECT_TYPE = "ronpi-inject";
+
+/** True for the custom message type of a session-bridge injection, current or pre-rename. */
+export function isInjectType(customType: string | undefined): boolean {
+  return customType === INJECT_TYPE || customType === LEGACY_INJECT_TYPE;
+}
+
 /** A session-bridge injection: a custom message the daemon delivered, shown like a received user message. */
 function isInject(m: { role?: string; customType?: string } | undefined): m is { role: "custom"; customType: string; content?: unknown } {
-  return m?.role === "custom" && m?.customType === "ronpi-inject";
+  return m?.role === "custom" && isInjectType(m?.customType);
 }
 
 /** Apply one live pi event to a session view. */
@@ -245,7 +254,7 @@ export function applyEvent(view: SessionView, ev: Record<string, unknown>, env: 
     case "entry_appended": {
       // an inject delivered at a turn boundary arrives as an appended entry, not as message events
       const e = ev.entry as { type?: string; customType?: string; content?: unknown } | undefined;
-      if (e?.type === "custom_message" && e.customType === "ronpi-inject") {
+      if (e?.type === "custom_message" && isInjectType(e.customType)) {
         env.addItem(userItem(messageText({ content: e.content }), env.tui));
         effects.messageEnded = true;
       }
@@ -423,7 +432,7 @@ export function itemsFromMessages(messages: unknown[], tui: TuiAltScreen, cwd: s
       items.push(bashItem(m as unknown as BashExecutionMessage, tui));
     } else if (m.role === "user") {
       items.push(userItem(messageText(m), tui));
-    } else if (m.role === "custom" && m.customType === "ronpi-inject") {
+    } else if (m.role === "custom" && isInjectType(m.customType)) {
       items.push(userItem(messageText(m), tui));
     } else if (m.role === "assistant") {
       items.push(assistantItem(m as Record<string, unknown>));

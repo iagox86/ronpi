@@ -1,5 +1,5 @@
 {
-  "name": "ronpi",
+  "name": "toriel",
   "private": true,
   "type": "module",
   "version": "0.0.1",
@@ -15,10 +15,10 @@
     "typescript": "^7.0.2"
   },
   "bin": {
-    "ronpi": "ronpi.ts"
+    "toriel": "toriel.ts"
   },
   "scripts": {
-    "start": "node ronpi.ts",
+    "start": "node toriel.ts",
     "install-pi": "node src/install.ts",
     "lint": "biome lint .",
     "test": "node --test test/*.test.ts",

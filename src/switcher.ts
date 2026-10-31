@@ -309,7 +309,7 @@ export class Switcher extends Container implements Focusable {
     const lines: string[] = [];
     const budgetText =
       this.budget.cost > 0 ? ` \u00b7 $${this.budget.cost.toFixed(2)} \u00b7 ${fmtTokens(this.budget.tokens)} tok` : "";
-    lines.push(dim(`ronpi  ${this.counts.running} running, ${this.counts.waiting} waiting on permission${budgetText}`));
+    lines.push(dim(`toriel  ${this.counts.running} running, ${this.counts.waiting} waiting on permission${budgetText}`));
     if (this.filterNote) {
       lines.push(attention(truncateToWidth(this.filterNote, width)));
     }

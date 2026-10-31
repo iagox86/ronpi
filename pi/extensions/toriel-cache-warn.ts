@@ -1,4 +1,4 @@
-// ronpi cache warning: before a prompt is sent into a large context whose
+// toriel cache warning: before a prompt is sent into a large context whose
 // provider-side prompt cache has probably expired, say so (a notice only: the
 // prompt is always sent). A cold cache makes the whole context bill as fresh input.
 //
@@ -6,7 +6,7 @@
 // usage records. A turn whose prompt was mostly cacheRead was a hit after the
 // gap since the previous turn; one that was almost all fresh input was a miss.
 // The longest hit gap and shortest miss gap per model are kept in
-// ~/.config/ronpi/cache-ttl.json, and the existing session history is replayed
+// ~/.config/toriel/cache-ttl.json, and the existing session history is replayed
 // on start so a long-lived session teaches it immediately. With no miss seen
 // yet nothing is warned: a wrong warning is worse than none.
 
@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-// Only the slice of pi's extension API this file uses (see ronpi-usage.ts).
+// Only the slice of pi's extension API this file uses (see toriel-usage.ts).
 interface Usage {
   input?: number;
   cacheRead?: number;
@@ -57,7 +57,7 @@ export const MIN_GAP_MS = 60_000;
 export const MIN_PROMPT_TOKENS = 2_000;
 export const NOTIFY_TOKENS = 50_000;
 
-export const TABLE_FILE = path.join(os.homedir(), ".config", "ronpi", "cache-ttl.json");
+export const TABLE_FILE = path.join(os.homedir(), ".config", "toriel", "cache-ttl.json");
 
 export const promptTokens = (u: Usage): number => (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
 
@@ -169,7 +169,7 @@ function save(file: string, table: Table): void {
 }
 
 export default function (pi: Pi) {
-  const file = process.env.RONPI_CACHE_TTL_FILE ?? TABLE_FILE;
+  const file = process.env.TORIEL_CACHE_TTL_FILE ?? TABLE_FILE;
   const table = load(file);
   for (const l of Object.values(table)) {
     l.minMiss ??= Infinity;

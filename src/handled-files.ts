@@ -1,7 +1,7 @@
-// Session files ronpi has run a child on, persisted across daemon restarts. A
+// Session files toriel has run a child on, persisted across daemon restarts. A
 // restarted daemon forgets its registry, and the file of a session it was
 // running a minute ago has a fresh mtime; without this record the "may be open
-// in another pi" check (daemon-handlers-lifecycle.ts) would ask about ronpi's own
+// in another pi" check (daemon-handlers-lifecycle.ts) would ask about toriel's own
 // sessions. Keyed by absolute path; only ever grows (a few hundred bytes a session).
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -20,7 +20,7 @@ export function wasHandled(sessionFile: string, file = HANDLED_FILE): boolean {
   return load(file).has(sessionFile);
 }
 
-/** Remember that ronpi ran a child on `sessionFile`; a write failure is logged by the caller, not fatal. */
+/** Remember that toriel ran a child on `sessionFile`; a write failure is logged by the caller, not fatal. */
 export function recordHandled(sessionFile: string, file = HANDLED_FILE): void {
   const set = load(file);
   if (set.has(sessionFile)) {

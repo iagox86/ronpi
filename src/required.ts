@@ -1,6 +1,6 @@
-// The ronpi-shipped pi resources that ronpi needs to function, in one place:
+// The toriel-shipped pi resources that toriel needs to function, in one place:
 // the audit at daemon start (`auditRequired`) and the tools every child is
-// started with (`RONPI_TOOLS`) both read this list.
+// started with (`TORIEL_TOOLS`) both read this list.
 import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 
@@ -16,15 +16,15 @@ export interface Required {
 }
 
 export const REQUIRED: readonly Required[] = [
-  { kind: "extensions", name: "ronpi-session-bridge.ts", why: "messages from other sessions fall back to pi's lossy steering queue" },
-  { kind: "extensions", name: "ronpi-presence.ts", why: "sessions are not announced to each other" },
-  { kind: "extensions", name: "ronpi-agents.ts", why: "the ronpi_message tool (messaging other sessions) is missing", tool: "ronpi_message" },
-  { kind: "extensions", name: "ronpi-usage.ts", why: "the ronpi_usage tool and usage reporting are missing", tool: "ronpi_usage" },
-  { kind: "skills", name: "messaging", why: "agents are not told how to use ronpi_message" },
+  { kind: "extensions", name: "toriel-session-bridge.ts", why: "messages from other sessions fall back to pi's lossy steering queue" },
+  { kind: "extensions", name: "toriel-presence.ts", why: "sessions are not announced to each other" },
+  { kind: "extensions", name: "toriel-agents.ts", why: "the toriel_message tool (messaging other sessions) is missing", tool: "toriel_message" },
+  { kind: "extensions", name: "toriel-usage.ts", why: "the toriel_usage tool and usage reporting are missing", tool: "toriel_usage" },
+  { kind: "skills", name: "messaging", why: "agents are not told how to use toriel_message" },
 ];
 
-/** `--tools` modifiers that add ronpi's tools to whatever loadout a session has or restores. */
-export const RONPI_TOOLS: readonly string[] = REQUIRED.flatMap((r) => (r.tool ? [`+${r.tool}`] : []));
+/** `--tools` modifiers that add toriel's tools to whatever loadout a session has or restores. */
+export const TORIEL_TOOLS: readonly string[] = REQUIRED.flatMap((r) => (r.tool ? [`+${r.tool}`] : []));
 
 export interface Problem {
   item: Required;
@@ -57,5 +57,5 @@ export function describeProblems(problems: readonly Problem[]): string | undefin
     return undefined;
   }
   const names = problems.map((p) => `${p.item.name} (${p.state})`).join(", ");
-  return `ronpi resources not installed: ${names} - run node src/install.ts, then restart affected sessions`;
+  return `toriel resources not installed: ${names} - run node src/install.ts, then restart affected sessions`;
 }

@@ -9,7 +9,7 @@ let dir: string;
 const saved = { data: process.env.XDG_DATA_HOME, agent: process.env.PI_CODING_AGENT_DIR };
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-groups-"));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-groups-"));
   process.env.XDG_DATA_HOME = path.join(dir, "data");
   process.env.PI_CODING_AGENT_DIR = path.join(dir, "agent");
 });

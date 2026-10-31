@@ -9,7 +9,7 @@ import { listTrashedSessions, restoreTrashedSession, trashSessionFile } from "..
 let dir: string;
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-trash-"));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-trash-"));
 });
 
 afterEach(() => {
@@ -49,7 +49,7 @@ describe("trashSessionFile", () => {
 });
 
 function setup() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-trash-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-trash-"));
   const sessions = path.join(dir, "sessions", "proj");
   fs.mkdirSync(sessions, { recursive: true });
   const file = path.join(sessions, "2026_abc.jsonl");

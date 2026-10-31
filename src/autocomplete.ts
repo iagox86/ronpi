@@ -12,7 +12,7 @@ import { type CompletionSources, usageHint } from "./cli.ts";
 import { type CommandSpec, SESSION_COMMANDS, SWITCHER_COMMANDS } from "./commands.ts";
 
 export interface AutocompleteContext {
-  /** Switcher box: only ronpi's commands, no file completion. */
+  /** Switcher box: only toriel's commands, no file completion. */
   switcher: boolean;
   /** Commands pi reported for the viewed session. */
   piCommands: ReadonlyArray<{ name: string; description?: string }>;
@@ -21,7 +21,7 @@ export interface AutocompleteContext {
   sources?: CompletionSources;
 }
 
-/** The slash commands that apply in `ctx`; ronpi's own win a name clash with pi's. */
+/** The slash commands that apply in `ctx`; toriel's own win a name clash with pi's. */
 export function commandsFor(ctx: AutocompleteContext): SlashCommand[] {
   const own: readonly CommandSpec[] = ctx.switcher ? SWITCHER_COMMANDS : SESSION_COMMANDS;
   const taken = new Set(own.map((c) => c.name));

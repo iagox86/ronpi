@@ -31,7 +31,7 @@ export async function handlePrompt(
     }
     log(`prompt for file ${cmd.sessionFile} (confirmFork=${cmd.confirmFork ? "yes" : "no"})`);
     if (ctx.presence.has(cmd.sessionFile)) {
-      throw new Error("session is live in another pi process - /adopt to fork it into ronpi");
+      throw new Error("session is live in another pi process - /adopt to fork it into toriel");
     }
     s = ctx.registry.byFile(cmd.sessionFile);
     if (!s) {
@@ -47,7 +47,7 @@ export async function handlePrompt(
       } catch {
         // stat failure: treat as old
       }
-      // a file ronpi ran before a daemon restart is its own, however fresh its mtime
+      // a file toriel ran before a daemon restart is its own, however fresh its mtime
       if (Date.now() - mtimeMs < 60_000 && !cmd.confirmFork && !wasHandled(cmd.sessionFile)) {
         res(true, undefined, { confirmFork: true, ageMs: Math.round(Date.now() - mtimeMs) });
         return;
@@ -270,7 +270,7 @@ export function handleExternalRegister(
   const file = cmd.sessionFile;
   if (ctx.registry.all().some((s) => (s.child as { process?: { pid?: number } } | undefined)?.process?.pid === cmd.pid)) {
     // a daemon-owned child loaded the presence extension before the
-    // RONPI_CHILD guard existed - never treat our own children as
+    // TORIEL_CHILD guard existed - never treat our own children as
     // external
     log(`ignoring self-registration from daemon child (pid ${cmd.pid})`);
     res(true);
@@ -287,7 +287,7 @@ export function handleExternalRegister(
   res(true);
 }
 
-/** Fork a session that is live in some other pi process into a ronpi-managed one. */
+/** Fork a session that is live in some other pi process into a toriel-managed one. */
 export async function handleAdopt(
   ctx: DaemonContext,
   cmd: Cmd<"adopt">,

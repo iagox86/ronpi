@@ -1,19 +1,19 @@
-// ronpi presence: registers this pi process with the ronpi daemon (if one is
+// toriel presence: registers this pi process with the toriel daemon (if one is
 // running) so the switcher can show that the session is live in an external
 // pi process and avoid double-driving it. Best-effort: when no daemon is
 // running, everything here is a silent no-op.
 import { connect } from "node:net";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const sockPath = process.env.RONPI_SOCK ?? (process.env.XDG_RUNTIME_DIR ? `${process.env.XDG_RUNTIME_DIR}/ronpi.sock` : undefined);
+const sockPath = process.env.TORIEL_SOCK ?? (process.env.XDG_RUNTIME_DIR ? `${process.env.XDG_RUNTIME_DIR}/toriel.sock` : undefined);
 
 export default function (pi: ExtensionAPI) {
   // daemon-owned children register through the daemon itself - never as
   // "external" processes
-  if (process.env.RONPI_CHILD) {
+  if (process.env.TORIEL_CHILD) {
     return;
   }
-  // No socket location means ronpi can't be running (config.ts refuses to start
+  // No socket location means toriel can't be running (config.ts refuses to start
   // without one); stay quiet rather than break plain pi.
   if (!sockPath) {
     return;

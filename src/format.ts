@@ -45,7 +45,7 @@ export function lastLine(text: string, width = 90): string {
 }
 
 /** Display label for a session's first message: a local-command wrapper
- * (ronpi's own `!command` prompt format, see local-command.ts) renders as
+ * (toriel's own `!command` prompt format, see local-command.ts) renders as
  * `$ command` - the raw text would be the whole caveat wrapper - and
  * anything else passes through flat. Deliberately looser than
  * parseLocalCommand: only the command block is required, so a truncated or

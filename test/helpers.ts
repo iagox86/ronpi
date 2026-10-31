@@ -18,17 +18,17 @@ export interface Harness {
 }
 
 export async function startDaemon(extraEnv: Record<string, string> = {}): Promise<Harness> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-test-"));
-  const sock = path.join(dir, "ronpi.sock");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-test-"));
+  const sock = path.join(dir, "toriel.sock");
   const sessionsDir = path.join(dir, "sessions");
   const env = {
     ...process.env,
     // the daemon's RpcClient spawns plain `node` from PATH
     PATH: `${path.dirname(process.execPath)}:${process.env.PATH ?? ""}`,
-    RONPI_SOCK: sock,
-    RONPI_LOG: path.join(dir, "daemon.log"),
-    RONPI_TRASH: path.join(dir, "trash"),
-    RONPI_PI_CLI: FAKE_PI,
+    TORIEL_SOCK: sock,
+    TORIEL_LOG: path.join(dir, "daemon.log"),
+    TORIEL_TRASH: path.join(dir, "trash"),
+    TORIEL_PI_CLI: FAKE_PI,
     XDG_DATA_HOME: path.join(dir, "data"),
     FAKE_PI_DIR: sessionsDir,
     ...extraEnv,

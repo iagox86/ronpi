@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { recordHandled, wasHandled } from "../src/handled-files.ts";
 
-const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-handled-")), "sub", "handled.json");
+const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "toriel-handled-")), "sub", "handled.json");
 
 describe("handled files", () => {
   it("remembers a recorded file, and only that one", () => {

@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { formatLocalCommand } from "../src/local-command.ts";
-import { applyDelta, applyEvent, type AssistantItem, dropEcho, echoUser, type Item, itemsFromFile, itemsFromMessages, errorRow, softFailure, lengthNotice, showRawError, messagesFromFile, newView } from "../src/transcript.ts";
+import { applyDelta, applyEvent, type AssistantItem, dropEcho, echoUser, type Item, itemsFromFile, itemsFromMessages, errorRow, softFailure, lengthNotice, showRawError, messagesFromFile, newView, isInjectType } from "../src/transcript.ts";
 
 function assistant(content: unknown[] = []): AssistantItem {
   return { kind: "assistant", component: undefined as never, partial: { content }, text: new Map(), thinking: new Map() };
@@ -197,7 +197,7 @@ describe("applyEvent", () => {
 
 describe("messagesFromFile", () => {
   it("returns only message entries and tolerates a torn trailing line", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-transcript-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-transcript-"));
     const file = path.join(dir, "s.jsonl");
     fs.writeFileSync(
       file,
@@ -217,7 +217,7 @@ describe("messagesFromFile", () => {
 
 describe("compaction in a session file", () => {
   function file(entries: unknown[]): string {
-    const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-compact-")), "s.jsonl");
+    const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "toriel-compact-")), "s.jsonl");
     fs.writeFileSync(f, `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`);
     return f;
   }
@@ -294,5 +294,14 @@ describe("softFailure", () => {
     assert.equal(softFailure(text('{"items":[],"success":"false"}')), false);
     assert.equal(softFailure(text("not json {")), false);
     assert.equal(softFailure(undefined), false);
+  });
+});
+
+describe("isInjectType", () => {
+  it("accepts the current type and the one sessions recorded before the rename", () => {
+    assert.equal(isInjectType("toriel-inject"), true);
+    assert.equal(isInjectType("ronpi-inject"), true);
+    assert.equal(isInjectType("something-else"), false);
+    assert.equal(isInjectType(undefined), false);
   });
 });

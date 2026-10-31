@@ -1,6 +1,6 @@
 // Agent profiles: a markdown file with frontmatter that decides how a session
 // is launched (tools, model, system prompt). The format follows Claude Code's
-// agent files so they can be pasted in; ronpi never reads Claude's own folders.
+// agent files so they can be pasted in; toriel never reads Claude's own folders.
 //
 //   ---
 //   name: explore
@@ -227,14 +227,14 @@ export interface AgentDirs {
   dirs: Array<[string, string]>;
 }
 
-/** Shipped agents, the user's, then the project's. `RONPI_AGENTS_DIR` replaces the user directory (tests). */
+/** Shipped agents, the user's, then the project's. `TORIEL_AGENTS_DIR` replaces the user directory (tests). */
 export function agentDirs(cwd: string, env: NodeJS.ProcessEnv = process.env): AgentDirs {
   const config = env.XDG_CONFIG_HOME ?? path.join(env.HOME ?? "", ".config");
   return {
     dirs: [
       [path.join(import.meta.dirname, "..", "agents"), "built-in"],
-      [env.RONPI_AGENTS_DIR ?? path.join(config, "ronpi", "agents"), "user"],
-      [path.join(cwd, ".ronpi", "agents"), "project"],
+      [env.TORIEL_AGENTS_DIR ?? path.join(config, "toriel", "agents"), "user"],
+      [path.join(cwd, ".toriel", "agents"), "project"],
     ],
   };
 }
@@ -282,7 +282,7 @@ export function findAgent(name: string, cwd: string, env: NodeJS.ProcessEnv = pr
   const found = agents.find((a) => a.name === name);
   if (!found) {
     const names = agents.map((a) => a.name).join(", ");
-    throw new Error(`no agent called "${name}"${names ? ` (have: ${names})` : " (none defined; see agents/ in the ronpi repo)"}`);
+    throw new Error(`no agent called "${name}"${names ? ` (have: ${names})` : " (none defined; see agents/ in the toriel repo)"}`);
   }
   return found;
 }

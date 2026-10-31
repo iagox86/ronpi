@@ -1,5 +1,5 @@
 // Tracks session files open in EXTERNAL pi processes, reported by the
-// ronpi-presence extension (register on session start, heartbeat every 30s,
+// toriel-presence extension (register on session start, heartbeat every 30s,
 // deregister on shutdown). Pure bookkeeping: clock, pid liveness and file
 // existence are injectable so it can be tested without real processes.
 import * as fs from "node:fs";

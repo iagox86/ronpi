@@ -5,7 +5,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import { prettyError } from "./error-format.ts";
 
 /** What pi-tui's markdown draws for a fence line; such lines are dropped. */
-export const FENCE_MARK = "⁣ronpi-fence⁣";
+export const FENCE_MARK = "⁣toriel-fence⁣";
 
 const ESCAPES = /\x1b\[[0-9;]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
@@ -84,7 +84,7 @@ export class Dimmed implements Component {
 
 /**
  * pi's compaction row, with its expand hint filled in: pi looks the key up in
- * its own app keybindings, which ronpi does not load, so the hint comes out as
+ * its own app keybindings, which toriel does not load, so the hint comes out as
  * "( to expand)". Our toggle for it is ctrl-o.
  */
 export class CompactionRow extends CompactionSummaryMessageComponent {

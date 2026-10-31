@@ -66,7 +66,7 @@ describe("what the strip shows", () => {
 });
 
 describe("pi events that show an inject landing", () => {
-  const custom = { customType: "ronpi-inject", details: { id: "b4" } };
+  const custom = { customType: "toriel-inject", details: { id: "b4" } };
 
   it("reads the id from an appended entry (boundary delivery) and a finished message (idle delivery)", () => {
     assert.equal(injectedId({ type: "entry_appended", entry: { type: "custom_message", ...custom } }), "b4");
@@ -77,12 +77,12 @@ describe("pi events that show an inject landing", () => {
     assert.equal(injectedId({ type: "message_start", message: { role: "custom", ...custom } }), undefined);
     assert.equal(injectedId({ type: "entry_appended", entry: { type: "custom_message", customType: "other", details: { id: "b4" } } }), undefined);
     assert.equal(injectedId({ type: "message_end", message: { role: "user" } }), undefined);
-    assert.equal(injectedId({ type: "entry_appended", entry: { customType: "ronpi-inject" } }), undefined);
+    assert.equal(injectedId({ type: "entry_appended", entry: { customType: "toriel-inject" } }), undefined);
   });
 });
 
 describe("bridge status records", () => {
-  const record = (r: unknown) => ({ method: "setStatus", statusKey: "ronpi-bridge", statusText: JSON.stringify(r) });
+  const record = (r: unknown) => ({ method: "setStatus", statusKey: "toriel-bridge", statusText: JSON.stringify(r) });
 
   it("parses injected, failed and requeued reports", () => {
     assert.deepEqual(parseBridgeReport(record({ v: 1, kind: "injected", id: "b1" })), { kind: "injected", id: "b1" });
@@ -91,9 +91,9 @@ describe("bridge status records", () => {
   });
 
   it("leaves other records and malformed ones alone", () => {
-    assert.equal(parseBridgeReport({ method: "setStatus", statusKey: "ronpi-usage", statusText: "{}" }), undefined);
-    assert.equal(parseBridgeReport({ method: "notify", statusKey: "ronpi-bridge" }), undefined);
-    assert.equal(parseBridgeReport({ method: "setStatus", statusKey: "ronpi-bridge", statusText: "not json" }), undefined);
+    assert.equal(parseBridgeReport({ method: "setStatus", statusKey: "toriel-usage", statusText: "{}" }), undefined);
+    assert.equal(parseBridgeReport({ method: "notify", statusKey: "toriel-bridge" }), undefined);
+    assert.equal(parseBridgeReport({ method: "setStatus", statusKey: "toriel-bridge", statusText: "not json" }), undefined);
     assert.equal(parseBridgeReport(record({ v: 2, kind: "injected", id: "b1" })), undefined);
     assert.equal(parseBridgeReport(record({ v: 1, kind: "injected" })), undefined);
   });

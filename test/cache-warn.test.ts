@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { classify, learn, learnFromHistory, type Table, threshold, warningFor } from "../pi/extensions/ronpi-cache-warn.ts";
+import { classify, learn, learnFromHistory, type Table, threshold, warningFor } from "../pi/extensions/toriel-cache-warn.ts";
 
 const MIN = 60_000;
 const T0 = 1_800_000_000_000;

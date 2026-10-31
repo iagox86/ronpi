@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { type AgentProfile, profileArgs } from "./agents.ts";
 import { recordHandled } from "./handled-files.ts";
 import { historyOf } from "./daemon-history.ts";
-import { RONPI_TOOLS } from "./required.ts";
+import { TORIEL_TOOLS } from "./required.ts";
 import { lineageArgs, sessionIdOfFile } from "./lineage.ts";
 import { profileOfSession, saveSessionAgent } from "./session-agents.ts";
 import { log } from "./log.ts";
@@ -67,16 +67,16 @@ export class ChildManager {
 
   /**
    * Start a pi process for `s` with `args` and wire its events in, applying
-   * ronpi's queue preference: messages sent while a run is in flight are all
+   * toriel's queue preference: messages sent while a run is in flight are all
    * delivered together at the next turn boundary (pi's own default is one per
-   * turn). Set steeringMode in the ronpi settings to change.
+   * turn). Set steeringMode in the toriel settings to change.
    */
   async launch(s: DaemonSession, args: string[], cfg: ChildConfig): Promise<RpcClient> {
     const client = new RpcClient({
       cliPath: cfg.piCli,
       cwd: s.cwd,
       args,
-      env: { ...process.env, RONPI_CHILD: "1", ...(s.sessionId ? { RONPI_SESSION_ID: s.sessionId } : {}) },
+      env: { ...process.env, TORIEL_CHILD: "1", ...(s.sessionId ? { TORIEL_SESSION_ID: s.sessionId } : {}) },
     });
     client.onEvent((event) => this.onEvent(s, event as Record<string, unknown>));
     await client.start();
@@ -108,7 +108,7 @@ export class ChildManager {
       }
       args.push(...lineageArgs(useFile ? sessionIdOfFile(useFile) : undefined));
       const cfg = this.configFor(s);
-      // The ronpi settings' provider/model/thinking are defaults for NEW sessions.
+      // The toriel settings' provider/model/thinking are defaults for NEW sessions.
       // A session that already has a file resumes with its own (pi restores them
       // from the file), so a restart, /reload or /clear must not reset them.
       const isNew = !opts.forkPath && !(useFile && fs.existsSync(useFile));
@@ -130,7 +130,7 @@ export class ChildManager {
       // installed since never reach the model. +name entries join them to that loadout. A
       // profile that lists tools owns the loadout (pi forbids mixing the two forms).
       if (!agent?.tools) {
-        args.push("--tools", RONPI_TOOLS.join(","));
+        args.push("--tools", TORIEL_TOOLS.join(","));
       }
       if (isNew && cfg.thinking && !agent?.thinking) {
         args.push("--thinking", cfg.thinking);
@@ -336,9 +336,9 @@ export class ChildManager {
     });
   }
 
-  /** Keep a "ronpi-usage" status record from a child's usage extension; true if it was one. */
+  /** Keep a "toriel-usage" status record from a child's usage extension; true if it was one. */
   private takeUsageReport(event: Record<string, unknown>): boolean {
-    if (event.method !== "setStatus" || event.statusKey !== "ronpi-usage") {
+    if (event.method !== "setStatus" || event.statusKey !== "toriel-usage") {
       return false;
     }
     try {
@@ -348,7 +348,7 @@ export class ChildManager {
         this.hub.broadcastSessions();
       }
     } catch {
-      log("ignored a malformed ronpi-usage record");
+      log("ignored a malformed toriel-usage record");
     }
     return true;
   }

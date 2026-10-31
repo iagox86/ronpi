@@ -1,11 +1,11 @@
 ---
 name: messaging
-description: Send a message to another ronpi session with the ronpi_message tool. Use only when the user asks you to tell, ask or notify another session (for example "tell the session called Mealie about the new schema").
+description: Send a message to another toriel session with the toriel_message tool. Use only when the user asks you to tell, ask or notify another session (for example "tell the session called Mealie about the new schema").
 ---
 
 # Messaging other sessions
 
-The `ronpi_message` tool delivers text to another session running under ronpi.
+The `toriel_message` tool delivers text to another session running under toriel.
 
 - Only use it when the user asks. Never message another session on your own initiative, and never to ask it for help the user did not mention.
 - Address the session by its id when you have it (a UUID; the first 8 characters are enough). A name works if it is exact; if several sessions share it, the tool says so and you need the id.

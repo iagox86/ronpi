@@ -7,5 +7,5 @@ node_modules/
 # Session files from stray pi/fake-pi runs
 *.jsonl
 
-# Key/UI debug logs (RONPI_KEYS=1)
+# Key/UI debug logs (TORIEL_KEYS=1)
 logs/

@@ -8,7 +8,7 @@ import { loadSettings, resolveChildConfig, settingsFile, settingsMtime } from ".
 import { bridgeNotice, settingsNotice } from "../src/status.ts";
 
 const tmp = (content?: string) => {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-set-")), "settings.json");
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "toriel-set-")), "settings.json");
   if (content !== undefined) {
     fs.writeFileSync(f, content);
   }
@@ -58,17 +58,17 @@ describe("resolveChildConfig", () => {
   });
 
   it("lets the environment override the file", () => {
-    const cfg = resolveChildConfig({ model: "from-file", steeringMode: "all" }, { RONPI_MODEL: "from-env", RONPI_STEERING_MODE: "one-at-a-time" });
+    const cfg = resolveChildConfig({ model: "from-file", steeringMode: "all" }, { TORIEL_MODEL: "from-env", TORIEL_STEERING_MODE: "one-at-a-time" });
     assert.equal(cfg.model, "from-env");
     assert.equal(cfg.steeringMode, "one-at-a-time");
   });
 });
 
 describe("settingsFile / settingsMtime", () => {
-  it("honors RONPI_SETTINGS, then XDG_CONFIG_HOME", () => {
-    assert.equal(settingsFile({ RONPI_SETTINGS: "/x/s.json" }), "/x/s.json");
-    assert.equal(settingsFile({ XDG_CONFIG_HOME: "/cfg", HOME: "/h" }), "/cfg/ronpi/settings.json");
-    assert.equal(settingsFile({ HOME: "/h" }), "/h/.config/ronpi/settings.json");
+  it("honors TORIEL_SETTINGS, then XDG_CONFIG_HOME", () => {
+    assert.equal(settingsFile({ TORIEL_SETTINGS: "/x/s.json" }), "/x/s.json");
+    assert.equal(settingsFile({ XDG_CONFIG_HOME: "/cfg", HOME: "/h" }), "/cfg/toriel/settings.json");
+    assert.equal(settingsFile({ HOME: "/h" }), "/h/.config/toriel/settings.json");
   });
 
   it("is null for a missing file", () => {

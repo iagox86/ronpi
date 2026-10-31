@@ -160,7 +160,7 @@ export function assertTruecolor(env: NodeJS.ProcessEnv = process.env): void {
   const ct = env.COLORTERM;
   if (ct !== "truecolor" && ct !== "24bit") {
     throw new Error(
-      "ronpi needs a 24-bit color terminal (COLORTERM=truecolor or 24bit); " +
+      "toriel needs a 24-bit color terminal (COLORTERM=truecolor or 24bit); " +
         `COLORTERM is ${ct ? `"${ct}"` : "unset"}. Set it if your terminal does support truecolor.`,
     );
   }

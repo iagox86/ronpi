@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { detachFromParent, lineageArgs, loadLineage, recordFork } from "../src/lineage.ts";
 
-const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-lineage-")), "lineage.json");
+const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "toriel-lineage-")), "lineage.json");
 const ref = (id: string, name = id) => ({ id, name, file: `/s/${id}.jsonl` });
 
 describe("lineage", () => {

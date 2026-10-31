@@ -69,13 +69,13 @@ export async function killServer(): Promise<void> {
     // no pidfile below
   }
   if (!pid || Number.isNaN(pid)) {
-    process.stderr.write(`no ronpid pidfile at ${PID_FILE} - daemon not running\n`);
+    process.stderr.write(`no toriel daemon pidfile at ${PID_FILE} - daemon not running\n`);
     process.exit(1);
   }
   try {
     const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
     if (!cmdline.includes("daemon.ts")) {
-      process.stderr.write(`pid ${pid} is not ronpid (stale pidfile); refusing\n`);
+      process.stderr.write(`pid ${pid} is not the toriel daemon (stale pidfile); refusing\n`);
       process.exit(1);
     }
   } catch {
@@ -88,11 +88,11 @@ export async function killServer(): Promise<void> {
     try {
       process.kill(pid, 0);
     } catch {
-      process.stdout.write(`ronpid (${pid}) stopped\n`);
+      process.stdout.write(`toriel daemon (${pid}) stopped\n`);
       return;
     }
     await sleep(250);
   }
   process.kill(pid, "SIGKILL");
-  process.stdout.write(`ronpid (${pid}) did not exit in 10s; sent SIGKILL\n`);
+  process.stdout.write(`toriel daemon (${pid}) did not exit in 10s; sent SIGKILL\n`);
 }

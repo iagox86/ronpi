@@ -43,7 +43,7 @@ export interface BtwOptions {
 }
 
 export async function askBtw(opts: BtwOptions): Promise<string> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ronpi-btw-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "toriel-btw-"));
   const copy = path.join(dir, path.basename(opts.file));
   try {
     fs.copyFileSync(opts.file, copy);
@@ -58,7 +58,7 @@ function run(args: string[], opts: BtwOptions): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       cwd: opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : os.tmpdir(),
-      env: { ...process.env, RONPI_CHILD: "1" },
+      env: { ...process.env, TORIEL_CHILD: "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
@@ -93,7 +93,7 @@ function run(args: string[], opts: BtwOptions): Promise<string> {
 /** Where /btw answers are saved: one markdown file per answer. */
 export function btwDir(env: NodeJS.ProcessEnv = process.env): string {
   const data = env.XDG_DATA_HOME ?? path.join(env.HOME ?? "", ".local", "share");
-  return path.join(data, "ronpi", "btw");
+  return path.join(data, "toriel", "btw");
 }
 
 export function saveBtw(question: string, answer: string, dir = btwDir(), now = new Date()): string {

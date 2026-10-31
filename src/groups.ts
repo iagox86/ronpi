@@ -1,5 +1,5 @@
 // Groups storage shared with the stock pi session-groups extension: one JSON
-// file at $XDG_DATA_HOME/ronpi/session-groups.json (legacy ~/.pi/agent/
+// file at $XDG_DATA_HOME/toriel/session-groups.json (legacy ~/.pi/agent/
 // session-groups.json is still read as a fallback, never written).
 // Format: { groups: string[], assignments: { [sessionId]: string | null } }
 // null = explicit ungroup (tombstone so fork-inheritance and ungroups stick).
@@ -28,7 +28,7 @@ export interface GroupsFile {
 
 export function groupsFile(): string {
   const dataDir = process.env.XDG_DATA_HOME ?? path.join(process.env.HOME ?? "", ".local", "share");
-  return path.join(dataDir, "ronpi", "session-groups.json");
+  return path.join(dataDir, "toriel", "session-groups.json");
 }
 
 function legacyGroupsFile(): string {

@@ -1,6 +1,6 @@
-// Session bridges: the ronpi-session-bridge extension in a child pi process
-// takes injection requests delivered as /ronpi-inject commands over the child's
-// own RPC pipe, delivers them as ronpi-inject custom messages at turn
+// Session bridges: the toriel-session-bridge extension in a child pi process
+// takes injection requests delivered as /toriel-inject commands over the child's
+// own RPC pipe, delivers them as toriel-inject custom messages at turn
 // boundaries (never pi's text-matched steering queue), and pi's message_start
 // events confirm each append - the daemon acks from those events, so delivery
 // is a fact, not an inference (see docs/design.md, "Session bridge"). This
@@ -85,10 +85,10 @@ export function mergedQueueTexts(held: string[], bridgeOutstanding: string[]): s
 }
 
 /** The name of the extension command injects travel as; also how the daemon detects the bridge. */
-export const INJECT_COMMAND = "ronpi-inject";
+export const INJECT_COMMAND = "toriel-inject";
 
 /** The custom message type the bridge appends. */
-export const INJECT_TYPE = "ronpi-inject";
+export const INJECT_TYPE = "toriel-inject";
 
 /** The id of the inject a pi event shows being appended to the transcript, if it is one. */
 export function injectedId(event: Record<string, unknown>): string | undefined {
@@ -102,13 +102,13 @@ export function injectedId(event: Record<string, unknown>): string | undefined {
   return typeof id === "string" ? id : undefined;
 }
 
-/** A parsed "ronpi-bridge" status record from the extension. */
+/** A parsed "toriel-bridge" status record from the extension. */
 export type BridgeReport =
   | { kind: "injected"; id: string }
   | { kind: "failed"; id: string; error: string }
   | { kind: "requeued"; ids: string[] };
 
-export const BRIDGE_STATUS_KEY = "ronpi-bridge";
+export const BRIDGE_STATUS_KEY = "toriel-bridge";
 
 /** The report in a setStatus record from the bridge extension, or undefined when it is not one (or is malformed). */
 export function parseBridgeReport(event: Record<string, unknown>): BridgeReport | undefined {

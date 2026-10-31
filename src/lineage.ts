@@ -1,4 +1,4 @@
-// Fork lineage: which session was forked from which. Kept in a ronpi-owned
+// Fork lineage: which session was forked from which. Kept in a toriel-owned
 // file next to the groups, keyed by session UUID (both directions), and a
 // fork is told its parent through an appended system prompt. The parent is NOT
 // told about its forks: a running child's system prompt is fixed at start, and
@@ -116,7 +116,7 @@ export function lineageNote(entry: LineageEntry | undefined): string | undefined
   if (parts.length === 0) {
     return undefined;
   }
-  return `ronpi session lineage:\n${parts.join("\n")}`;
+  return `toriel session lineage:\n${parts.join("\n")}`;
 }
 
 /** `["--append-system-prompt", note]` for a session, or []. */

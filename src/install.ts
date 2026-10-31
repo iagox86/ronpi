@@ -1,6 +1,6 @@
-// Links ronpi's pi-side resources (repo pi/extensions, pi/themes) into pi's
+// Links toriel's pi-side resources (repo pi/extensions, pi/themes) into pi's
 // agent dir: `node install.ts`. Symlinks, so the repo stays the source of truth.
-import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, symlinkSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -42,6 +42,29 @@ export function install(dest: string, src: string = SRC): LinkResult[] {
   return results;
 }
 
+const LEGACY_PREFIX = "ronpi-";
+
+/**
+ * Remove extension links installed under the project's former name. pi would
+ * otherwise load them next to the renamed ones and register everything twice.
+ * Only symlinks pointing into `src` are touched.
+ */
+export function removeLegacyLinks(dest: string, src: string = SRC): string[] {
+  const dir = join(dest, "extensions");
+  if (!existsSync(dir)) {
+    return [];
+  }
+  const removed: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const link = join(dir, name);
+    if (name.startsWith(LEGACY_PREFIX) && isLink(link) && readlinkSync(link).startsWith(join(src, "extensions"))) {
+      unlinkSync(link);
+      removed.push(link);
+    }
+  }
+  return removed;
+}
+
 function isLink(path: string): boolean {
   try {
     return lstatSync(path).isSymbolicLink();
@@ -53,6 +76,9 @@ function isLink(path: string): boolean {
 if (process.argv[1] === import.meta.filename) {
   const dest = agentDir();
   try {
+    for (const link of removeLegacyLinks(dest)) {
+      console.log(`removed stale link: ${link}`);
+    }
     for (const r of install(dest)) {
       console.log(`${r.status === "ok" ? "already linked" : "linked"}: ${r.link}`);
     }

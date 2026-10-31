@@ -1,4 +1,4 @@
-# ronpi - requirements
+# toriel - requirements
 
 A daemon-backed controller TUI hosting multiple live pi processes, switchable
 through a switcher-style UI, with multiple controllers able to attach to the
@@ -60,7 +60,7 @@ a requirement.
 4b-i. ctrl-x is context-sensitive: active session -> deactivate (child
    killed, session file stays, lazy respawn on next prompt); inactive
    session -> delete WITH confirmation. Delete is reversible by
-   construction: the file moves to ~/.local/share/ronpi/trash/ (never
+   construction: the file moves to ~/.local/share/toriel/trash/ (never
    unlinked; a /restore command can bring it back), and the orphaned
    group assignment is removed from session-groups.json. pi session
    files are the only copy of a session - there is no registry that
@@ -81,7 +81,7 @@ a requirement.
    replay reads the documented JSONL format directly.
 9. Markdown rendering for assistant messages from day one.
 10. Group storage shared with stock pi: reuse session-groups.json semantics,
-    relocated to ~/.local/share/ronpi/ (XDG data); the session-groups.ts
+    relocated to ~/.local/share/toriel/ (XDG data); the session-groups.ts
     extension is updated to the same path. Assignments keyed by session id;
     null tombstones keep fork-inheritance and explicit-ungroup working.
 11. Controller runs inside tmux window 0 (0 = AI client, 1 = terminal,
@@ -110,14 +110,14 @@ a requirement.
   daemon could optionally auto-trash sessions idle > N days (mtimes are
   already tracked for the age column).
 - External pi processes (IMPLEMENTED): pi has no session locking, so a
-  session file open in a plain `pi` process looks inactive to ronpi. The
-  ronpi-presence extension (loaded by every pi) registers live processes
+  session file open in a plain `pi` process looks inactive to toriel. The
+  toriel-presence extension (loaded by every pi) registers live processes
   with the daemon (30s heartbeat, 90s expiry); the switcher marks those
   sessions [pi] + dimmed, the session view shows LIVE-IN-PI. Prompting a
   pi-owned session asks once ("this forks the conversation"), then forks
-  into a new ronpi-owned session (pi-native --fork) and delivers the
+  into a new toriel-owned session (pi-native --fork) and delivers the
   prompt there; /adopt forks without a prompt. Sessions open in BOTH
-  ronpi and an external pi refuse prompts (two live writers cannot be
+  toriel and an external pi refuse prompts (two live writers cannot be
   made safe by forking). Fallback for extension-less pi: the 60s-mtime
   warn-and-confirm with the same fork semantics.
   Known limitation: branched files (from forking mid-run) replay in file
@@ -140,7 +140,7 @@ a requirement.
   - selection follows the moved item
 - Claude adapter (deprioritized: "Claude already works like I want").
 - Multiple agents per session (DEFERRED 2026-10-23): CC-Task-style
-  lightweight subagents inside a ronpi-affiliated session - in-process,
+  lightweight subagents inside a toriel-affiliated session - in-process,
   not switcher rows by default, results streaming into the conversation -
   with an optional tree-view under the parent's switcher row. Evaluation
   done, two paths (pi-subagents vs own Task-style tool) in docs/design.md M2+
@@ -156,7 +156,7 @@ a requirement.
 1. Activation cap: default max concurrent active children before forced
    deactivation? (Configurable; measure memory per child first.)
 2. Daemon supervision: does the daemon itself need restart protection
-   (systemd user service), or is a manual `ronpid` acceptable given daemon
+   (systemd user service), or is a manual daemon start acceptable given daemon
    crash kills children?
 3. Deactivation policy: manual only, or LRU auto-deactivate at the cap?
 4. DECIDED: assume Wayland (wl-paste available) for paste support.
@@ -165,4 +165,4 @@ a requirement.
    refused with a hint on conflict, stolen by a second enter.
 6. Budget behavior on threshold: warn-only, or refuse new prompts? Over what
    window (daemon lifetime vs persisted daily/weekly rollups under
-   ~/.local/share/ronpi/)?
+   ~/.local/share/toriel/)?
