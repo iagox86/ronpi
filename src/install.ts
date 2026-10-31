@@ -13,7 +13,7 @@ export function agentDir(env: NodeJS.ProcessEnv = process.env): string {
 
 export interface LinkResult {
   link: string;
-  status: "linked" | "ok";
+  status: "linked" | "relinked" | "ok";
 }
 
 /** Link every resource into `dest`. Throws rather than replace anything that is not our link. */
@@ -31,6 +31,13 @@ export function install(dest: string, src: string = SRC): LinkResult[] {
       if (existsSync(link) || isLink(link)) {
         if (isLink(link) && readlinkSync(link) === target) {
           results.push({ link, status: "ok" });
+          continue;
+        }
+        // a link whose target is gone (the repo moved) points at nothing of value; repoint it
+        if (isLink(link) && !existsSync(link)) {
+          unlinkSync(link);
+          symlinkSync(target, link);
+          results.push({ link, status: "relinked" });
           continue;
         }
         throw new Error(`${link} already exists and is not a link to ${target}; move it aside and rerun`);
@@ -80,7 +87,7 @@ if (process.argv[1] === import.meta.filename) {
       console.log(`removed stale link: ${link}`);
     }
     for (const r of install(dest)) {
-      console.log(`${r.status === "ok" ? "already linked" : "linked"}: ${r.link}`);
+      console.log(`${r.status === "ok" ? "already linked" : r.status}: ${r.link}`);
     }
     for (const kind of KINDS) {
       const real = realpathSync(join(dest, kind));

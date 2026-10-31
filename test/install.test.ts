@@ -49,3 +49,14 @@ describe("removeLegacyLinks", () => {
     assert.notEqual(lstatSync(unrelated, { throwIfNoEntry: false }), undefined);
   });
 });
+
+describe("install with a dangling link", () => {
+  it("repoints a link whose target no longer exists but still refuses a real file", () => {
+    const { src, dest } = fixture();
+    mkdirSync(join(dest, "themes"), { recursive: true });
+    const link = join(dest, "themes", "t.json");
+    symlinkSync("/gone/with/the/old/repo/t.json", link);
+    assert.deepEqual(install(dest, src).map((r) => r.status).sort(), ["linked", "relinked"]);
+    assert.equal(readlinkSync(link), join(src, "themes", "t.json"));
+  });
+});
